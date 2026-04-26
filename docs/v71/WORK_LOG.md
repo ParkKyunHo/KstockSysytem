@@ -325,6 +325,101 @@ all V7.1 packages + 15 modules + 8 skills import OK
 
 다음: **Phase 3 (거래 룰 구현)**. 가장 중요한 단계 (10~15일 예상).
 
+---
+
+## Phase 3 진입 직전 핸드오프 (2026-04-26 세션 종료 시점)
+
+이 섹션은 **새 세션이 작업을 이어서 받기 위해 반드시 알아야 할 것들**을 정리합니다.
+
+### 현재 상태 스냅샷
+
+| 항목 | 값 |
+|------|-----|
+| 브랜치 | `v71-development` |
+| 최신 commit | `27de823` (P2.4+P2.5 core classes + feature-flag gating) |
+| 최신 tag | `v71-phase2-complete` |
+| GitHub | https://github.com/ParkKyunHo/KstockSysytem |
+| pytest | 49 PASS (`tests/v71/`) |
+| 하네스 | 7/7 PASS (Harness 6 dead-code WARN 0건) |
+| `python -m src.main` | V7.1 stub 메시지 + exit 1 (의도) |
+| 로컬 디스크 | 35 MB (V7.0 백업 시점 316 MB → 89% 감소) |
+
+### 사용자 정책 (반드시 준수)
+
+1. **V7.0 = 레거시** (곧 폐기), **V7.1 = 완전 구축**. V7.0 코드는 보호 대상이 아니라 폐기 대상. 단 헌법 3 "충돌 금지"는 *운영 영향* 0이라는 의미 (별도 서버에서 V7.0이 운영 중일 수 있음).
+2. **Python 호출**: 항상 `"C:\Program Files\Python311\python.exe"` 명시. `pip install` 시 32비트 Python 3.10이 PATH에서 우선 호출되어 pandas source build 무한 재귀 발생 → 명시 호출로 회피.
+3. **`.env` 직접 read 금지**: 시스템 권한 정책으로 차단됨. 시크릿 노출 사고 2회 발생 (DB 비밀번호 회전 권고 미완 — 사용자에게 다시 권고할 것).
+4. **Push 자동 권한**: 사용자가 권한 위임. 매 commit마다 push OK. 단 위험 작업(force push, branch 삭제 등)은 보고.
+5. **Task 단위 진행**: 매 Task별 commit 분리. PRD 단일 진실 (임의 해석 금지). 의문 시 즉시 사용자 질문.
+6. **statusline**: `~/.claude/statusline.sh` 단순화 1라인 (모델 / effort / ctx 사용량 / 5h 남은량 + 리셋 / 7d 남은량 + 리셋). 사용자가 고정 요청 → 변경 금지.
+
+### Phase 3 시작 가이드 (P3.1부터)
+
+**참조 문서 우선순위**:
+1. `02_TRADING_RULES.md` §3 (박스 시스템 단일 진실)
+2. `07_SKILLS_SPEC.md` §2 (`box_entry_skill` 구현 명세)
+3. `03_DATA_MODEL.md` §2.1, §2.2 (`tracked_stocks`, `support_boxes`)
+4. `06_AGENTS_SPEC.md` §1 (V71 Architect), §2 (Trading Logic Verifier) — Task별 페르소나 호출
+5. `08_HARNESS_SPEC.md` §3 (Trading Rule Enforcer 룰 — 매직 넘버 차단)
+
+**P3.1 산출물 예상**:
+- `src/core/v71/box/box_manager.py` 본문 (V71BoxManager 메서드 구현)
+- `src/core/v71/box/box_entry_detector.py` (구조 정리; 본문은 P3.2)
+- `src/core/v71/box/box_state_machine.py` (transition 함수 구현)
+- `src/core/v71/skills/box_entry_skill.py` 본문 (`evaluate_box_entry`, `is_pullback_setup`, `is_breakout_setup`)
+- `tests/v71/test_box_manager.py` (90%+ 커버리지)
+- `tests/v71/test_box_entry_skill.py`
+- `tests/v71/test_box_state_machine.py`
+- `scripts/harness/test_coverage_enforcer.py`의 THRESHOLDS에 `src/core/v71/box/`, `src/core/v71/skills/box_entry_skill.py` 추가 (90%)
+
+**P3.1 완료 기준**:
+- Trading Logic Verifier 페르소나 PASS (PRD §3 인용 + 룰 정확성 검증)
+- 단위 테스트 90%+ 커버리지
+- 7/7 하네스 PASS (Harness 7 임계값 강화 후에도)
+- WORK_LOG.md 갱신
+- commit 메시지에 "P3.1" 명시
+- 다음 P3.2 진행 여부 사용자 확인
+
+### 새 세션 첫 메시지 (사용자가 그대로 붙여넣기)
+
+```
+# V7.1 Phase 3 작업 이어서 진행
+
+## 환경
+- 프로젝트: C:\K_stock_trading\
+- 브랜치: v71-development
+- 최신 tag: v71-phase2-complete
+- GitHub: https://github.com/ParkKyunHo/KstockSysytem
+
+## 사전 학습 (필수, 순서대로)
+1. C:\K_stock_trading\CLAUDE.md
+2. C:\K_stock_trading\docs\v71\WORK_LOG.md  ← 가장 중요 (Phase 0~2 모든 결정 + 정책 + Phase 3 가이드)
+3. C:\K_stock_trading\docs\v71\01_PRD_MAIN.md  (전체 그림)
+4. C:\K_stock_trading\docs\v71\05_MIGRATION_PLAN.md §5 (Phase 3 계획)
+5. C:\K_stock_trading\docs\v71\02_TRADING_RULES.md §3 (P3.1 박스 시스템 룰)
+6. C:\K_stock_trading\docs\v71\07_SKILLS_SPEC.md §2 (box_entry_skill)
+
+## 헌법 5원칙 (절대 위반 금지)
+1. 사용자 판단 불가침
+2. NFR1 최우선 (박스 진입 < 1초)
+3. 충돌 금지 ★ (V7.0 인프라 14모듈 보존, V7.1은 src/core/v71/ 격리)
+4. 시스템 계속 운영
+5. 단순함 우선
+
+## 응답 요청
+위 6개 문서 정독 후:
+1. Phase 0~2 누적 산출물 요약 (WORK_LOG 기준)
+2. Phase 3 P3.1 (박스 시스템) 작업 계획
+3. 시작 준비 상태
+
+응답 후 P3.1 시작 지시 대기.
+```
+
+### 권고 사항 (사용자 확인 필요)
+
+- DB 비밀번호 회전 (보안 사고 #1, #2 대응) — Supabase Dashboard
+- Phase 3 진입 일정
+
 ### Phase 0 후속: pre-commit 활성화 시 발견 사항
 
 | 이슈 | 원인 | 조치 |
