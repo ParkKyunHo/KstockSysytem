@@ -212,6 +212,37 @@ ruff             Passed
 
 **보존 (V7.1 검증 방식)**: 페이퍼 트레이드 (Phase 7) + 단위 테스트 (>=90% coverage). 별도 백테스트 인프라 불요.
 
+### P1.3: 임시 파일 정리 (완료)
+
+**참조**: 05_MIGRATION_PLAN.md §3.4
+
+**삭제 대상** (모두 디스크에서, 이미 `.gitignore`에 차단되어 있어 git 영향 0)
+
+| 분류 | 파일/디렉토리 | 크기 |
+|------|---------------|------|
+| Unix→Windows 셸 호출 오인식 잔재 | `C:K_stock_trading*.txt` 12개 (콜론 위치에 U+F03A 비가시 문자) | ~80 MB |
+| 위와 동일 | `C:Users박균호temp_log.txt`, `C:templogs.txt`, `C:K_stock_trading.env.{new,recovered}`, `C:K_stock_tradingtemp_check.ps1` | ~5 KB |
+| 일반 임시 로그 | `temp_full.txt`, `temp_logs.txt`, `temp_logs2.txt` | ~2.5 MB |
+| Windows 예약어 | `nul` (잘못된 SSH known_hosts 파편) | 169 B |
+| 분석 산출물 | `data/analysis/` (큰 `.txt` 로그 파일 포함) | ~30 MB |
+| 캐시 | `__pycache__/` 14개 디렉토리 | ~수 MB |
+| 캐시 | `.pytest_cache/`, `.coverage`, `coverage.json` | ~수십 KB |
+
+**디스크 사용량 변화**:
+
+| 시점 | 크기 | 감소 |
+|------|------|------|
+| P0.1 (초기) | 316 MB | -- |
+| P1.2 후 (백테스트 캐시 정리) | 92 MB | 71% |
+| P1.3 후 (임시 + analysis 정리) | **35 MB** | **89%** |
+
+**잔존 (의도)**:
+- `node_modules/` (13 MB) — 외부 npm 의존성, 추후 별도 결정
+- `logs/` (29 KB) — 운영 로그, 보존
+- `k_stock_trading.egg-info/` — pip editable install 부산물
+
+**git 영향 0** (.gitignore 패턴이 이미 모두 차단). commit 대상은 WORK_LOG.md만.
+
 ---
 
 ## 다음 작업 (Phase 1 잔여)
