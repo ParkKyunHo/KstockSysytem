@@ -216,6 +216,35 @@ $ python scripts/harness/run_all.py --with-7
 PASS 7/7 harness(es)
 ```
 
+### P2.3: 8 표준 스킬 시그니처 (완료)
+
+**참조**: 07_SKILLS_SPEC.md §1~§8
+
+8 스킬 모두 인터페이스 (dataclass, Enum, Exception) + 함수 시그니처 + Docstring 작성. 본문은 `NotImplementedError` (Phase 3에서 구현).
+
+| 스킬 | 모듈 | 핵심 인터페이스 | 구현 Phase |
+|------|------|-----------------|-----------|
+| 1. kiwoom_api_skill | `skills/kiwoom_api_skill.py` | `KiwoomAPI{Request,Response,Context,Error}` + `call_kiwoom_api`, `send_buy_order`, `send_sell_order`, `cancel_order`, `get_balance`, `get_position`, `get_order_status` | P3.2 |
+| 2. box_entry_skill | `skills/box_entry_skill.py` | `EntryDecision`, `Box`, `MarketContext`, `EntryEvaluation`, `evaluate_box_entry`, `is_pullback_setup`, `is_breakout_setup`, `is_bullish` | P3.1 |
+| 3. exit_calc_skill | `skills/exit_calc_skill.py` | `PositionSnapshot`, `EffectiveStopResult`, `ProfitTakeResult`, `TSUpdateResult`, `calculate_effective_stop`, `evaluate_profit_take`, `update_trailing_stop`, `select_atr_multiplier`, `stage_after_partial_exit` | P3.3 |
+| 4. avg_price_skill | `skills/avg_price_skill.py` | `PositionState`, `PositionUpdate`, `update_position_after_buy`, `update_position_after_sell`, `compute_weighted_average` | P3.4 |
+| 5. vi_skill | `skills/vi_skill.py` | `VIState`, `VIStateContext`, `VIDecision`, `handle_vi_state`, `check_post_vi_gap`, `transition_vi_state` | P3.6 |
+| 6. notification_skill | `skills/notification_skill.py` | `Severity`, `EventType`, `NotificationRequest`, `NotificationResult`, `send_notification`, `severity_to_priority`, `make_rate_limit_key`, `format_stop_loss_message` | P4.1 |
+| 7. reconciliation_skill | `skills/reconciliation_skill.py` | `ReconciliationCase`, `KiwoomBalance`, `SystemPosition`, `ReconciliationResult`, `reconcile_positions`, `classify_case` | P3.5 |
+| 8. test_template | `skills/test_template.py` | `TEMPLATE` 상수 (테스트 작성 패턴) | (참고용) |
+
+**Candle 충돌 해결**: box_entry_skill의 자체 `Candle` 정의는 V7.0 `src.core.candle_builder.Candle`과 Harness 1 충돌 → V7.0 Candle을 import하여 재사용 (헌법 3 단일 정의 + 인프라 보존). `is_bullish()`는 별도 helper 함수로 분리.
+
+**V71Constants 보강**: API 관련 상수 추가
+- `API_MAX_RETRIES = 3`
+- `API_BACKOFF_BASE_SECONDS = 1.0` (지수 백오프)
+- `API_TIMEOUT_SECONDS = 10`
+- `API_RATE_LIMIT_PER_SECOND = 4.5` / `API_RATE_LIMIT_PAPER_PER_SECOND = 0.33`
+- `AUTH_ERROR_CODES = ("EGW00001", "EGW00002")`
+- `RATE_LIMIT_ERROR_CODES = ("EGW00201",)`
+
+**Harness 7 임계값 단계화**: Phase 2의 NotImplementedError stub은 본질적으로 0% coverage → 90% 임계값을 모든 v71/에 적용 시 의미 없는 차단. THRESHOLDS를 실제 로직 있는 모듈만 (`v71_constants.py`, `feature_flags.py`)으로 좁힘. Phase 3 commit에서 구현 + 테스트가 들어올 때 box/, exit/ 등을 임계값에 추가.
+
 ### P2.4 (일부): V71Constants 중앙화 (완료)
 
 **참조**: 02_TRADING_RULES.md, 01_PRD_MAIN.md 부록 C

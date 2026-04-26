@@ -104,5 +104,20 @@ class V71Constants:
     PATH_B_BUY_TIME_HHMM: Final[str] = "09:01"
     """PATH_B buy executes at 09:01 the next trading day."""
 
+    # ---- Kiwoom API (kiwoom_api_skill) ----
+    API_MAX_RETRIES: Final[int] = 3
+    API_BACKOFF_BASE_SECONDS: Final[float] = 1.0
+    """Exponential backoff base: backoff = base * (2 ** attempt)."""
+
+    API_TIMEOUT_SECONDS: Final[int] = 10
+    API_RATE_LIMIT_PER_SECOND: Final[float] = 4.5  # production
+    API_RATE_LIMIT_PAPER_PER_SECOND: Final[float] = 0.33  # paper trading
+
+    AUTH_ERROR_CODES: Final[tuple[str, ...]] = ("EGW00001", "EGW00002")
+    """Token-expired / auth-failed -- triggers refresh + retry."""
+
+    RATE_LIMIT_ERROR_CODES: Final[tuple[str, ...]] = ("EGW00201",)
+    """Rate-limited -- triggers exponential backoff."""
+
 
 __all__ = ["V71Constants"]
