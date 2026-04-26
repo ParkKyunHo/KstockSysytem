@@ -174,6 +174,21 @@ src/database/migrations/v71/     -- UP/DOWN SQL pair 룰 (Harness 4)
 - Harness 1 (Naming Collision): V7.1 패키지가 v71/ 격리 또는 V71 접두사 룰 준수
 - Harness 5 (Feature Flag Enforcer): 빈 패키지에 진입 함수 없음 → 면제 (EXEMPT_PARTS = `__init__.py`)
 
+### P2.4 (일부): V71Constants 중앙화 (완료)
+
+**참조**: 02_TRADING_RULES.md, 01_PRD_MAIN.md 부록 C
+
+**산출물**
+
+| 파일 | 내용 |
+|------|------|
+| `src/core/v71/v71_constants.py` | `V71Constants` 클래스. `Final[...]` 어노테이션. PRD §5/§3/§4/§10/§13 기준 모든 매직 넘버 (손절 -5/-2/+4, 익절 +5/+10/30%, ATR 4.0/3.0/2.5/2.0, 박스 30%/-20%, 매수 3회/5초, 갭 5%/3%, 폴링 5초, 알림 5분 등) |
+| `tests/v71/test_v71_constants.py` | 25 PASS. 손절 단방향 상향, ATR 단방향 축소, 임계값 일관성, Final 어노테이션 등 룰 핀(pin) 검증 |
+
+**Harness 3 보강**: `MAGIC_LITERAL_EXEMPT = {"src/core/v71/v71_constants.py"}` 추가. v71_constants가 매직 넘버 단일 정의 영역임을 명시 (다른 모든 V7.1 코드는 이 모듈 통해서만 참조 가능, 그것이 Harness 3의 본 의도).
+
+**검증**: pytest 25/25 PASS, harnesses 7/7 PASS.
+
 ### Phase 0 후속: pre-commit 활성화 시 발견 사항
 
 | 이슈 | 원인 | 조치 |

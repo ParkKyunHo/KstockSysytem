@@ -25,6 +25,10 @@ from _common import SRC_V71, HarnessResult, iter_v71_python_files
 MAGIC_FLOATS = {-0.05, -0.02, 0.04, 0.05, 0.10, 4.0, 3.0, 2.5, 2.0}
 RAW_HTTP_MODULES = {"httpx", "requests", "aiohttp"}
 ALLOWED_RAW_HTTP = {"src/core/v71/skills/kiwoom_api_skill.py"}
+# Files allowed to literal magic floats. v71_constants is the single
+# definition site for all magic numbers (Harness 3's whole point is to
+# force everyone else to import from it).
+MAGIC_LITERAL_EXEMPT = {"src/core/v71/v71_constants.py"}
 
 
 class _Visitor(ast.NodeVisitor):
@@ -68,10 +72,11 @@ def main() -> None:
         visitor.visit(tree)
 
         rel = path.as_posix().split("K_stock_trading/")[-1]
-        for lineno, value in visitor.magic_hits:
-            result.violate(
-                f"Magic literal {value!r} at {rel}:{lineno} — use V71Constants instead."
-            )
+        if rel not in MAGIC_LITERAL_EXEMPT:
+            for lineno, value in visitor.magic_hits:
+                result.violate(
+                    f"Magic literal {value!r} at {rel}:{lineno} -- use V71Constants instead."
+                )
         for lineno, mod in visitor.raw_http_hits:
             if rel in ALLOWED_RAW_HTTP:
                 continue
