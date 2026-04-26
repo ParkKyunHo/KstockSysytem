@@ -667,6 +667,11 @@ class EntryDecision:
     box_id: Optional[str]
     expected_buy_price: Optional[int]  # 예상 매수가
     expected_buy_at: Optional[datetime]  # 예상 매수 시각 (경로 B는 익일 09:01)
+    
+    # 안전장치 메타데이터 (경로 B 전용, 02_TRADING_RULES.md §3.10/§3.11/§10.9)
+    fallback_buy_at: Optional[datetime] = None  # 1차 실패 시 fallback 시각 (09:05)
+    fallback_uses_market_order: bool = False    # fallback 시점 시장가 강제 여부
+    fallback_gap_recheck_required: bool = False # fallback 시점 갭업 5% 재검증 필요 여부
 ```
 
 ### 2.3 핵심 함수
@@ -803,7 +808,7 @@ def _evaluate_pullback(
         )
     
     elif box.path_type == "PATH_B":
-        # 경로 B: 일봉 1개 조건 충족, 익일 매수
+        # 경로 B: 일봉 1개 조건 충족, 익일 매수 (1차 09:01 + 2차 09:05 안전장치)
         cond = (
             current.is_bullish
             and box.lower_price <= current.close_price <= box.upper_price
@@ -812,8 +817,13 @@ def _evaluate_pullback(
         if not cond:
             return EntryDecision(False, "PULLBACK_B_NOT_MET", None, None, None)
         
-        # 익일 09:01 계산
-        next_day_buy_time = _calculate_next_market_open_plus_1min(context.current_time)
+        # 익일 1차 매수 시각 + 2차 fallback 매수 시각 (§3.10 + §10.9)
+        next_day_buy_time = _calculate_next_trading_day_at(
+            context.current_time, V71Constants.PATH_B_PRIMARY_BUY_TIME_HHMM
+        )
+        next_day_fallback_time = _calculate_next_trading_day_at(
+            context.current_time, V71Constants.PATH_B_FALLBACK_BUY_TIME_HHMM
+        )
         
         return EntryDecision(
             should_enter=True,
@@ -821,6 +831,9 @@ def _evaluate_pullback(
             box_id=None,
             expected_buy_price=current.close_price,  # 참고용 (실제는 익일 시초가)
             expected_buy_at=next_day_buy_time,
+            fallback_buy_at=next_day_fallback_time,
+            fallback_uses_market_order=V71Constants.PATH_B_FALLBACK_USES_MARKET_ORDER,
+            fallback_gap_recheck_required=True,
         )
     
     raise ValueError(f"Unknown path_type: {box.path_type}")
@@ -863,53 +876,84 @@ def _evaluate_breakout(
         )
     
     elif box.path_type == "PATH_B":
-        next_day_buy_time = _calculate_next_market_open_plus_1min(context.current_time)
+        # 1차 09:01 + 2차 09:05 안전장치 (§3.11 + §10.9)
+        next_day_buy_time = _calculate_next_trading_day_at(
+            context.current_time, V71Constants.PATH_B_PRIMARY_BUY_TIME_HHMM
+        )
+        next_day_fallback_time = _calculate_next_trading_day_at(
+            context.current_time, V71Constants.PATH_B_FALLBACK_BUY_TIME_HHMM
+        )
         return EntryDecision(
             should_enter=True,
             reason="BREAKOUT_B_TRIGGERED",
             box_id=None,
             expected_buy_price=current.close_price,
             expected_buy_at=next_day_buy_time,
+            fallback_buy_at=next_day_fallback_time,
+            fallback_uses_market_order=V71Constants.PATH_B_FALLBACK_USES_MARKET_ORDER,
+            fallback_gap_recheck_required=True,
         )
     
     raise ValueError(f"Unknown path_type: {box.path_type}")
 
 
-def _calculate_next_market_open_plus_1min(current_time: datetime) -> datetime:
-    """다음 영업일 09:01 계산."""
+def _calculate_next_trading_day_at(current_time: datetime, hhmm: str) -> datetime:
+    """
+    다음 영업일 특정 시각 계산.
+    
+    Args:
+        current_time: 현재 시각
+        hhmm: 시각 문자열 (예: "09:01", "09:05")
+    
+    Returns:
+        다음 영업일의 hhmm 시각 datetime
+    """
     from src.core.market_schedule import get_next_trading_day
     next_day = get_next_trading_day(current_time.date())
-    return datetime.combine(next_day, datetime.strptime("09:01", "%H:%M").time())
+    return datetime.combine(next_day, datetime.strptime(hhmm, "%H:%M").time())
 ```
 
-### 2.4 갭업 검증 (경로 B 매수 시점)
+### 2.4 갭업 검증 (경로 B 1차 + 2차 fallback 공통)
 
 ```python
 def check_gap_up_for_path_b(
     previous_close: int,
-    current_open: int,
+    reference_price: int,
 ) -> tuple[bool, float]:
     """
-    경로 B 익일 시초가 갭업 검증.
+    경로 B 갭업 검증 (1차 09:01 시초가, 2차 09:05 fallback 모두 사용).
     
     Args:
-        previous_close: 전일 종가
-        current_open: 익일 시초가
+        previous_close: 전일 종가 (일봉 진입 조건 형성된 날의 종가)
+        reference_price: 검증 시점 가격
+            - 1차 (09:01): 익일 시초가
+            - 2차 (09:05): 09:05 시점 현재가
     
     Returns:
         (should_proceed, gap_pct):
             should_proceed: True면 매수 진행, False면 포기
             gap_pct: 갭업률 (참고)
     
+    Note:
+        - 1차 시점 갭업 5% 초과: 매수 포기 (안전장치 미발동, §3.10)
+        - 2차 시점 갭업 5% 초과: 안전장치 무력화 (§10.9)
+        - 동일 임계값 PATH_B_GAP_UP_LIMIT 사용 (일관성)
+    
     Example:
+        >>> # 1차 시점
         >>> proceed, gap = check_gap_up_for_path_b(10000, 10300)
         >>> if not proceed:
         ...     log.warning(f"Gap up {gap}% exceeds limit, abandoning buy")
+        >>> 
+        >>> # 2차 시점 (fallback 발동 직전)
+        >>> proceed_fb, gap_fb = check_gap_up_for_path_b(10000, 10500)
+        >>> if not proceed_fb:
+        ...     log.warning(f"Gap up at fallback {gap_fb}%, safety net invalidated")
     """
-    if previous_close <= 0 or current_open <= 0:
+    if previous_close <= 0 or reference_price <= 0:
         raise ValueError("Invalid prices")
     
-    gap_pct = (current_open - previous_close) / previous_close
+    gap_pct = (reference_price - previous_close) / previous_close
     
     should_proceed = gap_pct < V71Constants.PATH_B_GAP_UP_LIMIT  # 5%
     

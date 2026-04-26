@@ -923,18 +923,61 @@ UI 의존:
     - PRD 패키지 최종 검수
 ```
 
-### 6.2 향후 변경 관리
+### 6.2 PRD 변경 이력 (Post-Initial)
+
+> PRD 패키지 작성 완료(2026-04-25) 후 발생한 모든 변경 사항.
+> 변경 시 §6.3 절차 준수 필수.
+
+```yaml
+변경 #1: 2026-04-26 (Phase 3 P3.1 시작 시점)
+  사유:
+    경로 B (일봉) 익일 09:01 매수가 시초 VI / 단일가 매매 / API 장애로
+    미체결될 가능성. 사용자가 정의한 박스 진입을 1회의 09:01 실패만으로
+    영구 포기하는 것은 헌법 1 (사용자 판단 불가침) + NFR1 (진입 놓치지 않음)
+    원칙에 부합하지 않음.
+  
+  결정:
+    경로 B 매수에 09:05 시장가 fallback 안전장치 추가.
+    
+  영향 문서:
+    - 02_TRADING_RULES.md §3.10 (PATH_B PULLBACK 룰)
+    - 02_TRADING_RULES.md §3.11 (PATH_B BREAKOUT 룰)
+    - 02_TRADING_RULES.md §10.9 (시초 VI 시나리오, 신규)
+    - 07_SKILLS_SPEC.md §2 (box_entry_skill EntryDecision에 fallback 메타데이터)
+    - V71Constants (PATH_B_PRIMARY_BUY_TIME_HHMM, PATH_B_FALLBACK_BUY_TIME_HHMM,
+      PATH_B_FALLBACK_USES_MARKET_ORDER 신규)
+  
+  영향 안 받는 영역 (보존):
+    - 갭업 5% 초과 시 매수 포기 룰 (1차 시점에 그대로 적용)
+    - VI 후 일반 갭 3% 룰 (§10.4)
+    - 경로 A (3분봉 즉시 매수)는 변경 없음
+  
+  헌법 5원칙 적합성:
+    1. 사용자 판단 불가침: ✓ (사용자 박스 결정 존중, 안전장치는 마무리만)
+    2. NFR1: ✓ (진입 1회 더 시도, 4분 지연 허용 범위)
+    3. 충돌 금지: ✓ (V7.0 영향 없음, V7.1만 변경)
+    4. 시스템 계속 운영: ✓ (기존 동작 보강, 정지 코드 추가 없음)
+    5. 단순함: ✓ (5분 한 번만 재시도, 무한 재시도 아님)
+  
+  버전:
+    V7.1.0 (initial) → V7.1.0a (PRD patch, 코드 미구현)
+    Phase 3 P3.1 commit 시 V7.1.0a 본격 적용
+  
+  Git tag (예정): v71-prd-patch-1
+```
+
+### 6.3 향후 변경 관리
 
 ```yaml
 PRD 변경 절차:
   1. 변경 사유 명시
   2. 영향 범위 분석
   3. 관련 문서 모두 갱신
-  4. 본 부록 §6 (변경 이력) 업데이트
+  4. 본 부록 §6.2 (변경 이력) 업데이트
   5. Git commit + tag
 
 버전 관리:
-  현재: V7.1 (initial)
+  현재: V7.1.0a (initial + PRD patch #1)
   향후:
     V7.1.1: 룰 미세 조정
     V7.1.2: ...

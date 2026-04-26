@@ -101,8 +101,16 @@ class V71Constants:
     # ---- Strategy paths ----
     PATH_A_TIMEFRAME_MINUTES: Final[int] = 3
     PATH_B_TIMEFRAME_MINUTES: Final[int] = 1440  # daily
-    PATH_B_BUY_TIME_HHMM: Final[str] = "09:01"
-    """PATH_B buy executes at 09:01 the next trading day."""
+
+    PATH_B_PRIMARY_BUY_TIME_HHMM: Final[str] = "09:01"
+    """PATH_B 1st buy attempt at 09:01 the next trading day (limit -> market)."""
+
+    PATH_B_FALLBACK_BUY_TIME_HHMM: Final[str] = "09:05"
+    """PATH_B 2nd buy attempt at 09:05 if 1st failed (e.g., opening VI / single-price
+    auction misfire / API outage). See 02_TRADING_RULES.md §3.10/§3.11/§10.9."""
+
+    PATH_B_FALLBACK_USES_MARKET_ORDER: Final[bool] = True
+    """Fallback uses market order (immediate fill priority over price)."""
 
     # ---- Kiwoom API (kiwoom_api_skill) ----
     API_MAX_RETRIES: Final[int] = 3

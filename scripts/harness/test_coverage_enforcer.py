@@ -22,17 +22,25 @@ from pathlib import Path
 from _common import REPO_ROOT, HarnessResult
 
 # Coverage thresholds. v71 modules in skeleton state (NotImplementedError
-# bodies) cannot reach 90% until Phase 3 implements them, so during
-# Phase 2 only files with real logic are pinned. The full 90% threshold
-# for src/core/v71/ comes back online with the Phase 3 commit that lands
-# implementation + tests.
+# bodies) cannot reach 90% until they get implemented, so we add prefixes
+# only as each Phase 3 sub-task lands.
+#
+# Phase 3 graduation log:
+#   P3.1: box_state_machine.py, box_manager.py, skills/box_entry_skill.py
+#         (box_entry_detector.py stays out -- still NotImplementedError
+#          until P3.2)
 THRESHOLDS = {
     "src/utils/feature_flags.py": 90.0,
     "src/core/v71/v71_constants.py": 90.0,
+    # P3.1: trading-rule modules.
+    "src/core/v71/box/box_state_machine.py": 90.0,
+    "src/core/v71/box/box_manager.py": 90.0,
+    "src/core/v71/skills/box_entry_skill.py": 90.0,
 }
-# When v71 modules graduate from skeleton to implementation, append:
-#   "src/core/v71/box/": 90.0,
-#   "src/core/v71/exit/": 90.0,
+# When the next v71 modules graduate from skeleton to implementation, append:
+#   "src/core/v71/box/box_entry_detector.py": 90.0,    # P3.2
+#   "src/core/v71/strategies/": 90.0,                  # P3.2
+#   "src/core/v71/exit/": 90.0,                        # P3.3
 #   ... etc.
 
 

@@ -108,8 +108,31 @@ class TestStrategyPaths:
     def test_path_a_is_3min(self):
         assert K.PATH_A_TIMEFRAME_MINUTES == 3
 
-    def test_path_b_buy_at_0901(self):
-        assert K.PATH_B_BUY_TIME_HHMM == "09:01"
+    def test_path_b_primary_buy_at_0901(self):
+        assert K.PATH_B_PRIMARY_BUY_TIME_HHMM == "09:01"
+
+    def test_path_b_fallback_buy_at_0905(self):
+        """§3.10/§3.11/§10.9: 09:01 매수 실패 시 09:05 안전장치."""
+        assert K.PATH_B_FALLBACK_BUY_TIME_HHMM == "09:05"
+
+    def test_path_b_fallback_uses_market_order(self):
+        """fallback 시점은 즉시 체결 우선 (시장가 강제)."""
+        assert K.PATH_B_FALLBACK_USES_MARKET_ORDER is True
+
+    def test_path_b_fallback_is_after_primary(self):
+        """fallback 시각이 1차 시각보다 뒤여야 함 (시간순)."""
+        from datetime import datetime
+        primary = datetime.strptime(K.PATH_B_PRIMARY_BUY_TIME_HHMM, "%H:%M")
+        fallback = datetime.strptime(K.PATH_B_FALLBACK_BUY_TIME_HHMM, "%H:%M")
+        assert primary < fallback
+
+    def test_path_b_fallback_within_morning_session(self):
+        """fallback이 정규장 시간(09:00~) 내에 있어야 함."""
+        from datetime import datetime
+        fallback = datetime.strptime(K.PATH_B_FALLBACK_BUY_TIME_HHMM, "%H:%M")
+        market_open = datetime.strptime("09:00", "%H:%M")
+        market_close = datetime.strptime("15:30", "%H:%M")
+        assert market_open <= fallback <= market_close
 
 
 def test_constants_are_immutable_via_typing():

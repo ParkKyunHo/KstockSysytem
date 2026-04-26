@@ -594,4 +594,100 @@ all import OK
 
 ---
 
-*최종 업데이트: 2026-04-26*
+## Phase 3: 거래 룰 구현 (진행 중)
+
+### P3.1: 박스 시스템 + 09:01→09:05 fallback 안전장치 (완료, 2026-04-26)
+
+**참조**: 02_TRADING_RULES.md §3, §10.9, 07_SKILLS_SPEC.md §2, 05_MIGRATION_PLAN.md §5.2
+
+**사용자 요구로 추가된 안전장치 (PRD patch #1)**
+
+> 추적종목이 장 시작 시초가 VI에 걸리면 09:01 매수 단일가 영역에서 미체결될 가능성. 1차 실패 시 09:05 시장가 fallback을 추가해야 함.
+
+**산출물**
+
+| 분류 | 파일 | 비고 |
+|------|------|------|
+| PRD | `02_TRADING_RULES.md §3.10`, `§3.11` | 1차 09:01 + 2차 09:05 fallback 룰 추가 |
+| PRD | `02_TRADING_RULES.md §10.9` (신규) | 시초 VI 시나리오 설명, 일반 VI 갭 3% vs 시초 VI 갭 5% 차이 명시 |
+| PRD | `07_SKILLS_SPEC.md §2.3` | `EntryDecision` dataclass에 `fallback_buy_at`, `fallback_uses_market_order`, `fallback_gap_recheck_required` 필드 추가 |
+| PRD | `07_SKILLS_SPEC.md §2.4` | `check_gap_up_for_path_b`를 1차/2차 공통 함수로 명시 |
+| PRD | `13_APPENDIX.md §6.2` (신규) | PRD 변경 이력 #1 기록 |
+| 코드 | `src/core/v71/v71_constants.py` | `PATH_B_PRIMARY_BUY_TIME_HHMM = "09:01"`, `PATH_B_FALLBACK_BUY_TIME_HHMM = "09:05"`, `PATH_B_FALLBACK_USES_MARKET_ORDER = True` (기존 `PATH_B_BUY_TIME_HHMM`은 rename) |
+| 코드 | `src/core/v71/box/box_state_machine.py` | `TrackedStatus`/`BoxStatus` Enum + `TrackedEvent`/`BoxEvent` Enum + 전이 검증 함수 (`transition_tracked_stock`, `transition_box`, `is_*_terminal`, `allowed_*_events`). `IllegalTransitionError`. 100% 커버리지 |
+| 코드 | `src/core/v71/skills/box_entry_skill.py` | `evaluate_box_entry` (PATH_A/B × PULLBACK/BREAKOUT 4 분기), `is_pullback_setup`/`is_breakout_setup`/`is_bullish` 헬퍼, `check_gap_up_for_path_b` (1차/2차 공통), PATH_B 결과에 fallback 메타데이터 자동 채움. V7.0 `Candle` 재사용 (헌법 3). 94.1% 커버리지 |
+| 코드 | `src/core/v71/box/box_manager.py` | `V71BoxManager` (in-memory) + `BoxRecord` dataclass + 4종 예외 (Validation/Overlap/Modification/NotFound). `create_box`/`modify_box`/`delete_box`/`mark_triggered`/`mark_invalidated`/`check_30day_expiry`/`mark_reminded`/`validate_no_overlap`. 98.6% 커버리지 |
+| 코드 | `src/core/v71/box/box_entry_detector.py` | 시그니처 정리 (P3.2 wiring 인터페이스 명시: `CandleSource` Protocol, `OnEntryCallback` TypeAlias, `start`/`check_entry` 시그니처). 본문은 P3.2 |
+| 테스트 | `tests/v71/test_v71_constants.py` | fallback 상수 PIN 테스트 4개 추가 (29 PASS) |
+| 테스트 | `tests/v71/test_box_state_machine.py` (신규) | 49 PASS |
+| 테스트 | `tests/v71/test_box_entry_skill.py` (신규) | 35 PASS (fallback 메타데이터 검증 포함) |
+| 테스트 | `tests/v71/test_box_manager.py` (신규) | 38 PASS |
+| 검증 | `scripts/harness/test_coverage_enforcer.py` | THRESHOLDS에 P3.1 모듈 3개 추가 (모두 90% 임계값) |
+
+**검증 결과**
+
+```
+$ pytest tests/v71/ --no-cov -q
+175 passed in 0.65s
+  - test_feature_flags         24
+  - test_v71_constants         29
+  - test_box_state_machine     49
+  - test_box_entry_skill       35
+  - test_box_manager           38
+
+$ python scripts/harness/run_all.py --with-7
+PASS 7/7 harness(es)
+  - Harness 7 임계값:
+    feature_flags.py             96.8%
+    v71_constants.py            100.0%
+    box/box_state_machine.py    100.0%
+    box/box_manager.py           98.6%
+    skills/box_entry_skill.py    94.1%
+```
+
+**fallback 안전장치 핵심 룰 핀 (테스트 강제)**
+
+| 핀 | 출처 | 테스트 |
+|----|------|--------|
+| 09:01 / 09:05 시각 정확성 | §3.10/§3.11 | `test_path_b_*_buy_at_*` |
+| fallback이 1차보다 뒤 | §10.9 | `test_path_b_fallback_is_after_primary` |
+| fallback은 시장가 강제 | §10.9 | `test_path_b_fallback_uses_market_order` |
+| fallback 시점 갭업 5% 재검증 | §10.9 | `test_pullback_b_triggered_with_fallback`, `check_gap_up_for_path_b` 테스트 5개 |
+| PATH_A 결과는 fallback 미적용 | §3.8/§3.9 | `test_normal_breakout`, `test_both_candles_meet_conditions` (fallback_* = None/False) |
+| 1차 갭업 5% 초과는 안전장치 미발동 | §3.10 | `test_gap_at_exact_5pct_does_not_proceed` (PATH_B 매수 자체 거부) |
+
+**헌법 5원칙 자체 검증**
+
+| 원칙 | 준수 |
+|------|------|
+| 1. 사용자 판단 불가침 | ✅ 사용자가 등록한 박스를 안전장치로 보호 (1회 매수 실패로 영구 포기 안 함) |
+| 2. NFR1 최우선 | ✅ 박스 진입 1회 더 시도, 4분 지연 허용 범위 내. `evaluate_box_entry`는 동기 함수 + DB 호출 없음 |
+| 3. 충돌 금지 ★ | ✅ 모든 신규 클래스 `V71*` 또는 `v71/` 격리. V7.0 `Candle`/`market_schedule` 단방향 import만. Harness 1/2/6 PASS |
+| 4. 시스템 계속 운영 | ✅ ValueError/RuntimeError로 fail-fast하되 시스템 정지 코드 0. 안전장치 자체가 운영 지속의 일부 |
+| 5. 단순함 | ✅ 5분 1회 fallback (무한 재시도 X). state machine은 transition table 1개. 박스 manager는 in-memory dict |
+
+**P3.2 핸드오프 항목**
+
+- `V71BoxEntryDetector.check_entry`/`start` 본문 구현 (`box_entry_skill.evaluate_box_entry` 호출)
+- `V71BuyExecutor` 신규 모듈: `EntryDecision` 받아 매수 실행
+  - PATH_A: 즉시 지정가 매수 (1호가 위) × 5초 × 3회 → 시장가
+  - PATH_B 1차 09:01: 동일 시퀀스
+  - PATH_B 2차 09:05: `fallback_buy_at` 도달 + 1차 미체결 시 `check_gap_up_for_path_b(prev_close, 09:05_current)` 통과하면 시장가 매수, 통과 못하면 포기 + HIGH 알림
+- `V71BoxEntryDetector` 임계값을 Harness 7에 추가
+- `vi_recovered_today` 플래그가 fallback에는 적용되지 않는 룰 (§10.9 마지막 조항) 명시적 테스트
+
+### Phase 3 진행 현황
+
+| Task | 상태 |
+|------|------|
+| P3.1 박스 시스템 (+ 09:05 fallback) | ✅ 완료 |
+| P3.2 매수 실행 (PATH_A/B + 09:05 fallback executor) | 다음 |
+| P3.3 매수 후 관리 | 대기 |
+| P3.4 평단가 관리 | 대기 |
+| P3.5 수동 거래 처리 | 대기 |
+| P3.6 VI 처리 | 대기 |
+| P3.7 시스템 재시작 복구 | 대기 |
+
+---
+
+*최종 업데이트: 2026-04-26 (P3.1 완료)*
