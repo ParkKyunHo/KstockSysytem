@@ -1,0 +1,67 @@
+# V7.1 pre-commit configuration.
+# Spec: docs/v71/08_HARNESS_SPEC.md §8.2
+#
+# Setup:
+#   pip install pre-commit
+#   pre-commit install
+#
+# Bypass (emergency only — record reason in commit message):
+#   git commit --no-verify
+
+repos:
+  - repo: local
+    hooks:
+      - id: harness-1-naming
+        name: V71 Harness 1 - Naming Collision
+        entry: python scripts/harness/naming_collision_detector.py
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-commit]
+
+      - id: harness-2-dependency
+        name: V71 Harness 2 - Dependency Cycle
+        entry: python scripts/harness/dependency_cycle_detector.py
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-commit]
+
+      - id: harness-3-trading-rule
+        name: V71 Harness 3 - Trading Rule Enforcer
+        entry: python scripts/harness/trading_rule_enforcer.py
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-commit]
+
+      - id: harness-4-schema
+        name: V71 Harness 4 - Schema Migration Validator
+        entry: python scripts/harness/schema_migration_validator.py
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-commit]
+
+      - id: harness-5-feature-flag
+        name: V71 Harness 5 - Feature Flag Enforcer (WARN)
+        entry: python scripts/harness/feature_flag_enforcer.py
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-commit]
+
+      - id: harness-6-dead-code
+        name: V71 Harness 6 - Dead Code Detector (WARN through Phase 1)
+        entry: python scripts/harness/dead_code_detector.py
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-commit]
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.6.9
+    hooks:
+      - id: ruff
+        args: [--fix, --exit-non-zero-on-fix]
+        files: ^(src/|scripts/harness/|tests/v71/)

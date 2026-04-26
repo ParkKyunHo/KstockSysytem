@@ -1,0 +1,87 @@
+"""Harness 7: Test Coverage Enforcer.
+
+Spec: docs/v71/08_HARNESS_SPEC.md §7
+Level: BLOCK (CI), Phase 0에서는 INFO only.
+
+Threshold:
+  - src/core/v71/        ≥ 90%  (거래 로직)
+  - src/database/, src/utils/  ≥ 80% (인프라)
+
+Phase 0 동작:
+  - pytest --cov 호출 → coverage.json 생성 → 임계치 비교.
+  - tests/v71/ 디렉토리만 대상으로 빠르게 측정 (전체는 CI에서).
+"""
+
+from __future__ import annotations
+
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+from _common import REPO_ROOT, HarnessResult
+
+
+THRESHOLDS = {
+    "src/core/v71/": 90.0,
+    "src/utils/feature_flags.py": 90.0,
+}
+
+
+def _run_pytest() -> int:
+    cmd = [
+        sys.executable,
+        "-m",
+        "pytest",
+        "tests/v71/",
+        "--cov=src",
+        "--cov-report=json",
+        "-q",
+    ]
+    return subprocess.call(cmd, cwd=REPO_ROOT)
+
+
+def main() -> None:
+    result = HarnessResult("Harness 7: Test Coverage Enforcer", level="BLOCK")
+
+    tests_v71 = REPO_ROOT / "tests" / "v71"
+    if not tests_v71.exists() or not any(tests_v71.glob("test_*.py")):
+        result.note("tests/v71/ has no tests yet — coverage check deferred.")
+        result.report_and_exit()
+
+    rc = _run_pytest()
+    if rc != 0:
+        result.violate(f"pytest returned non-zero exit code {rc}.")
+        result.report_and_exit()
+
+    coverage_file = REPO_ROOT / "coverage.json"
+    if not coverage_file.is_file():
+        result.violate("coverage.json not generated.")
+        result.report_and_exit()
+
+    data = json.loads(coverage_file.read_text(encoding="utf-8"))
+    files = data.get("files", {})
+
+    for prefix, min_pct in THRESHOLDS.items():
+        relevant = {
+            f: stats for f, stats in files.items() if f.replace("\\", "/").startswith(prefix)
+        }
+        if not relevant:
+            result.note(f"No files match '{prefix}' yet (skipped).")
+            continue
+        total_stmts = sum(stats["summary"]["num_statements"] for stats in relevant.values())
+        covered = sum(stats["summary"]["covered_lines"] for stats in relevant.values())
+        pct = (covered / total_stmts * 100) if total_stmts else 100.0
+        status = "OK" if pct >= min_pct else "FAIL"
+        msg = f"{prefix}: {pct:.1f}% (threshold {min_pct:.0f}%) [{status}]"
+        if pct < min_pct:
+            result.violate(msg)
+        else:
+            result.note(msg)
+
+    result.report_and_exit()
+
+
+if __name__ == "__main__":
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    main()

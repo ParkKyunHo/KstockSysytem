@@ -1,0 +1,48 @@
+# V7.1 Feature Flags
+#
+# Purpose: V7.1 전환 중 V7.0 운영을 보호하면서 V7.1 신규 모듈을 점진 활성화한다.
+# Source of truth: docs/v71/05_MIGRATION_PLAN.md §10 (Feature Flag 전략)
+#
+# Convention:
+#   - 모든 V7.1 신규 코드는 진입점에서 src.utils.feature_flags.is_enabled('v71.<flag>')
+#     로 가드되어야 한다 (하네스 5가 강제).
+#   - 환경변수 V71_FF__<DOTTED_PATH>=true|false 로 런타임 오버라이드 가능.
+#     예) V71_FF__V71__BOX_SYSTEM=true
+#   - false 가 기본값이며, V7.0 동작이 변경 없이 유지된다.
+#
+# Phase 매핑:
+#   - Phase 3 완료 후: box_system, vi_monitor, reconciliation_v71 → 페이퍼에서 true
+#   - Phase 4 완료 후: notification_v71 → true
+#   - Phase 5 완료 후: web_dashboard → true
+#   - Phase 6 완료 후: reporting → true
+
+v71:
+  # Phase 3: 거래 룰 (02_TRADING_RULES.md)
+  box_system: false           # §3 박스 시스템 (사용자 정의 진입 영역)
+  pullback_strategy: false    # §4.1 PATH_A 눌림 진입
+  breakout_strategy: false    # §4.2 PATH_A 돌파 진입
+  path_b_daily: false         # §4.3 PATH_B 일봉 중기
+  exit_v71: false             # §5 단계별 손절 + 분할 익절 + V7.1 ATR 배수
+  position_v71: false         # §6 평단가 가중평균 + 이벤트 리셋
+  manual_trade_handler: false # §7 수동 거래 시나리오 A/B/C/D
+  vi_monitor: false           # §10 VI 상태 머신
+  restart_recovery: false     # §13 7-Step 복구 시퀀스
+  reconciliation_v71: false   # §7/§13 포지션 정합성
+
+  # Phase 4: 알림
+  notification_v71: false     # §9 4단계 등급 + 우선순위 큐
+  telegram_commands_v71: false # 13개 명령어
+  daily_summary: false         # 매일 15:30
+  monthly_review: false        # 매월 1일
+
+  # Phase 5: 웹 대시보드
+  web_dashboard: false         # FastAPI + JWT + 2FA
+  websocket_updates: false     # 실시간 포지션 푸시
+
+  # Phase 6: 리포트
+  reporting: false             # Claude Opus 4.7 종목 리포트
+  report_pdf_export: false
+  report_excel_export: false
+
+  # 안전 장치 (역방향 비활성화)
+  v70_box_fallback: true       # V7.1 박스 미활성 시 V7.0 동작 유지 보장
