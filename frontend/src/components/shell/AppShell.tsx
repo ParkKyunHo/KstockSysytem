@@ -60,7 +60,13 @@ export function AppShell({ onCycleTheme }: AppShellProps) {
 
   return (
     <HeaderContainer
-      render={({ isSideNavExpanded, onClickSideNavExpand }) => (
+      render={({
+        isSideNavExpanded,
+        onClickSideNavExpand,
+      }: {
+        isSideNavExpanded: boolean;
+        onClickSideNavExpand: () => void;
+      }) => (
         <div className="app-shell">
           <Header aria-label="V7.1 K-Stock Trading">
             <SkipToContent />
