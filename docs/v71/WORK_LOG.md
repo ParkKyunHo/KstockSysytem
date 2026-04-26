@@ -2212,3 +2212,218 @@ npm run dev              # http://localhost:5173 (FastAPI proxy 미실행 상태
 ---
 
 *최종 업데이트: 2026-04-27 (P5.2 -- Vite + React + TS bootstrap + AppShell + 9-page placeholder + Patch #3 적용)*
+
+---
+
+### P5.2 hotfix: tsconfig + AppShell 타입 + build script (완료, 2026-04-27)
+
+**사용자 보고 (npm 명령어 실행 결과)**: typecheck/build/dev script 동작 안 됨 (사용자가 루트에서 실행) + 실제 typecheck 시 tsconfig references composite + noEmit 충돌, AppShell `HeaderContainer` render prop 인자 implicit any.
+
+**수정 (commit `f401678`)**
+
+| 파일 | 변경 |
+|------|------|
+| `tsconfig.json` | `vite.config.ts` include 제거, `references` 제거 |
+| `tsconfig.node.json` | `composite` 제거 (noEmit과 충돌). target ES2022 + lib ES2023 추가 |
+| `package.json` | build script `"tsc -b"` → `"tsc --noEmit"` |
+| `src/components/shell/AppShell.tsx` | `HeaderContainer` render prop 인자 명시적 타입 |
+
+**검증**: npm run typecheck 0 errors / npm run dev HTTP 200 / npm run build 949 modules 7.95s.
+
+---
+
+### P5.2 hotfix-2: Sass `@import` deprecation (완료, 2026-04-27)
+
+`main.scss`: `@import './pnl'; @import './shell';` → `@use './pnl'; @use './shell';` (Dart Sass 3.0 호환).
+
+**검증**: build 0 deprecation warnings, ✓ built in 6.88s.
+
+**commit**: `c2cffb0`
+
+---
+
+### P5.3 Step 1+2: mocks + Dashboard 실 구현 (완료, 2026-04-27)
+
+**참조**: `frontend-prototype/src/mocks/index.js` + `frontend-prototype/src/pages/dashboard.js`, PRD Patch #3
+
+**산출물 (commit `119dc01`)**: `lib/{time, formatters}.ts` + `mocks/{trackedStocks, boxes, positions, tradeEvents, notifications, system, index}.ts` + `hooks/useLiveMock.ts` + `components/{kpi/KPITile, pnl/PnLCell, tags/StatusTag}.tsx` + `pages/Dashboard.tsx` 실 구현.
+
+PRD Patch #3 적용:
+- `TrackedStock`에서 `path_type` 제거
+- `TrackedStockSummary`에 `path_a_box_count` + `path_b_box_count` (boxes에서 자동 계산)
+- `Box.path_type` 필수
+- `Position.path_type`은 box로부터 상속
+
+검증: 494 (existing) + 96 (P5.1~P5.2 placeholder N/A) → 단지 typecheck 0 + build 962 modules 7.06s.
+
+---
+
+### P5.3 hotfix-1: AppShell + Dashboard 프로토타입 1:1 매칭 시작 (완료, 2026-04-27)
+
+**사용자 보고**: KPI 정렬, 테마 아이콘 변경 안 됨 등 디자인 차이.
+
+**commit `ae9b88b`**: 테마 아이콘 동적(Sun/Moon/Contrast), KPI grid BEM 1px subtle divider, 사용자/알림 헤더, SideNav 시스템 상태 footer, page-hd / section-hd / tile-row / grid-2 BEM SCSS 추가, Outlet context 도입, TradeEvents 추가.
+
+---
+
+### P5.3 hotfix-2: Login + LoginTotp 1:1 매칭 (완료, 2026-04-27)
+
+**commit `7759da9`**: login-shell + login-tile BEM, 30초 rolling countdown ProgressBar, 6자리 자동 verify (123456 → /dashboard), Carbon TextInput/PasswordInput 활용.
+
+---
+
+### P5.3 hotfix-3 ★: Carbon @react 제거 + 프로토타입 BEM CSS 그대로 (완료, 2026-04-27)
+
+**사용자 보고**:
+- 좌측 하단 시스템 상태 디자인 차이
+- 대시보드 시스템 정상/WebSocket 등 레이아웃 차이
+- "전체적으로 왜 이런 차이?"
+
+**근본 원인**: Carbon @react SCSS와 프로토타입의 자체 추출 carbon-tokens.css가 색상/spacing/border 토큰 값이 달라 1:1 매칭 불가능.
+
+**해결 (commit `b9168f8`)**:
+
+1. **legacy CSS 그대로 사용**:
+   - `frontend-prototype/src/styles/{carbon-tokens, carbon-components, app}.css`을
+     `frontend/src/styles/legacy/`로 복사
+   - `main.scss`: Carbon @react SCSS 제거, `@import legacy/*.css`만 사용
+   - 자체 `_shell.scss` + `_pnl.scss` 제거 (legacy CSS가 정의)
+
+2. **components 자체 변환 (vanilla JS → React + TS)**:
+   - `components/icons.tsx` (신규): 41개 SVG 아이콘 (Menu/Bell/Dashboard/Sun/Moon/Contrast/Receipt/...)
+   - `components/ui.tsx` (신규, 23 컴포넌트): Tag / Btn / Field / Input / NumInput / Textarea / SearchBox / Toggle / Checkbox / RadioTileGroup / SliderInput / Dropdown / OverflowMenu / Modal / InlineNotif / ToastContainer / Tabs / ProgressIndicator / ProgressBar / Pagination / KPITile / PnLCell / SeverityTag / TrackedStatusTag / PositionSourceTag / BoxStatusTag / Skeleton / Tile / ExpandableTile + `useToasts` hook
+   - `components/shell/AppShell.tsx` 재작성 (BEM 자체):
+     * `cds-header` (사용자 박/박균호 + 알림 dot + Sun/Moon/Contrast 테마 cycle)
+     * `cds-side-nav` (메뉴 7개 + 시스템 상태 footer with sys-status-line)
+   - 제거: `components/{kpi, pnl, tags, shell/PlaceholderPage}` (ui.tsx로 통합)
+
+3. **pages 재작성**:
+   - `Dashboard.tsx`: dashboard.js 1:1 변환 (page-hd + kpi-grid + tile-row + section-hd + cds-data-table + grid-2)
+   - `Login.tsx` + `LoginTotp.tsx`: login-shell + login-tile BEM
+   - 나머지 7 페이지: placeholder (page-hd 형식, 다음 세션에서 1:1 매칭)
+
+4. **App.tsx**:
+   - Carbon Theme 컴포넌트 제거
+   - useEffect로 `<html>`에 `theme-{name}` class 추가 (프로토타입 호환)
+
+**Bundle 변화**:
+| 항목 | 이전 (Carbon @react) | 현재 (자체 BEM) |
+|------|---------------------|----------------|
+| modules | 962 | **108** |
+| build time | 7.06s | **874ms** |
+| CSS | 815 kB | ~80 kB |
+| JS | 396 kB | ~50 kB |
+
+→ 8배 빠른 빌드 + 90% 작은 번들
+
+**검증**: npm run typecheck → 0 errors / npm run build → 108 modules in 874ms.
+
+**해결된 디자인 차이**:
+| 항목 | 해결 |
+|------|------|
+| 좌측 하단 시스템 상태 | `.cds-side-nav__footer` + `.sys-status-line` 4 dot + 시각 ✓ |
+| 대시보드 시스템 정상/WebSocket | `.tile-row` + green/red Tag 4개 + 마감 카운트다운 + Uptime ✓ |
+| 테마 아이콘 동적 | Sun(g10) / Moon(g100) / Contrast(g90) cycle ✓ |
+| KPI 정렬 | `.kpi-grid` 4-up + 1px subtle divider + IBM Plex Mono 36px ✓ |
+| 페이지 헤더 | `.page-hd` + subtitle + actions ✓ |
+| 진입 임박 박스/포지션/거래/알림 | `.cds-data-table` + `.cds-table` + `.cds-slist` ✓ |
+| 한국식 손익 색상 | `--cds-pnl-profit` / `--cds-pnl-loss` (carbon-tokens.css) ✓ |
+
+---
+
+## 다음 세션 핸드오프 (2026-04-27 종료 시점)
+
+### 현재 상태 스냅샷
+
+| 항목 | 값 |
+|------|-----|
+| 브랜치 | `v71-development` |
+| 최신 commit | `b9168f8` (P5.3 hotfix-3) |
+| 최신 tag | `v71-p52-vite-bootstrap` (이후 hotfix 다수, 새 tag 미생성) |
+| GitHub | https://github.com/ParkKyunHo/KstockSysytem |
+| pytest tests/v71/ | 585 PASS (변동 없음 -- backend 미수정) |
+| 하네스 | 7/7 PASS (변동 없음) |
+| frontend build | 108 modules in 874ms ✓ |
+| frontend typecheck | 0 errors ✓ |
+
+### 완료된 화면 (1:1 매칭)
+
+- ✅ AppShell (Header + SideNav + 시스템 상태 footer + 테마 cycle)
+- ✅ Dashboard (page-hd + KPI + tile-row + 진입 임박 + 활성 포지션 + grid-2)
+- ✅ Login (login-shell + login-tile + ID/PW)
+- ✅ LoginTotp (6자리 + 30초 ProgressBar)
+
+### 다음 세션 작업 범위
+
+**프론트엔드 (P5.3 잔여)**: 7 페이지 1:1 매칭
+
+| 페이지 | 프로토타입 LOC | 우선순위 |
+|--------|---------------|----------|
+| Positions | 94 | 1 (가장 단순) |
+| TrackedStocks (List + Detail) | 347 | 2 (가장 복잡) |
+| BoxWizard | 183 | 3 (★ Patch #3 6 → 7 step) |
+| TradeEvents (Timeline + Table) | 304 | 4 |
+| Reports | 226 | 5 |
+| Notifications + Settings | 176 | 6 |
+
+총 약 1,330라인 변환 예정.
+
+**다음 단계 (P5.4+)**:
+- P5.4: 백엔드 (FastAPI + JWT + 2FA + REST + WebSocket)
+- P5.5: 백엔드 ↔ 프론트엔드 wires (TanStack Query + WebSocket 클라이언트)
+- P5.6: e2e + 검증 → `v71-phase5-complete` (M5)
+
+### 다음 세션 첫 메시지 (사용자 그대로 붙여넣기)
+
+```
+# V7.1 Phase 5 P5.3 잔여 작업 이어서
+
+## 환경
+- 프로젝트: C:\K_stock_trading\
+- 브랜치: v71-development
+- 최신 commit: b9168f8 (P5.3 hotfix-3)
+- GitHub: https://github.com/ParkKyunHo/KstockSysytem
+
+## 사전 학습 (필수, 순서대로)
+1. C:\K_stock_trading\CLAUDE.md
+2. C:\K_stock_trading\docs\v71\WORK_LOG.md (Phase 0~5.3 누적 + 다음 세션 핸드오프)
+3. C:\K_stock_trading\frontend-prototype\src\pages\* (1:1 매칭 source)
+4. C:\K_stock_trading\frontend\src\components\ui.tsx (이미 변환된 23개 UI primitive)
+5. C:\K_stock_trading\frontend\src\styles\legacy\app.css (BEM 클래스 정의)
+
+## 룰 (절대)
+1. 헌법 5원칙 (사용자 판단 / NFR1 / 충돌 금지 / 시스템 운영 / 단순함)
+2. 디자인 1:1 매칭 -- frontend-prototype/src/pages/{name}.js를 그대로 변환
+3. Carbon @react 사용 안 함 (자체 BEM CSS만)
+4. PRD Patch #3 적용 (BoxWizard 7-step 등)
+5. components/ui.tsx의 컴포넌트 + components/icons.tsx 사용
+6. 모든 BEM 클래스는 frontend/src/styles/legacy/*.css에 이미 정의됨
+
+## 응답 요청
+위 5개 문서 정독 후:
+1. P5.3 잔여 7 페이지 작업 계획
+2. Positions부터 1:1 매칭 시작 준비
+
+## 검증 (각 페이지 변환 후)
+- cd frontend && npm run typecheck → 0 errors
+- npm run build → modules 정상 / built 성공
+- 사용자 브라우저 검증 (HMR로 자동 반영)
+```
+
+### 핵심 디자인 결정 (절대 변경 금지)
+
+1. **Carbon @react 사용 안 함**. 자체 `components/ui.tsx` (BEM) + `components/icons.tsx` (SVG).
+2. **CSS 3개 파일** (`legacy/{carbon-tokens, carbon-components, app}.css`)을 변경 안 함. main.scss에서 `@import`만.
+3. **한국식 손익 색상**: `var(--cds-pnl-profit)` / `var(--cds-pnl-loss)` (carbon-tokens.css 정의됨).
+4. **다크 모드 g100 기본**, 사용자 토글 `<html class="theme-{name}">` 사용.
+5. **데이터 흐름**: AppShell의 `useLiveMock`에서 mock 단일 호출 → Outlet context → 페이지에서 `useAppShellContext()`로 받음.
+6. **PRD Patch #3 적용**: `Box.path_type` 필수, `TrackedStock.path_type` 없음, `BoxWizard` 7-step.
+
+### 권고 사항 (사용자 확인 필요)
+
+- DB 비밀번호 회전 (Phase 0 보안 사고 #1, #2 -- 운영 시작 전 권장)
+- 디자인 검토: Dashboard / Login / LoginTotp 브라우저에서 확인 후 다음 페이지 진행
+
+---
+
+*최종 업데이트: 2026-04-27 (P5.3 hotfix-3 + 다음 세션 핸드오프 준비 완료)*
