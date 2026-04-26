@@ -1,7 +1,8 @@
 import {
-  Column,
+  Button,
   DataTable,
-  Grid,
+  OverflowMenu,
+  OverflowMenuItem,
   StructuredListBody,
   StructuredListCell,
   StructuredListRow,
@@ -14,454 +15,486 @@ import {
   TableHeader,
   TableRow,
   Tag,
-  Tile,
 } from '@carbon/react';
+import { Add, Renew } from '@carbon/icons-react';
 import { useNavigate } from 'react-router-dom';
 
 import { KPITile } from '@/components/kpi/KPITile';
 import { PnLCell } from '@/components/pnl/PnLCell';
 import {
-  BoxStatusTag,
   PositionSourceTag,
-  PositionStatusTag,
   SeverityTag,
-  TrackedStatusTag,
 } from '@/components/tags/StatusTag';
-import { useLiveMock } from '@/hooks/useLiveMock';
+import { useAppShellContext } from '@/hooks/useAppShell';
+import { eventLabel } from '@/lib/eventLabel';
 import {
   formatKrw,
   formatKrwSigned,
   formatPct,
-  formatPctRaw,
   formatTime,
+  formatUntil,
+  formatUptime,
 } from '@/lib/formatters';
-import { initialMock, type TrackedStockWithPrice } from '@/mocks';
-import type { Box, NotificationRecord, Position, TradeEvent } from '@/types';
 
 const TOTAL_CAPITAL = 100_000_000;
 
 export function Dashboard() {
-  const mock = useLiveMock(initialMock);
+  const { mock } = useAppShellContext();
   const navigate = useNavigate();
+  const sys = mock.systemStatus;
 
-  // ---------- KPI computations ----------
-  const trackingCount = mock.trackedStocks.filter(
-    (s) => s.status !== 'EXITED',
+  // -------- KPI computations --------
+  const trackedCount = mock.trackedStocks.filter(
+    (t) => t.status !== 'EXITED',
   ).length;
-  const waitingBoxCount = mock.boxes.filter((b) => b.status === 'WAITING').length;
-  const activePositions = mock.positions.filter((p) => p.status !== 'CLOSED');
-  const partialPositionCount = activePositions.filter(
-    (p) => p.status === 'PARTIAL_CLOSED',
+  const boxWaiting = mock.boxes.filter((b) => b.status === 'WAITING').length;
+  const boxTriggered = mock.boxes.filter(
+    (b) => b.status === 'TRIGGERED',
   ).length;
-  const capitalUsed = activePositions.reduce(
-    (acc, p) => acc + p.actual_capital_invested,
-    0,
-  );
-  const capitalUsedPct = (capitalUsed / TOTAL_CAPITAL) * 100;
-  const todayPnl = activePositions.reduce((acc, p) => acc + p.pnl_amount, 0);
+  const positions = mock.positions.filter((p) => p.status !== 'CLOSED');
+  const partial = positions.filter((p) => p.status === 'PARTIAL_CLOSED').length;
+  const used = positions.reduce((s, p) => s + p.actual_capital_invested, 0);
+  const usedPct = (used / TOTAL_CAPITAL) * 100;
+  const todayPnl = positions.reduce((s, p) => s + p.pnl_amount, 0);
   const todayPnlPct = (todayPnl / TOTAL_CAPITAL) * 100;
 
-  // ---------- imminent boxes (entry_proximity_pct within ±2%) ----------
-  const imminentBoxes = mock.boxes
+  // -------- imminent boxes (proximity within ±2%) --------
+  const upcoming = mock.boxes
     .filter(
       (b) =>
         b.status === 'WAITING' &&
         b.entry_proximity_pct != null &&
-        Math.abs(b.entry_proximity_pct) <= 2,
+        Math.abs(b.entry_proximity_pct) < 2,
     )
     .sort(
       (a, b) =>
         Math.abs(a.entry_proximity_pct ?? 99) -
         Math.abs(b.entry_proximity_pct ?? 99),
-    );
+    )
+    .slice(0, 5);
 
-  // ---------- today's trade events ----------
-  const todayStartIso = new Date(
-    new Date(mock.systemStatus.current_time).setHours(0, 0, 0, 0),
-  ).toISOString();
-  const todayEvents = mock.tradeEvents
-    .filter((e) => e.occurred_at >= todayStartIso)
-    .sort((a, b) => (b.occurred_at < a.occurred_at ? -1 : 1));
+  // -------- today's trades --------
+  const dayMs = 86_400_000;
+  const todaysTrades = mock.tradeEvents.filter(
+    (e) => Date.now() - new Date(e.occurred_at).getTime() < dayMs,
+  );
 
-  // ---------- recent notifications ----------
-  const recentNotifications = [...mock.notifications]
-    .sort((a, b) => (b.created_at < a.created_at ? -1 : 1))
+  // -------- recent notifications --------
+  const recentNotifs = [...mock.notifications]
+    .sort(
+      (a, b) =>
+        new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
+    )
     .slice(0, 5);
 
   return (
-    <>
-      <header className="page-header">
-        <h1 className="page-header__title">대시보드</h1>
-      </header>
+    <div>
+      {/* Page header */}
+      <div className="page-hd">
+        <div>
+          <h1 className="page-hd__title">대시보드</h1>
+          <div className="page-hd__subtitle">
+            {sys.market.is_open
+              ? `장 진행중 · 마감까지 ${formatUntil(sys.market.next_close_at)}`
+              : '장 마감'}
+          </div>
+        </div>
+        <div className="page-hd__actions">
+          <Button
+            kind="tertiary"
+            size="sm"
+            renderIcon={Renew}
+            onClick={() => {
+              /* P5.4: TanStack Query refetch */
+            }}
+          >
+            새로고침
+          </Button>
+          <Button
+            kind="primary"
+            size="sm"
+            renderIcon={Add}
+            onClick={() => navigate('/tracked-stocks?new=1')}
+          >
+            새 종목 추적
+          </Button>
+        </div>
+      </div>
 
-      {/* KPI 4 */}
-      <Grid narrow style={{ marginBottom: '1.5rem' }}>
-        <Column sm={4} md={4} lg={4}>
-          <KPITile
-            title="추적 종목"
-            value={String(trackingCount)}
-            subtitle={`박스 대기 ${waitingBoxCount}`}
-          />
-        </Column>
-        <Column sm={4} md={4} lg={4}>
-          <KPITile
-            title="활성 포지션"
-            value={String(activePositions.length)}
-            subtitle={`부분청산 ${partialPositionCount}`}
-          />
-        </Column>
-        <Column sm={4} md={4} lg={4}>
-          <KPITile
-            title="자본 사용"
-            value={`${capitalUsedPct.toFixed(1)}%`}
-            subtitle={`가용 ${(100 - capitalUsedPct).toFixed(1)}%`}
-            progress={capitalUsedPct}
-          />
-        </Column>
-        <Column sm={4} md={4} lg={4}>
-          <KPITile
-            title="오늘 손익"
-            value={`${formatKrwSigned(todayPnl)}원`}
-            subtitle={formatPct(todayPnlPct)}
-            tone={todayPnl > 0 ? 'profit' : todayPnl < 0 ? 'loss' : 'neutral'}
-          />
-        </Column>
-      </Grid>
+      {/* KPI grid */}
+      <div className="kpi-grid">
+        <KPITile
+          label="추적 종목"
+          value={String(trackedCount)}
+          subtitle={`박스 대기 ${boxWaiting} / 진입 완료 ${boxTriggered}`}
+        />
+        <KPITile
+          label="활성 포지션"
+          value={String(positions.length)}
+          subtitle={`부분청산 ${partial} / 전체 보유 ${
+            positions.length - partial
+          }`}
+        />
+        <KPITile
+          label="자본 사용"
+          value={`${usedPct.toFixed(1)}%`}
+          subtitle={`가용 ${(100 - usedPct).toFixed(1)}% · ${formatKrw(
+            TOTAL_CAPITAL - used,
+          )}원`}
+          progress={usedPct}
+        />
+        <KPITile
+          label="오늘 손익"
+          value={`${formatKrwSigned(todayPnl)}원`}
+          subtitle={formatPct(todayPnlPct)}
+          tone={todayPnl >= 0 ? 'profit' : 'loss'}
+          compact
+        />
+      </div>
 
-      {/* System status */}
-      <SystemStatusRow mock={mock} />
+      {/* System status row */}
+      <div className="tile-row">
+        <Tag type={sys.status === 'RUNNING' ? 'green' : 'red'}>
+          {sys.status === 'RUNNING' ? '시스템 정상' : '안전 모드'}
+        </Tag>
+        <Tag type={sys.websocket.connected ? 'green' : 'red'}>WebSocket</Tag>
+        <Tag type={sys.kiwoom_api.available ? 'green' : 'red'}>
+          키움 API {sys.kiwoom_api.rate_limit_used_per_sec}/
+          {sys.kiwoom_api.rate_limit_max}
+        </Tag>
+        <Tag type={sys.telegram_bot.active ? 'green' : 'red'}>Telegram</Tag>
+        <span className="tile-row__separator" />
+        <Tag type="blue">
+          {sys.market.is_open
+            ? `장 진행중 ${formatTime(sys.current_time)}`
+            : '장 마감'}
+        </Tag>
+        {sys.market.is_open ? (
+          <span className="text-helper">
+            마감까지 {formatUntil(sys.market.next_close_at)}
+          </span>
+        ) : null}
+        <span className="tile-row__spacer" />
+        <span className="text-helper numeric">
+          Uptime {formatUptime(sys.uptime_seconds)}
+        </span>
+      </div>
 
       {/* Imminent boxes */}
-      <ImminentBoxesTable
-        boxes={imminentBoxes}
-        trackedStocks={mock.trackedStocks}
-        onSelect={(box) => navigate(`/tracked-stocks/${box.tracked_stock_id}`)}
-      />
+      <div className="section-hd">
+        <h2>진입 임박 박스</h2>
+        <Button
+          kind="ghost"
+          size="sm"
+          onClick={() => navigate('/tracked-stocks')}
+        >
+          전체 보기
+        </Button>
+      </div>
+      {upcoming.length === 0 ? (
+        <div
+          style={{
+            background: 'var(--cds-layer)',
+            padding: '1rem',
+          }}
+        >
+          <p className="text-helper" style={{ margin: 0 }}>
+            현재 진입 임박 박스 없음
+          </p>
+        </div>
+      ) : (
+        <DataTable
+          rows={upcoming.map((b) => {
+            const ts = mock.trackedStocks.find(
+              (t) => t.id === b.tracked_stock_id,
+            );
+            const proximity = b.entry_proximity_pct ?? 0;
+            return {
+              id: b.id,
+              stock: (
+                <span>
+                  <strong>{b.stock_name}</strong>{' '}
+                  <span className="text-helper numeric">{b.stock_code}</span>
+                </span>
+              ),
+              currentPrice: ts ? `${formatKrw(ts.current_price)}원` : '-',
+              box: `${formatKrw(b.lower_price)}~${formatKrw(b.upper_price)}`,
+              distance: (
+                <span className={proximity >= 0 ? 'pnl-profit' : 'pnl-loss'}>
+                  {formatPct(proximity)}
+                </span>
+              ),
+              size: `${b.position_size_pct}%`,
+              strategy: <Tag type="cool-gray">{b.strategy_type}</Tag>,
+              actions: (
+                <OverflowMenu
+                  flipped
+                  aria-label={`${b.stock_name} ${b.box_tier}차 박스 메뉴`}
+                >
+                  <OverflowMenuItem
+                    itemText="박스 수정"
+                    onClick={() =>
+                      navigate(`/tracked-stocks/${b.tracked_stock_id}`)
+                    }
+                  />
+                  <OverflowMenuItem
+                    itemText="종목 상세"
+                    onClick={() =>
+                      navigate(`/tracked-stocks/${b.tracked_stock_id}`)
+                    }
+                  />
+                  <OverflowMenuItem
+                    itemText="박스 취소"
+                    isDelete
+                    hasDivider
+                    onClick={() => {
+                      /* P5.4 mutation */
+                    }}
+                  />
+                </OverflowMenu>
+              ),
+            };
+          })}
+          headers={[
+            { key: 'stock', header: '종목명' },
+            { key: 'currentPrice', header: '현재가' },
+            { key: 'box', header: '박스' },
+            { key: 'distance', header: '거리' },
+            { key: 'size', header: '비중' },
+            { key: 'strategy', header: '전략' },
+            { key: 'actions', header: '' },
+          ]}
+        >
+          {({ rows, headers, getHeaderProps, getRowProps, getTableProps }) => (
+            <TableContainer>
+              <Table {...getTableProps()}>
+                <TableHead>
+                  <TableRow>
+                    {headers.map((h) => (
+                      <TableHeader {...getHeaderProps({ header: h })}>
+                        {h.header}
+                      </TableHeader>
+                    ))}
+                  </TableRow>
+                </TableHead>
+                <TableBody>
+                  {rows.map((row) => (
+                    <TableRow {...getRowProps({ row })}>
+                      {row.cells.map((cell) => (
+                        <TableCell key={cell.id}>{cell.value}</TableCell>
+                      ))}
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </TableContainer>
+          )}
+        </DataTable>
+      )}
 
       {/* Active positions */}
-      <PositionsTable positions={activePositions} />
-
-      {/* Today's trades */}
-      <TodayTradesTable events={todayEvents} />
-
-      {/* Recent notifications */}
-      <RecentNotificationsList
-        notifications={recentNotifications}
-        onSelect={() => navigate('/notifications')}
-      />
-    </>
-  );
-}
-
-// ---------------------------------------------------------------------
-// Sub-sections
-// ---------------------------------------------------------------------
-
-function SystemStatusRow({ mock }: { mock: ReturnType<typeof useLiveMock> }) {
-  const ws = mock.systemStatus.websocket.connected;
-  const kiwoom = mock.systemStatus.kiwoom_api.available;
-  const session = mock.systemStatus.market.is_open ? '장 진행중' : '장 외';
-  const now = new Date(mock.systemStatus.current_time);
-  const closeIso = mock.systemStatus.market.next_close_at;
-  const closeMin = closeIso
-    ? Math.max(
-        0,
-        Math.round((new Date(closeIso).getTime() - now.getTime()) / 60_000),
-      )
-    : null;
-  const closeLabel =
-    closeMin != null
-      ? `마감까지 ${Math.floor(closeMin / 60)}h ${closeMin % 60}m`
-      : '';
-
-  return (
-    <Tile
-      style={{
-        marginBottom: '1.5rem',
-        display: 'flex',
-        flexWrap: 'wrap',
-        gap: '0.75rem',
-        alignItems: 'center',
-      }}
-    >
-      <Tag type={mock.systemStatus.status === 'RUNNING' ? 'green' : 'red'}>
-        시스템 {mock.systemStatus.status === 'RUNNING' ? '정상' : '안전 모드'}
-      </Tag>
-      <Tag type={ws ? 'green' : 'red'}>WebSocket {ws ? 'OK' : '끊김'}</Tag>
-      <Tag type={kiwoom ? 'green' : 'red'}>키움 API {kiwoom ? 'OK' : '오류'}</Tag>
-      <span style={{ flex: 1 }} />
-      <Tag type="blue">
-        {session} {formatTime(mock.systemStatus.current_time)}
-      </Tag>
-      {closeLabel ? (
-        <span className="cds--type-helper-text-01">{closeLabel}</span>
-      ) : null}
-    </Tile>
-  );
-}
-
-function ImminentBoxesTable({
-  boxes,
-  trackedStocks,
-  onSelect,
-}: {
-  boxes: Box[];
-  trackedStocks: TrackedStockWithPrice[];
-  onSelect: (box: Box) => void;
-}) {
-  if (boxes.length === 0) {
-    return (
-      <Tile
-        style={{ marginBottom: '1.5rem', padding: '1.5rem', textAlign: 'center' }}
-      >
-        <p className="cds--type-helper-text-01">진입 임박 박스가 없습니다.</p>
-      </Tile>
-    );
-  }
-
-  const headers = [
-    { key: 'stock', header: '종목' },
-    { key: 'currentPrice', header: '현재가' },
-    { key: 'box', header: '박스' },
-    { key: 'distance', header: '거리' },
-    { key: 'size', header: '비중' },
-  ];
-
-  const rows = boxes.map((box) => {
-    const stock = trackedStocks.find((s) => s.id === box.tracked_stock_id);
-    const proximity = box.entry_proximity_pct ?? 0;
-    return {
-      id: box.id,
-      _box: box,
-      stock: `${box.stock_name} (${box.stock_code})`,
-      currentPrice: stock ? formatKrw(stock.current_price) + '원' : '-',
-      box: `${formatKrw(box.lower_price)} ~ ${formatKrw(box.upper_price)}`,
-      distance: (
-        <span className={proximity >= 0 ? 'pnl-profit' : 'pnl-loss'}>
-          {formatPct(proximity)}
-        </span>
-      ),
-      size: formatPctRaw(box.position_size_pct),
-    };
-  });
-
-  return (
-    <div style={{ marginBottom: '1.5rem' }}>
-      <DataTable rows={rows} headers={headers}>
-        {({ rows: r, headers: h, getHeaderProps, getRowProps, getTableProps }) => (
-          <TableContainer
-            title="진입 임박 박스"
-            description={`${boxes.length}개 -- 클릭 시 종목 상세`}
-          >
-            <Table {...getTableProps()}>
-              <TableHead>
-                <TableRow>
-                  {h.map((header) => (
-                    // eslint-disable-next-line react/jsx-key -- key is on getHeaderProps
-                    <TableHeader {...getHeaderProps({ header })}>
-                      {header.header}
-                    </TableHeader>
-                  ))}
-                </TableRow>
-              </TableHead>
-              <TableBody>
-                {r.map((row) => {
-                  const original = rows.find((rw) => rw.id === row.id);
-                  return (
+      <div className="section-hd">
+        <h2>활성 포지션</h2>
+        <Button kind="ghost" size="sm" onClick={() => navigate('/positions')}>
+          전체 보기
+        </Button>
+      </div>
+      {positions.length === 0 ? (
+        <div style={{ background: 'var(--cds-layer)', padding: '1rem' }}>
+          <p className="text-helper" style={{ margin: 0 }}>
+            활성 포지션 없음
+          </p>
+        </div>
+      ) : (
+        <DataTable
+          rows={positions.map((p) => ({
+            id: p.id,
+            stock: (
+              <span>
+                <strong>{p.stock_name}</strong>{' '}
+                <span className="text-helper numeric">{p.stock_code}</span>
+              </span>
+            ),
+            source: <PositionSourceTag source={p.source} />,
+            qty: String(p.total_quantity),
+            avg: formatKrw(p.weighted_avg_price),
+            price: formatKrw(p.current_price),
+            pnl: (
+              <div style={{ textAlign: 'right' }}>
+                <PnLCell amount={p.pnl_amount} pct={p.pnl_pct} />
+              </div>
+            ),
+            stop: formatKrw(p.fixed_stop_price),
+            ts: p.ts_activated ? (
+              <Tag type="green" size="sm">
+                TS 활성
+              </Tag>
+            ) : (
+              <span className="text-helper">-</span>
+            ),
+          }))}
+          headers={[
+            { key: 'stock', header: '종목' },
+            { key: 'source', header: '출처' },
+            { key: 'qty', header: '수량' },
+            { key: 'avg', header: '평단' },
+            { key: 'price', header: '현재가' },
+            { key: 'pnl', header: '손익' },
+            { key: 'stop', header: '손절선' },
+            { key: 'ts', header: 'TS' },
+          ]}
+        >
+          {({ rows, headers, getHeaderProps, getRowProps, getTableProps }) => (
+            <TableContainer>
+              <Table {...getTableProps()}>
+                <TableHead>
+                  <TableRow>
+                    {headers.map((h) => (
+                      <TableHeader {...getHeaderProps({ header: h })}>
+                        {h.header}
+                      </TableHeader>
+                    ))}
+                  </TableRow>
+                </TableHead>
+                <TableBody>
+                  {rows.map((row) => (
                     <TableRow
                       {...getRowProps({ row })}
-                      onClick={() => original && onSelect(original._box)}
+                      onClick={() => navigate('/positions')}
                       style={{ cursor: 'pointer' }}
                     >
                       {row.cells.map((cell) => (
                         <TableCell key={cell.id}>{cell.value}</TableCell>
                       ))}
                     </TableRow>
-                  );
-                })}
-              </TableBody>
-            </Table>
-          </TableContainer>
-        )}
-      </DataTable>
-    </div>
-  );
-}
+                  ))}
+                </TableBody>
+              </Table>
+            </TableContainer>
+          )}
+        </DataTable>
+      )}
 
-function PositionsTable({ positions }: { positions: Position[] }) {
-  if (positions.length === 0) {
-    return (
-      <Tile
-        style={{ marginBottom: '1.5rem', padding: '1.5rem', textAlign: 'center' }}
-      >
-        <p className="cds--type-helper-text-01">활성 포지션이 없습니다.</p>
-      </Tile>
-    );
-  }
-
-  const headers = [
-    { key: 'stock', header: '종목' },
-    { key: 'source', header: '경로' },
-    { key: 'qty', header: '수량' },
-    { key: 'avg', header: '평단가' },
-    { key: 'price', header: '현재가' },
-    { key: 'pnl', header: '손익' },
-    { key: 'stop', header: '손절선' },
-    { key: 'status', header: '상태' },
-  ];
-
-  const rows = positions.map((p) => ({
-    id: p.id,
-    stock: `${p.stock_name} (${p.stock_code})`,
-    source: <PositionSourceTag source={p.source} />,
-    qty: `${p.total_quantity.toLocaleString('ko-KR')}주`,
-    avg: formatKrw(p.weighted_avg_price) + '원',
-    price: formatKrw(p.current_price) + '원',
-    pnl: <PnLCell amount={p.pnl_amount} pct={p.pnl_pct} layout="stacked" />,
-    stop: formatKrw(p.fixed_stop_price) + '원',
-    status: <PositionStatusTag status={p.status} />,
-  }));
-
-  return (
-    <div style={{ marginBottom: '1.5rem' }}>
-      <DataTable rows={rows} headers={headers}>
-        {({ rows: r, headers: h, getHeaderProps, getRowProps, getTableProps }) => (
-          <TableContainer
-            title="활성 포지션"
-            description={`${positions.length}건 -- 실시간 가격 (2초 간격)`}
+      {/* Today's trades + recent notifications (2-up) */}
+      <div className="grid-2" style={{ marginTop: '1.5rem' }}>
+        {/* Today's trades */}
+        <div>
+          <div className="section-hd">
+            <h2>오늘 거래</h2>
+            <span className="text-helper">{todaysTrades.length}건</span>
+          </div>
+          <DataTable
+            rows={
+              todaysTrades.length === 0
+                ? [
+                    {
+                      id: 'empty',
+                      time: '',
+                      stock: '오늘 거래 없음',
+                      kind: '',
+                      qty: '',
+                      price: '',
+                    },
+                  ]
+                : todaysTrades.slice(0, 6).map((e) => {
+                    const pos = mock.positions.find(
+                      (p) => p.id === e.position_id,
+                    );
+                    return {
+                      id: e.id,
+                      time: formatTime(e.occurred_at),
+                      stock: pos?.stock_name ?? e.stock_code,
+                      kind: eventLabel(e.event_type),
+                      qty: String(e.quantity),
+                      price: formatKrw(e.price),
+                    };
+                  })
+            }
+            headers={[
+              { key: 'time', header: '시간' },
+              { key: 'stock', header: '종목' },
+              { key: 'kind', header: '이벤트' },
+              { key: 'qty', header: '수량' },
+              { key: 'price', header: '가격' },
+            ]}
+            size="sm"
           >
-            <Table {...getTableProps()}>
-              <TableHead>
-                <TableRow>
-                  {h.map((header) => (
-                    <TableHeader {...getHeaderProps({ header })}>
-                      {header.header}
-                    </TableHeader>
-                  ))}
-                </TableRow>
-              </TableHead>
-              <TableBody>
-                {r.map((row) => (
-                  <TableRow {...getRowProps({ row })}>
-                    {row.cells.map((cell) => (
-                      <TableCell key={cell.id}>{cell.value}</TableCell>
+            {({
+              rows,
+              headers,
+              getHeaderProps,
+              getRowProps,
+              getTableProps,
+            }) => (
+              <TableContainer>
+                <Table {...getTableProps()}>
+                  <TableHead>
+                    <TableRow>
+                      {headers.map((h) => (
+                        <TableHeader {...getHeaderProps({ header: h })}>
+                          {h.header}
+                        </TableHeader>
+                      ))}
+                    </TableRow>
+                  </TableHead>
+                  <TableBody>
+                    {rows.map((row) => (
+                      <TableRow {...getRowProps({ row })}>
+                        {row.cells.map((cell) => (
+                          <TableCell key={cell.id}>{cell.value}</TableCell>
+                        ))}
+                      </TableRow>
                     ))}
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </TableContainer>
-        )}
-      </DataTable>
-    </div>
-  );
-}
+                  </TableBody>
+                </Table>
+              </TableContainer>
+            )}
+          </DataTable>
+        </div>
 
-function TodayTradesTable({ events }: { events: TradeEvent[] }) {
-  if (events.length === 0) {
-    return (
-      <Tile
-        style={{ marginBottom: '1.5rem', padding: '1.5rem', textAlign: 'center' }}
-      >
-        <p className="cds--type-helper-text-01">오늘 거래 내역이 없습니다.</p>
-      </Tile>
-    );
-  }
-
-  const headers = [
-    { key: 'time', header: '시간' },
-    { key: 'kind', header: '구분' },
-    { key: 'stock', header: '종목' },
-    { key: 'qty', header: '수량' },
-    { key: 'price', header: '가격' },
-  ];
-
-  const rows = events.slice(0, 10).map((e) => ({
-    id: e.id,
-    time: formatTime(e.occurred_at),
-    kind: e.event_type,
-    stock: e.stock_code,
-    qty: `${e.quantity}주`,
-    price: formatKrw(e.price) + '원',
-  }));
-
-  return (
-    <div style={{ marginBottom: '1.5rem' }}>
-      <DataTable rows={rows} headers={headers}>
-        {({ rows: r, headers: h, getHeaderProps, getRowProps, getTableProps }) => (
-          <TableContainer title="오늘 거래" description={`${events.length}건`}>
-            <Table {...getTableProps()}>
-              <TableHead>
-                <TableRow>
-                  {h.map((header) => (
-                    <TableHeader {...getHeaderProps({ header })}>
-                      {header.header}
-                    </TableHeader>
-                  ))}
-                </TableRow>
-              </TableHead>
-              <TableBody>
-                {r.map((row) => (
-                  <TableRow {...getRowProps({ row })}>
-                    {row.cells.map((cell) => (
-                      <TableCell key={cell.id}>{cell.value}</TableCell>
-                    ))}
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </TableContainer>
-        )}
-      </DataTable>
-    </div>
-  );
-}
-
-function RecentNotificationsList({
-  notifications,
-  onSelect,
-}: {
-  notifications: NotificationRecord[];
-  onSelect: () => void;
-}) {
-  return (
-    <Tile style={{ padding: '1rem' }}>
-      <h3
-        style={{
-          fontSize: '1.125rem',
-          fontWeight: 400,
-          marginTop: 0,
-          marginBottom: '0.75rem',
-        }}
-      >
-        최근 알림
-      </h3>
-      <StructuredListWrapper isCondensed>
-        <StructuredListBody>
-          {notifications.map((n) => (
-            <StructuredListRow
-              key={n.id}
-              onClick={onSelect}
-              style={{ cursor: 'pointer' }}
+        {/* Recent notifications */}
+        <div>
+          <div className="section-hd">
+            <h2>최근 알림</h2>
+            <Button
+              kind="ghost"
+              size="sm"
+              onClick={() => navigate('/notifications')}
             >
-              <StructuredListCell style={{ width: '8rem' }}>
-                <SeverityTag severity={n.severity} />
-              </StructuredListCell>
-              <StructuredListCell>
-                <strong>{n.title}</strong>
-                <div className="cds--type-helper-text-01">{n.message}</div>
-              </StructuredListCell>
-              <StructuredListCell style={{ width: '6rem', textAlign: 'right' }}>
-                {formatTime(n.created_at)}
-              </StructuredListCell>
-            </StructuredListRow>
-          ))}
-        </StructuredListBody>
-      </StructuredListWrapper>
-    </Tile>
+              전체
+            </Button>
+          </div>
+          <StructuredListWrapper isCondensed>
+            <StructuredListBody>
+              {recentNotifs.map((n) => (
+                <StructuredListRow key={n.id}>
+                  <StructuredListCell style={{ width: '5.5rem' }}>
+                    <SeverityTag severity={n.severity} />
+                  </StructuredListCell>
+                  <StructuredListCell>
+                    <div style={{ fontSize: '0.8125rem', fontWeight: 600 }}>
+                      {n.title}
+                    </div>
+                    <div className="text-helper" style={{ marginTop: '0.125rem' }}>
+                      {n.message}
+                    </div>
+                  </StructuredListCell>
+                  <StructuredListCell
+                    style={{
+                      width: '4rem',
+                      textAlign: 'right',
+                      fontFamily: 'IBM Plex Mono, monospace',
+                      fontSize: '0.75rem',
+                    }}
+                  >
+                    {formatTime(n.created_at)}
+                  </StructuredListCell>
+                </StructuredListRow>
+              ))}
+            </StructuredListBody>
+          </StructuredListWrapper>
+        </div>
+      </div>
+    </div>
   );
 }
-
-// Suppress lint for unused TrackedStatusTag (used by other pages later).
-void TrackedStatusTag;
-void BoxStatusTag;

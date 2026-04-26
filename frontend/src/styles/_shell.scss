@@ -22,29 +22,294 @@
   padding: var(--cds-spacing-06);
 }
 
-// Page header (title + actions row).
-.page-header {
+// ---------------------------------------------------------------------
+// page-hd -- 페이지 제목 + 부제 + 액션 (새로고침 / 새 종목 추적 등)
+// ---------------------------------------------------------------------
+
+.page-hd {
   display: flex;
-  flex-wrap: wrap;
-  align-items: flex-end;
   justify-content: space-between;
+  align-items: flex-end;
+  margin-bottom: var(--cds-spacing-07); // 32px
   gap: var(--cds-spacing-05);
-  margin-bottom: var(--cds-spacing-07);
+  flex-wrap: wrap;
+}
 
-  &__title {
-    font-size: 2rem;
-    font-weight: 400;
-    line-height: 1.2;
-    margin: 0;
+.page-hd__title {
+  margin: 0;
+  font-size: 1.75rem; // 28px
+  line-height: 2.25rem; // 36px
+  font-weight: 400;
+  color: var(--cds-text-primary);
+}
+
+.page-hd__subtitle {
+  font-size: 0.8125rem; // 13px
+  color: var(--cds-text-helper);
+  margin-top: 0.25rem;
+}
+
+.page-hd__actions {
+  display: flex;
+  gap: var(--cds-spacing-03); // 8px
+  flex-wrap: wrap;
+}
+
+// Phase 5 P5.2 placeholder pages still use this older alias.
+.page-header {
+  @extend .page-hd;
+}
+
+.page-header__title {
+  @extend .page-hd__title;
+}
+
+.page-header__actions {
+  @extend .page-hd__actions;
+}
+
+// ---------------------------------------------------------------------
+// section-hd -- 섹션 제목 + 우측 버튼 (전체 보기 등)
+// ---------------------------------------------------------------------
+
+.section-hd {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin: var(--cds-spacing-06) 0 var(--cds-spacing-04); // 24/12
+  flex-wrap: wrap;
+  gap: var(--cds-spacing-03);
+}
+
+.section-hd h2 {
+  margin: 0;
+  font-size: 1.125rem; // 18px
+  font-weight: 400;
+  color: var(--cds-text-primary);
+}
+
+// ---------------------------------------------------------------------
+// kpi-grid -- 4-up KPI tiles with 1px subtle dividers
+// ---------------------------------------------------------------------
+
+.kpi-grid {
+  display: grid;
+  gap: 1px;
+  grid-template-columns: repeat(4, 1fr);
+  background: var(--cds-border-subtle);
+  margin-bottom: var(--cds-spacing-06);
+
+  @media (max-width: 65.99rem) {
+    grid-template-columns: repeat(2, 1fr);
   }
-
-  &__actions {
-    display: flex;
-    gap: var(--cds-spacing-03);
+  @media (max-width: 41.99rem) {
+    grid-template-columns: 1fr;
   }
 }
 
-// Empty placeholder state used by Phase 5 P5.2 page stubs.
+.kpi-tile {
+  background: var(--cds-layer);
+  padding: 1rem 1rem 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  min-height: 7.75rem; // 124px (matches prototype)
+}
+
+.kpi-tile__label {
+  font-size: 0.75rem; // 12px
+  color: var(--cds-text-helper);
+  letter-spacing: 0.02rem;
+  text-transform: uppercase;
+  margin: 0;
+}
+
+.kpi-tile__value {
+  font-size: 2.25rem; // 36px
+  line-height: 2.75rem; // 44px
+  font-weight: 300;
+  letter-spacing: -0.02rem;
+  font-family: 'IBM Plex Mono', monospace;
+  font-feature-settings: 'tnum';
+}
+
+.kpi-tile__value-sm {
+  font-size: 1.75rem; // 28px
+  line-height: 2.25rem; // 36px
+}
+
+.kpi-tile__sub {
+  font-size: 0.75rem;
+  color: var(--cds-text-helper);
+  margin: 0;
+}
+
+.kpi-tile__progress {
+  margin-top: 0.5rem;
+}
+
+// ---------------------------------------------------------------------
+// tile-row -- 한 줄짜리 시스템 상태 표시
+// ---------------------------------------------------------------------
+
+.tile-row {
+  display: flex;
+  align-items: center;
+  gap: var(--cds-spacing-04); // 12px
+  flex-wrap: wrap;
+  padding: var(--cds-spacing-05); // 16px
+  background: var(--cds-layer);
+  margin-bottom: var(--cds-spacing-06);
+}
+
+.tile-row__separator {
+  width: 1px;
+  height: 1rem;
+  background: var(--cds-border-subtle);
+  margin: 0 var(--cds-spacing-02);
+}
+
+.tile-row__spacer {
+  flex: 1;
+}
+
+.text-helper {
+  font-size: 0.75rem;
+  color: var(--cds-text-helper);
+}
+
+// ---------------------------------------------------------------------
+// grid-2 -- 2-column layout for "오늘 거래 / 최근 알림"
+// ---------------------------------------------------------------------
+
+.grid-2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--cds-spacing-05);
+
+  @media (max-width: 65.99rem) {
+    grid-template-columns: 1fr;
+  }
+}
+
+// ---------------------------------------------------------------------
+// Header user avatar (sits next to UserAvatar icon button)
+// ---------------------------------------------------------------------
+
+.app-shell__user {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0 1rem;
+  height: 3rem;
+  cursor: pointer;
+  color: var(--cds-text-on-color);
+
+  &:hover {
+    background: var(--cds-background-hover);
+  }
+}
+
+.app-shell__avatar {
+  width: 1.75rem;
+  height: 1.75rem;
+  border-radius: 50%;
+  background: var(--cds-button-primary);
+  color: var(--cds-text-on-color);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 600;
+  font-size: 0.8125rem;
+}
+
+.app-shell__user-name {
+  font-size: 0.8125rem;
+  white-space: nowrap;
+
+  @media (max-width: 41.99rem) {
+    display: none;
+  }
+}
+
+// Notification unread badge
+.app-shell__notif-dot {
+  position: absolute;
+  top: 0.625rem;
+  right: 0.625rem;
+  background: var(--cds-support-error);
+  color: #fff;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  min-width: 1rem;
+  height: 1rem;
+  border-radius: 0.5rem;
+  padding: 0 0.25rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+  pointer-events: none;
+}
+
+// ---------------------------------------------------------------------
+// SideNav system-status footer
+// ---------------------------------------------------------------------
+
+.sys-status {
+  padding: var(--cds-spacing-05);
+  border-top: 1px solid var(--cds-border-subtle);
+  margin-top: auto;
+}
+
+.sys-status__label {
+  font-size: 0.6875rem;
+  color: var(--cds-text-helper);
+  text-transform: uppercase;
+  letter-spacing: 0.02rem;
+  margin-bottom: var(--cds-spacing-03);
+}
+
+.sys-status-line {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.75rem;
+  color: var(--cds-text-secondary);
+  padding: 0.25rem 0;
+}
+
+.sys-status-line__dot {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  flex-shrink: 0;
+
+  &--ok {
+    background: var(--cds-support-success);
+  }
+  &--warn {
+    background: var(--cds-support-warning);
+  }
+  &--err {
+    background: var(--cds-support-error);
+  }
+}
+
+.sys-status__time {
+  margin-top: var(--cds-spacing-04);
+  padding-top: var(--cds-spacing-03);
+  border-top: 1px solid var(--cds-border-subtle);
+  font-size: 0.6875rem;
+  color: var(--cds-text-helper);
+  font-family: 'IBM Plex Mono', monospace;
+  font-feature-settings: 'tnum';
+}
+
+// ---------------------------------------------------------------------
+// Empty placeholder state (P5.2 stubs)
+// ---------------------------------------------------------------------
+
 .placeholder-tile {
   padding: var(--cds-spacing-07);
   text-align: center;

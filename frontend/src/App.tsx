@@ -9,6 +9,7 @@ import { TrackedStocks } from '@/pages/TrackedStocks';
 import { TrackedStockDetail } from '@/pages/TrackedStockDetail';
 import { BoxWizard } from '@/pages/BoxWizard';
 import { Positions } from '@/pages/Positions';
+import { TradeEvents } from '@/pages/TradeEvents';
 import { Reports } from '@/pages/Reports';
 import { Notifications } from '@/pages/Notifications';
 import { Settings } from '@/pages/Settings';
@@ -32,6 +33,7 @@ export default function App() {
           <Route path="/tracked-stocks/:id" element={<TrackedStockDetail />} />
           <Route path="/boxes/new" element={<BoxWizard />} />
           <Route path="/positions" element={<Positions />} />
+          <Route path="/trade-events" element={<TradeEvents />} />
           <Route path="/reports" element={<Reports />} />
           <Route path="/notifications" element={<Notifications />} />
           <Route path="/settings" element={<Settings />} />

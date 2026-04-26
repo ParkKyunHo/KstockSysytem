@@ -1,7 +1,7 @@
-import { ProgressBar, Tile } from '@carbon/react';
+import { ProgressBar } from '@carbon/react';
 
 interface KPITileProps {
-  title: string;
+  label: string;
   value: string;
   subtitle?: string;
   /**
@@ -9,52 +9,52 @@ interface KPITileProps {
    */
   tone?: 'profit' | 'loss' | 'neutral';
   /**
-   * Optional 0-100 progress under the value (e.g. capital usage).
+   * Optional 0-100 progress bar under the value (e.g. 자본 사용 %).
    */
   progress?: number;
+  /**
+   * Smaller value font (used when value text is long, e.g. KRW amount).
+   */
+  compact?: boolean;
 }
 
+/**
+ * KPI tile -- mirrors the prototype's `.kpi-tile` BEM block.
+ *
+ * Uses a plain div with grid-cell styling so 4 tiles share a 1px
+ * subtle divider via the parent `.kpi-grid` background trick.
+ */
 export function KPITile({
-  title,
+  label,
   value,
   subtitle,
   tone = 'neutral',
   progress,
+  compact = false,
 }: KPITileProps) {
-  const valueClass =
-    tone === 'profit'
-      ? 'pnl-profit kpi-value'
-      : tone === 'loss'
-        ? 'pnl-loss kpi-value'
-        : 'kpi-value';
+  const valueClass = [
+    'kpi-tile__value',
+    compact ? 'kpi-tile__value-sm' : '',
+    tone === 'profit' ? 'pnl-profit' : tone === 'loss' ? 'pnl-loss' : '',
+  ]
+    .filter(Boolean)
+    .join(' ');
 
   return (
-    <Tile style={{ minHeight: '8rem' }}>
-      <p
-        className="cds--type-helper-text-01"
-        style={{ marginBottom: '0.5rem' }}
-      >
-        {title}
-      </p>
+    <div className="kpi-tile">
+      <p className="kpi-tile__label">{label}</p>
       <div className={valueClass}>{value}</div>
-      {subtitle ? (
-        <p
-          className="cds--type-helper-text-01"
-          style={{ marginTop: '0.25rem' }}
-        >
-          {subtitle}
-        </p>
-      ) : null}
+      {subtitle ? <p className="kpi-tile__sub">{subtitle}</p> : null}
       {progress !== undefined ? (
-        <div style={{ marginTop: '0.75rem' }}>
+        <div className="kpi-tile__progress">
           <ProgressBar
-            label={title}
+            label={label}
             hideLabel
             value={progress}
             max={100}
           />
         </div>
       ) : null}
-    </Tile>
+    </div>
   );
 }
