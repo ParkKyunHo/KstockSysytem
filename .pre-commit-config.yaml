@@ -59,9 +59,11 @@ repos:
         always_run: true
         stages: [pre-commit]
 
+  # ruff: V7.1 격리 영역에만 적용 (헌법 3 — V7.0 자동 수정 금지).
+  # V7.0 코드의 lint 정리는 Phase 1 의도적 작업으로만 수행.
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.6.9
     hooks:
       - id: ruff
         args: [--fix, --exit-non-zero-on-fix]
-        files: ^(src/|scripts/harness/|tests/v71/)
+        files: ^(src/core/v71/|src/utils/feature_flags\.py$|scripts/harness/|tests/v71/)

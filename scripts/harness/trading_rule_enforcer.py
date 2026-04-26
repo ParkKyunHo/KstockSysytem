@@ -20,7 +20,7 @@ import ast
 import sys
 from pathlib import Path
 
-from _common import HarnessResult, SRC_V71, iter_v71_python_files
+from _common import SRC_V71, HarnessResult, iter_v71_python_files
 
 MAGIC_FLOATS = {-0.05, -0.02, 0.04, 0.05, 0.10, 4.0, 3.0, 2.5, 2.0}
 RAW_HTTP_MODULES = {"httpx", "requests", "aiohttp"}

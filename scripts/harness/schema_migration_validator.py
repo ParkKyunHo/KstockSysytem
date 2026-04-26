@@ -18,7 +18,6 @@ from pathlib import Path
 
 from _common import REPO_ROOT, HarnessResult
 
-
 MIGRATIONS_DIR = REPO_ROOT / "src" / "database" / "migrations" / "v71"
 
 

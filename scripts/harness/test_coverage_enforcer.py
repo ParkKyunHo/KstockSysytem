@@ -21,7 +21,6 @@ from pathlib import Path
 
 from _common import REPO_ROOT, HarnessResult
 
-
 THRESHOLDS = {
     "src/core/v71/": 90.0,
     "src/utils/feature_flags.py": 90.0,

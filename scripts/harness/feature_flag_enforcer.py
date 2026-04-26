@@ -16,7 +16,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-from _common import HarnessResult, SRC_V71, iter_v71_python_files
+from _common import SRC_V71, HarnessResult, iter_v71_python_files
 
 EXEMPT_PARTS = ("__init__.py", "/skills/", "constants", "v71_constants")
 GUARD_TOKENS = ("feature_flags.is_enabled", "is_enabled(", "require_enabled(")

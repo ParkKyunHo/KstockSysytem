@@ -14,8 +14,8 @@ import ast
 from pathlib import Path
 
 from _common import (
-    HarnessResult,
     SRC_V71,
+    HarnessResult,
     iter_v70_core_python_files,
     iter_v71_python_files,
 )

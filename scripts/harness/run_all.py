@@ -14,7 +14,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-
 HARNESSES = [
     ("Harness 1: Naming Collision", "naming_collision_detector.py"),
     ("Harness 2: Dependency Cycle", "dependency_cycle_detector.py"),
