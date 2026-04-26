@@ -174,6 +174,48 @@ src/database/migrations/v71/     -- UP/DOWN SQL pair 룰 (Harness 4)
 - Harness 1 (Naming Collision): V7.1 패키지가 v71/ 격리 또는 V71 접두사 룰 준수
 - Harness 5 (Feature Flag Enforcer): 빈 패키지에 진입 함수 없음 → 면제 (EXEMPT_PARTS = `__init__.py`)
 
+### P2.2: 데이터 모델 마이그레이션 (완료)
+
+**참조**: 03_DATA_MODEL.md §0~§9, 05_MIGRATION_PLAN.md §4.3
+
+**산출물**: 17개 UP + 17개 DOWN + README + `__init__.py` (총 36 파일)
+
+| 순번 | 마이그레이션 | 비고 |
+|------|--------------|------|
+| 000 | extensions | uuid-ossp, pgcrypto, pg_trgm, btree_gist |
+| 001 | users | bcrypt password, TOTP 2FA, telegram_chat_id UNIQUE |
+| 002 | user_sessions | FK→users CASCADE. JWT 1h+24h |
+| 003 | user_settings | FK→users CASCADE. notify_critical 강제 ON (앱 레벨) |
+| 004 | audit_logs | FK→users. ENUM 15종 (LOGIN, BOX_*, TRACKING_*, REPORT_REQUESTED 등) |
+| 005 | market_calendar | TRADING/HOLIDAY/HALF_DAY/EMERGENCY_CLOSED |
+| 006 | stocks | gin trigram name search, 관리/위험 종목 플래그 |
+| 007 | tracked_stocks | **gist EXCLUDE**: (stock_code, path_type) 활성 1건 강제 (EXITED 제외 → 이력 보존) |
+| 008 | support_boxes | FK→tracked_stocks CASCADE. CHECK: upper>lower, 0<size≤100, stop<0 |
+| 009 | positions | source ENUM (SYSTEM_A/B/MANUAL) + status ENUM. CHECK: closed↔qty=0 |
+| 010 | trade_events | event_type ENUM 21종 (BUY/PROFIT_TAKE_5/10/STOP_LOSS/TS_EXIT/AUTO_EXIT 등) |
+| 011 | system_events | severity INFO/WARNING/ERROR/CRITICAL |
+| 012 | system_restarts | reason ENUM, reconciliation_summary JSONB |
+| 013 | vi_events | actions_taken JSONB |
+| 014 | notifications | priority queue (1=CRITICAL ~ 4=LOW) + rate_limit_key |
+| 015 | daily_reports | FK→tracked_stocks, users. PART 1/2 narrative + facts |
+| 016 | monthly_reviews | UNIQUE (review_month) |
+
+**FK 의존성 순서로 재배치**: PRD §8.2 예시는 자연 묶음(거래→이벤트→리포트→사용자→마스터)이지만 daily_reports.requested_by → users FK 위반 → users(001) 먼저, daily_reports(015) 나중으로 배치.
+
+**멱등성**: 모든 UP은 `IF NOT EXISTS` (테이블/인덱스) 또는 `DO $$ BEGIN ... EXCEPTION WHEN duplicate_object`(ENUM, PostgreSQL CREATE TYPE IF NOT EXISTS 미지원). 모든 DOWN은 `IF EXISTS`.
+
+**적용 방식**: P2.5/Phase 5에서 결정 (Alembic raw vs Supabase CLI). 현재는 raw SQL 파일로만 보존.
+
+**검증**
+
+```
+$ python scripts/harness/schema_migration_validator.py
+Inspected 17 UP migrations.  RESULT: PASS
+
+$ python scripts/harness/run_all.py --with-7
+PASS 7/7 harness(es)
+```
+
 ### P2.4 (일부): V71Constants 중앙화 (완료)
 
 **참조**: 02_TRADING_RULES.md, 01_PRD_MAIN.md 부록 C
