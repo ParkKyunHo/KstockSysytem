@@ -2436,3 +2436,50 @@ _[tool: done]_
 
 거래 이벤트 사이드 네브 아이콘을 새 `Receipt` (영수증/체결 로그) 아이콘으로 교체했습니다 — 이제 추적 종목(`ListChecked`)과 시각적으로 구분됩니다.
 
+## User
+
+Apply comment
+
+## Assistant
+
+햄버거 메뉴 버튼 동작 확인:
+
+_[tool: grep]_
+
+_[tool: snip]_
+
+_[tool: grep]_
+
+## Assistant
+
+햄버거는 모바일/태블릿용 사이드 메뉴 토글 — 데스크톱에선 숨겨야 하는데 (`--hide-desktop`) CSS가 동작 안 하는 것 같네요. 그리고 클릭해도 반응 없는 이유 확인:
+
+_[tool: grep]_
+
+_[tool: grep]_
+
+두 문제 다 확인됨:
+
+1. **CSS:** `--hide-desktop`는 모바일에서만 보이게 해야 하는데, 데스크톱 미디어쿼리에서 `display: none` 처리가 없음
+2. **사이드 네브 미디어:** 데스크톱에서 사이드 네브가 항상 열려있는 데스크톱 sticky 스타일도 확인 필요
+
+_[tool: grep]_
+
+_[tool: snip]_
+
+_[tool: str_replace_edit]_
+
+CSS 캐시버스터:
+
+_[tool: grep]_
+
+`app.css?v=14`만 바꿔야 하는데 다른 두 파일과 같은 v 라 정확히 매치되도록:
+
+_[tool: str_replace_edit]_
+
+_[tool: done]_
+
+햄버거 메뉴는 **모바일·태블릿(가로폭 1055px 이하)에서 사이드 메뉴를 토글하는 용도**예요. 데스크톱에선 사이드 네브가 항상 펼쳐져 있어서 햄버거가 필요 없는데, CSS에 `display: none` 데스크톱 규칙이 빠져 있어서 데스크톱에서도 햄버거가 보였습니다 — 누르면 어차피 안 보이는 사이드 네브의 `is-open` 클래스만 토글하니 아무 변화도 없었던 거고요.
+
+`@media (min-width: 1056px) { .cds-header__menu-btn--hide-desktop { display: none; } }` 규칙을 추가해서 데스크톱에서는 햄버거가 사라지도록 고쳤습니다. 모바일/태블릿 폭으로 줄이면 햄버거가 다시 나타나며 사이드 메뉴 슬라이드 토글로 동작합니다.
+
