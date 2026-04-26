@@ -1316,3 +1316,139 @@ V7.0 인프라 통합도 별도 트랙으로 진행 (kiwoom_api_skill 본문 + E
 ---
 
 *최종 업데이트: 2026-04-26 (P3.7 + Phase 3 100% 완료)*
+
+---
+
+## Phase 4 진입 직전 핸드오프 (2026-04-26 세션 종료 시점)
+
+이 섹션은 **새 세션이 Phase 4를 이어서 받기 위해 반드시 알아야 할 것들**을 정리합니다.
+
+### 현재 상태 스냅샷
+
+| 항목 | 값 |
+|------|-----|
+| 브랜치 | `v71-development` |
+| 최신 commit | `68d65e5` (P3.7 + Phase 3 complete) |
+| 최신 tag | `v71-phase3-complete` (M3 마일스톤) |
+| GitHub | https://github.com/ParkKyunHo/KstockSysytem |
+| pytest (tests/v71/) | **398 PASS** in ~1s |
+| 하네스 | 7/7 PASS |
+| Phase 3 모듈 수 | 21 코드 + 21 테스트, 모두 90%+ 커버리지 |
+| PRD 변경 이력 | patch #1 적용 (PATH_B 09:01→09:05 fallback, §10.9) |
+
+### 누적 tag 목록
+
+```
+v7.0-final-stable             V7.0 백업
+v71-phase0-complete           Phase 0 (사전 준비)
+v71-phase1-complete           Phase 1 (인프라 정리)
+v71-phase2-complete           Phase 2 (V7.1 골격)
+v71-prd-patch-1               사용자 patch #1 (PATH_B 09:05 안전장치)
+v71-p31-complete .. v71-p37-complete   Phase 3 sub-task별
+v71-phase3-complete           ★ M3 마일스톤
+```
+
+### Phase 3 완료 요약 (한눈에)
+
+| 룰 (PRD §) | 구현 모듈 | 커버리지 |
+|-----------|-----------|----------|
+| §3 박스 시스템 + §10.9 09:05 fallback meta | box/* + skills/box_entry_skill | 94~100% |
+| §4 매수 실행 + 09:05 fallback executor | strategies/v71_buy_executor | 92.5% |
+| §5 매수 후 관리 (손절/익절/TS) | exit/* + skills/exit_calc_skill | 92~100% |
+| §6 평단가 + 이벤트 리셋 | skills/avg_price_skill + position/v71_position_manager | 97~100% |
+| §7 수동 거래 5 시나리오 | skills/reconciliation_skill + position/v71_reconciler | 95~97% |
+| §10 VI 처리 | skills/vi_skill + vi_monitor | 94~100% |
+| §13 7-step 재시작 복구 | restart_recovery | 92.7% |
+
+### 사용자 정책 (반드시 준수, Phase 0~3 동안 변경 없음)
+
+1. **V7.0 = 레거시** (곧 폐기), **V7.1 = 완전 구축**. 헌법 3 "충돌 금지"는 *운영 영향* 0이라는 의미
+2. **Python 호출**: 항상 `"C:\Program Files\Python311\python.exe"` 명시
+3. **`.env` 직접 read 금지**: 시스템 권한 정책으로 차단됨
+4. **Push 자동 권한**: 사용자가 권한 위임. 매 commit마다 push OK
+5. **Task 단위 진행**: 매 Task별 commit 분리. PRD 단일 진실
+6. **statusline**: 1라인 (모델 / effort / ctx 사용량 / 5h / 7d). 변경 금지
+
+### Phase 4 시작 가이드
+
+**참조 문서 우선순위**:
+1. `02_TRADING_RULES.md §9` (알림 시스템 -- CRITICAL/HIGH/MEDIUM/LOW 등급, 빈도 제한, 채널)
+2. `05_MIGRATION_PLAN.md §6` (Phase 4 작업 분해)
+3. `07_SKILLS_SPEC.md §6` (notification_skill 시그니처)
+4. `12_SECURITY.md` (텔레그램 권한 검증)
+
+**Phase 4 sub-tasks** (05 §6 기준):
+
+| Task | 산출물 | 의존성 |
+|------|--------|--------|
+| **P4.1** 알림 등급 시스템 | `src/notification/severity.py`, `notification_skill.py` 본문, 우선순위 큐 (PostgreSQL FOR UPDATE SKIP LOCKED), 빈도 제한 (5분), Circuit Breaker | V71PositionManager, V71BoxManager 보유 데이터 사용 |
+| **P4.2** 텔레그램 명령어 13개 | `src/notification/telegram_commands.py` (status/positions/tracking/pending/today/recent/report/stop/resume/cancel/alerts/settings/help). authorized_chat_ids 검증 | python-telegram-bot |
+| **P4.3** 일일 마감 알림 | `src/notification/daily_summary.py` -- 매일 15:30 자동 발송 | AsyncIOScheduler |
+| **P4.4** 월 1회 리뷰 | `src/notification/monthly_review.py` -- 매월 1일 09:00, ABC 구조, 60일+ 정체 강조 | monthly_reviews 테이블 |
+
+**Phase 4 핵심 의존성**:
+- 현재 P3.2~P3.7에서 정의된 `Notifier` Protocol (in `src/core/v71/strategies/v71_buy_executor.py`)을 V71NotificationService가 구현
+- `notification_skill` (P2.3에서 시그니처만, 본문 미구현)이 V71NotificationService의 entry point
+- 모든 알림은 `notification_skill.send_notification()`을 통해서만 (Harness 3 강제)
+
+**Phase 4 완료 기준**:
+- P4.1~P4.4 모두 ✓
+- pytest tests/v71/ + tests/notification/ PASS, 90%+ 커버리지
+- 7/7 하네스 PASS
+- WORK_LOG.md 갱신
+- Git tag: `v71-phase4-complete`
+
+### 새 세션 첫 메시지 (사용자가 그대로 붙여넣기)
+
+```
+# V7.1 Phase 4 작업 시작 (알림 시스템)
+
+## 환경
+- 프로젝트: C:\K_stock_trading\
+- 브랜치: v71-development
+- 최신 tag: v71-phase3-complete
+- GitHub: https://github.com/ParkKyunHo/KstockSysytem
+
+## 사전 학습 (필수, 순서대로)
+1. C:\K_stock_trading\CLAUDE.md
+2. C:\K_stock_trading\docs\v71\WORK_LOG.md  ← Phase 0~3 누적 + Phase 4 가이드
+3. C:\K_stock_trading\docs\v71\01_PRD_MAIN.md  (전체 그림)
+4. C:\K_stock_trading\docs\v71\02_TRADING_RULES.md §9 (알림 시스템 룰)
+5. C:\K_stock_trading\docs\v71\05_MIGRATION_PLAN.md §6 (Phase 4 계획)
+6. C:\K_stock_trading\docs\v71\07_SKILLS_SPEC.md §6 (notification_skill 시그니처)
+7. C:\K_stock_trading\docs\v71\12_SECURITY.md (텔레그램 권한)
+
+## 헌법 5원칙 (절대 위반 금지)
+1. 사용자 판단 불가침
+2. NFR1 최우선
+3. 충돌 금지 ★ (V7.0 인프라 보존, V7.1은 src/core/v71/ 격리)
+4. 시스템 계속 운영
+5. 단순함 우선
+
+## 응답 요청
+위 7개 문서 정독 후:
+1. Phase 0~3 누적 산출물 요약 (WORK_LOG 기준)
+2. Phase 4 P4.1 (알림 등급 시스템) 작업 계획
+3. 시작 준비 상태
+
+응답 후 P4.1 시작 지시 대기.
+```
+
+### 권고 사항 (사용자 확인 필요)
+
+- DB 비밀번호 회전 (Phase 0 보안 사고 #1, #2 -- 사용자가 "큰 문제 없을듯"으로 dismiss했으나 운영 시작 전 한 번은 회전 권장)
+- V7.0 인프라 통합 (`kiwoom_api_skill` 본문 + ExchangeAdapter 실 구현)은 별도 트랙으로 진행 가능 -- Phase 4와 병렬 가능
+
+### Phase 3 → Phase 4 핸드오프 항목 (재정리)
+
+이전 phase 종료 시 기록한 핸드오프 항목들이 Phase 4의 작업 범위에 정확히 들어갑니다:
+- `Notifier` Protocol 구현체 → P4.1 V71NotificationService
+- 빈도 제한 + Circuit Breaker → P4.1
+- `notification_skill` 본문 → P4.1
+- `make_sync_dispatcher` (V7.0 WebSocket 브리지) → 이미 P3.6에서 작성, Phase 4와 무관
+
+V7.1 거래 룰 코어가 모두 테스트로 핀(pin)되어 있으므로, Phase 4 변경이 Phase 3 룰을 위반할 가능성은 낮음 (테스트 fail로 즉시 surface).
+
+---
+
+*최종 업데이트: 2026-04-26 (Phase 4 핸드오프 준비 완료)*

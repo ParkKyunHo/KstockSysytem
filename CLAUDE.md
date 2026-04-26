@@ -1,8 +1,9 @@
 # CLAUDE.md
 
 > **K_stock_trading** - 키움증권 REST API 국내 주식 자동매매 시스템
-> **버전**: V7.1 (Box-Based Trading System, in development) -- V7.0 Purple-ReAbs is legacy
-> **현재 작업**: V7.1 신규 시스템 구축 중. PRD: `docs/v71/`. 진행 로그: `docs/v71/WORK_LOG.md`.
+> **버전**: V7.1 (Box-Based Trading System) -- V7.0 Purple-ReAbs is legacy
+> **현재 작업**: Phase 3 (거래 룰) 100% 완료 (M3, 2026-04-26) → **Phase 4 (알림 시스템)** 다음
+> **PRD**: `docs/v71/` / **진행 로그**: `docs/v71/WORK_LOG.md` / **마지막 tag**: `v71-phase3-complete`
 
 ---
 
@@ -26,14 +27,6 @@
 | **컨텍스트** | 업데이트 없이 완료 선언 | 4.4 절차 완료 후 응답 |
 | **.env** | 인라인 주석 사용 | 별도 라인에 주석 작성 (Part 5 참조) |
 
-## 1.2 시스템 불변조건
-
-| 원칙 | 설명 |
-|------|------|
-| Risk-First | 고정 손절(-4%)은 어떤 상황에서도 작동 |
-| TS 상향 전용 | 트레일링 스탑은 절대 하락 안 함 |
-| ATR 배수 단방향 | 6.0→4.5→4.0→3.5→2.5→2.0 (복원 불가) |
-| EMA adjust=False | 모든 EMA 계산에 적용 |
 
 ---
 
@@ -76,15 +69,7 @@ TrendHold = EMA20 > EMA60 AND HighestHigh(20) > HighestHigh(60) AND ATR >= ATR_5
 # 청산: NOT TrendHold AND Close < TrailingStop
 ```
 
-## 2.3 수정 불가 항목
 
-```
-- Score 가중치: (C/W-1)*2, LZ*0.8, recovery*1.2
-- PurpleOK 임계값: 상승률 4%, 수렴률 7%, 거래대금 5억
-- Zone 허용 범위: EMA60 × 0.995
-- ATR 배수 단계: 6.0 → 4.5 → 4.0 → 3.5 → 2.5 → 2.0
-- Trend Hold Filter 조건 (EMA20>EMA60 AND HH20>HH60 AND ATR유지)
-- EMA adjust=False
 ```
 
 ## 2.4 V7 활성화
