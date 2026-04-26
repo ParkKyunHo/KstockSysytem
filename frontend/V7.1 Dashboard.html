@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>V7.1 — K-Stock Trading System</title>
+
+<!-- Carbon-style design tokens + components -->
+<link rel="stylesheet" href="src/styles/carbon-tokens.css?v=14">
+<link rel="stylesheet" href="src/styles/carbon-components.css?v=14">
+<link rel="stylesheet" href="src/styles/app.css?v=14">
+
+<!-- Korean type stack -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+KR:wght@300;400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+
+<!-- React + Babel (pinned) -->
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+
+</head>
+<body>
+<div id="root"></div>
+
+<!-- libs (vanilla JS — load with src) -->
+<script src="src/components/icons.js?v=15"></script>
+<script src="src/mocks/index.js?v=14"></script>
+
+<!-- components + pages -->
+<script src="src/components/ui.js?v=14"></script>
+<script src="src/components/order-dialog.js?v=14"></script>
+<script src="src/components/shell.js?v=15"></script>
+<script src="src/pages/login.js?v=14"></script>
+<script src="src/pages/dashboard.js?v=14"></script>
+<script src="src/pages/tracked-stocks.js?v=16"></script>
+<script src="src/pages/box-wizard.js?v=16"></script>
+<script src="src/pages/positions.js?v=14"></script>
+<script src="src/pages/trade-events.js?v=14"></script>
+<script src="src/pages/reports.js?v=14"></script>
+<script src="src/pages/notifications-settings.js?v=14"></script>
+
+<!-- App root -->
+<script type="text/babel" data-presets="env,react">
+const { useState, useEffect, useMemo, useCallback } = React;
+
+// Toast hook
+function useToasts() {
+  const [toasts, setToasts] = useState([]);
+  const addToast = useCallback((t) => {
+    const id = Math.random().toString(36).slice(2);
+    setToasts(prev => [...prev, { id, ...t }]);
+    setTimeout(() => setToasts(prev => prev.filter(x => x.id !== id)), 4500);
+  }, []);
+  const closeToast = (id) => setToasts(prev => prev.filter(x => x.id !== id));
+  return { toasts, addToast, closeToast };
+}
+
+// Live price simulator (WebSocket-style)
+function useLiveMock(initial) {
+  const [mock, setMock] = useState(initial);
+  useEffect(() => {
+    const t = setInterval(() => {
+      setMock(prev => {
+        const next = { ...prev };
+        next.trackedStocks = prev.trackedStocks.map(s => {
+          // ±0.3% random walk
+          const drift = (Math.random() - 0.5) * 0.006;
+          const newPrice = Math.max(100, Math.round(s.current_price * (1 + drift)));
+          return { ...s, current_price: newPrice };
+        });
+        // Recompute position pnl
+        next.positions = prev.positions.map(p => {
+          const stock = next.trackedStocks.find(s => s.id === p.tracked_stock_id);
+          if (!stock || p.status === 'CLOSED') return p;
+          const pnl_amount = (stock.current_price - p.weighted_avg_price) * p.total_quantity;
+          const pnl_pct = ((stock.current_price - p.weighted_avg_price) / p.weighted_avg_price) * 100;
+          return { ...p, pnl_amount: Math.round(pnl_amount), pnl_pct: Number(pnl_pct.toFixed(2)) };
+        });
+        next.systemStatus = { ...prev.systemStatus, current_time: new Date().toISOString() };
+        return next;
+      });
+    }, 2000);
+    return () => clearInterval(t);
+  }, []);
+  return [mock, setMock];
+}
+
+function App() {
+  const [route, setRoute] = useState('login'); // 'login' | 'totp' | 'dashboard' | ...
+  const [theme, setTheme] = useState('g100'); // g10 | g90 | g100
+  const [mock, setMock] = useLiveMock(window.MOCK);
+  const { toasts, addToast, closeToast } = useToasts();
+
+  useEffect(() => {
+    const html = document.documentElement;
+    html.classList.remove('theme-g10', 'theme-g90', 'theme-g100', 'theme-white');
+    html.classList.add('theme-' + theme);
+    html.setAttribute('data-cds-theme', theme);
+  }, [theme]);
+
+  const onNav = useCallback((r) => setRoute(r), []);
+  const onLogin = () => setRoute('totp');
+  const onTotpDone = () => { setRoute('dashboard'); addToast({ kind: 'success', title: '로그인 성공', subtitle: '환영합니다, 박균호 님' }); };
+
+  // Auth pages — no shell
+  if (route === 'login') return React.createElement(window.Pages.Login, { onSuccess: onLogin });
+  if (route === 'totp')  return React.createElement(window.Pages.Totp,  { onSuccess: onTotpDone });
+
+  // Route → page
+  let page = null;
+  if (route === 'dashboard') {
+    page = React.createElement(window.Pages.Dashboard, { mock, onNav, addToast });
+  } else if (route === 'tracked-stocks' || route.startsWith('tracked-stocks?')) {
+    const openNew = route.includes('new=1');
+    page = React.createElement(window.Pages.TrackedStocksList, { mock, onNav, addToast, openNew });
+  } else if (route.startsWith('tracked-stocks/')) {
+    const [, id] = route.split('/');
+    const cleanId = id.split('?')[0];
+    page = React.createElement(window.Pages.TrackedStockDetail, { id: cleanId, mock, onNav, addToast });
+  } else if (route === 'positions') {
+    page = React.createElement(window.Pages.Positions, { mock, addToast });
+  } else if (route === 'trade-events') {
+    page = React.createElement(window.Pages.TradeEvents, { mock, onNav, addToast });
+  } else if (route.startsWith('boxes/new')) {
+    const stockId = (route.split('stock_id=')[1] || mock.trackedStocks[0].id);
+    page = React.createElement(window.Pages.BoxWizard, {
+      stockId, mock, addToast, onNav,
+      onCancel: () => setRoute(`tracked-stocks/${stockId}`),
+      onDone:   () => setRoute(`tracked-stocks/${stockId}`),
+    });
+  } else if (route === 'reports') {
+    page = React.createElement(window.Pages.Reports, { mock, onNav, addToast });
+  } else if (route === 'notifications') {
+    page = React.createElement(window.Pages.Notifications, { mock, addToast, onNav });
+  } else if (route === 'settings') {
+    page = React.createElement(window.Pages.Settings, { mock, setMock, addToast });
+  } else {
+    page = React.createElement('div', { className: 'cds-tile', style: { padding: 32 } }, '404 — ', route);
+  }
+
+  const unread = mock.notifications.filter(n => !n.is_read).length;
+
+  return React.createElement(React.Fragment, null,
+    React.createElement(window.AppShell, {
+      currentRoute: route, onNav,
+      notifCount: unread,
+      systemStatus: mock.systemStatus,
+      themeName: theme,
+      onToggleTheme: () => {
+        setTheme(t => {
+          const next = t === 'g100' ? 'g10' : t === 'g10' ? 'g90' : 'g100';
+          const label = next === 'g10' ? '라이트' : next === 'g90' ? '딥다크' : '다크';
+          addToast({ kind: 'info', title: `테마: ${label}`, ttl: 1800 });
+          return next;
+        });
+      },
+    }, page),
+    React.createElement(window.UI.ToastContainer, { toasts, onClose: closeToast })
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(App));
+</script>
+
+</body>
+</html>

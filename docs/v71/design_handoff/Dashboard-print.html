@@ -1,0 +1,338 @@
+<!doctype html>
+<html lang="ko" class="theme-white">
+<head>
+<meta charset="utf-8">
+<title>V7.1 Stock Dashboard — Print</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="stylesheet" href="styles/carbon-tokens.css">
+<link rel="stylesheet" href="styles/app.css">
+<style>
+  /* ---------- PRINT LAYOUT ---------- */
+  html, body { background: #fff; }
+  body {
+    margin: 0;
+    font-family: 'IBM Plex Sans', 'IBM Plex Sans KR', system-ui, sans-serif;
+  }
+  .print-doc {
+    display: flex;
+    flex-direction: column;
+    gap: 24px;
+    padding: 24px;
+    background: #f4f4f4;
+  }
+  .print-page {
+    background: var(--cds-background, #fff);
+    color: var(--cds-text-primary, #161616);
+    width: 1600px;
+    min-height: 1000px;
+    box-sizing: border-box;
+    padding: 24px 32px 32px;
+    box-shadow: 0 1px 3px rgba(0,0,0,.1);
+    page-break-after: always;
+    break-after: page;
+    break-inside: avoid;
+    overflow: hidden;
+    position: relative;
+  }
+  .print-page:last-child { page-break-after: auto; }
+
+  .print-page-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    border-bottom: 1px solid var(--cds-border-subtle);
+    padding-bottom: 12px;
+    margin-bottom: 20px;
+  }
+  .print-page-title {
+    font-size: 20px;
+    font-weight: 600;
+    letter-spacing: 0.16px;
+  }
+  .print-page-subtitle {
+    font-size: 12px;
+    color: var(--cds-text-secondary);
+    letter-spacing: 0.32px;
+    text-transform: uppercase;
+  }
+
+  .print-cover {
+    background: #161616;
+    color: #f4f4f4;
+    padding: 80px 64px;
+    min-height: 1000px;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+  }
+  .print-cover h1 {
+    font-size: 64px;
+    font-weight: 300;
+    letter-spacing: -0.5px;
+    margin: 0;
+    line-height: 1.05;
+  }
+  .print-cover h1 strong { font-weight: 600; }
+  .print-cover .eyebrow {
+    font-size: 12px;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    color: #8d8d8d;
+    margin-bottom: 24px;
+  }
+  .print-cover .desc {
+    font-size: 16px;
+    color: #c6c6c6;
+    max-width: 720px;
+    line-height: 1.5;
+    margin-top: 32px;
+  }
+  .print-cover .toc {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 24px 48px;
+    margin-top: 64px;
+    max-width: 900px;
+  }
+  .print-cover .toc-item {
+    border-top: 1px solid #393939;
+    padding-top: 16px;
+  }
+  .print-cover .toc-num {
+    font-size: 11px;
+    color: #8d8d8d;
+    letter-spacing: 1px;
+    margin-bottom: 4px;
+  }
+  .print-cover .toc-title {
+    font-size: 20px;
+    font-weight: 500;
+    margin-bottom: 6px;
+  }
+  .print-cover .toc-desc {
+    font-size: 13px;
+    color: #a8a8a8;
+    line-height: 1.4;
+  }
+  .print-cover .footer-row {
+    display: flex;
+    justify-content: space-between;
+    font-size: 11px;
+    color: #8d8d8d;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    margin-top: 48px;
+  }
+
+  .print-page.theme-g100 {
+    background: #161616;
+    color: #f4f4f4;
+  }
+  .print-page.theme-g100 .print-page-header {
+    border-bottom-color: #393939;
+  }
+  .print-page.theme-g100 .print-page-subtitle {
+    color: #a8a8a8;
+  }
+
+  /* Layout switcher hidden — we show labels inline */
+  .layout-switcher-row { display: none !important; }
+
+  /* Freeze any transitions / animations / blinks for static print output */
+  *, *::before, *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+
+  /* The in-view "page title" is redundant since we render our own header */
+  .print-page [data-screen-label] > .page-header,
+  .print-page .app-page-header { display: none; }
+
+  .print-section-label {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+    color: var(--cds-text-secondary);
+    margin-bottom: 8px;
+    margin-top: 4px;
+  }
+  .print-page.theme-g100 .print-section-label { color: #a8a8a8; }
+
+  .view-shell-wrap {
+    /* Constrain the inner Shell so it doesn't try to be 100vh inside the page */
+    height: auto;
+  }
+
+  /* Hide Shell's global chrome inside each page — we have our own header */
+  .print-page .app-shell-header,
+  .print-page .app-shell-nav { display: none !important; }
+  .print-page .app-shell { display: block; height: auto; }
+  .print-page .app-shell-main { padding: 0; height: auto; overflow: visible; }
+
+  @media print {
+    @page { size: A3 landscape; margin: 10mm; }
+    html, body { background: #fff; }
+    .print-doc { padding: 0; gap: 0; background: #fff; }
+    .print-page {
+      box-shadow: none;
+      width: 100%;
+      min-height: auto;
+      padding: 12mm 14mm;
+      page-break-after: always;
+      break-after: page;
+    }
+    .print-page:last-child { page-break-after: auto; }
+    * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
+  }
+</style>
+</head>
+<body>
+
+<div class="print-doc" id="print-doc">
+  <!-- Cover page -->
+  <section class="print-page print-cover">
+    <div>
+      <div class="eyebrow">V7.1 · WEB DASHBOARD</div>
+      <h1>주식 대시보드<br/><strong>디자인 제안</strong></h1>
+      <div class="desc">
+        차트 렌더링 없음. 숫자 입력과 테이블 중심.
+        사용자는 HTS에서 차트를 보고 판단하며, 대시보드는 그 판단을 입력받아 시스템에 전달합니다.
+      </div>
+    </div>
+
+    <div>
+      <div class="toc">
+        <div class="toc-item">
+          <div class="toc-num">01</div>
+          <div class="toc-title">저녁 리포트</div>
+          <div class="toc-desc">장세 요약 + 주도주 리스트. 스플릿 / 테이블 / 카드 3가지 레이아웃.</div>
+        </div>
+        <div class="toc-item">
+          <div class="toc-num">02</div>
+          <div class="toc-title">박스 설정</div>
+          <div class="toc-desc">종목 → 전략 → 타임프레임 → 가격 4단계 입력. 마스터·디테일 / 그리드.</div>
+        </div>
+        <div class="toc-item">
+          <div class="toc-num">03</div>
+          <div class="toc-title">포지션 모니터</div>
+          <div class="toc-desc">실시간 손익 + 청산 기록. 테이블 / 카드.</div>
+        </div>
+        <div class="toc-item">
+          <div class="toc-num">04</div>
+          <div class="toc-title">추적 종목 관리</div>
+          <div class="toc-desc">상태 필터 + 이탈 경고. 테이블 / 칸반.</div>
+        </div>
+      </div>
+
+      <div class="footer-row">
+        <span>Carbon Design System · MD density</span>
+        <span>Printed from V7.1 Dashboard.html</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- React-rendered pages go here -->
+  <div id="react-pages"></div>
+</div>
+
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+
+<script src="src/data.js"></script>
+<script type="text/babel" src="src/ui.jsx"></script>
+<script type="text/babel" src="src/shell.jsx"></script>
+<script type="text/babel" src="src/view-report.jsx"></script>
+<script type="text/babel" src="src/view-box.jsx"></script>
+<script type="text/babel" src="src/view-monitor.jsx"></script>
+<script type="text/babel" src="src/view-tracking.jsx"></script>
+
+<script type="text/babel" data-presets="react">
+/* global React, ReactDOM, ReportView, BoxView, MonitorView, TrackingView */
+
+const VIEW_TITLES = {
+  report:   "01 저녁 리포트",
+  boxes:    "02 박스 설정",
+  monitor:  "03 포지션 모니터",
+  tracking: "04 추적 종목 관리",
+};
+const VIEW_SUB = {
+  report:   "Evening Report",
+  boxes:    "Box Configuration",
+  monitor:  "Position Monitor",
+  tracking: "Tracking Management",
+};
+const LAYOUT_LABELS = {
+  "split":          "스플릿 레이아웃",
+  "table":          "테이블 레이아웃",
+  "cards":          "카드 레이아웃",
+  "master-detail":  "마스터·디테일 레이아웃",
+  "grid":           "그리드 레이아웃",
+  "kanban":         "칸반 레이아웃",
+};
+
+// Each page: one view × one layout × one theme.
+// We mix themes so the PDF showcases both dark and light.
+const PAGES = [
+  { view: "report",   layout: "split",         theme: "g100"  },
+  { view: "report",   layout: "table",         theme: "white" },
+  { view: "report",   layout: "cards",         theme: "g100"  },
+  { view: "boxes",    layout: "master-detail", theme: "white" },
+  { view: "boxes",    layout: "grid",          theme: "g100"  },
+  { view: "monitor",  layout: "table",         theme: "g100"  },
+  { view: "monitor",  layout: "cards",         theme: "white" },
+  { view: "tracking", layout: "table",         theme: "white" },
+  { view: "tracking", layout: "kanban",        theme: "g100"  },
+];
+
+function ViewRenderer({ view, layout, data, setData }) {
+  if (view === "report")   return <ReportView   layout={layout} data={data} setData={setData}/>;
+  if (view === "boxes")    return <BoxView      layout={layout} data={data} setData={setData}/>;
+  if (view === "monitor")  return <MonitorView  layout={layout} data={data} setData={setData}/>;
+  if (view === "tracking") return <TrackingView layout={layout} data={data} setData={setData}/>;
+  return null;
+}
+
+function PrintPage({ page, data, setData }) {
+  return (
+    <section className={"print-page theme-" + page.theme}>
+      <div className="print-page-header">
+        <div>
+          <div className="print-page-subtitle">{VIEW_SUB[page.view]}</div>
+          <div className="print-page-title">{VIEW_TITLES[page.view]}</div>
+        </div>
+        <div className="print-section-label">{LAYOUT_LABELS[page.layout] || page.layout}</div>
+      </div>
+      <div className="view-shell-wrap">
+        <ViewRenderer view={page.view} layout={page.layout} data={data} setData={setData}/>
+      </div>
+    </section>
+  );
+}
+
+function PrintApp() {
+  // Single shared data instance so mock figures are consistent across pages.
+  const [data, setData] = React.useState(window.__MOCK_DATA__);
+  return (
+    <>
+      {PAGES.map((p, i) => (
+        <PrintPage key={i} page={p} data={data} setData={setData}/>
+      ))}
+    </>
+  );
+}
+
+const host = document.getElementById("react-pages");
+ReactDOM.createRoot(host).render(<PrintApp/>);
+
+// Auto-print once fonts + Babel scripts have all executed.
+(async () => {
+  try { if (document.fonts && document.fonts.ready) await document.fonts.ready; } catch {}
+  await new Promise(r => setTimeout(r, 1200));
+  window.print();
+})();
+</script>
+
+</body>
+</html>
