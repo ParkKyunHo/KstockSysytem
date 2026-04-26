@@ -1,29 +1,10 @@
-import {
-  Header,
-  HeaderContainer,
-  HeaderGlobalAction,
-  HeaderGlobalBar,
-  HeaderMenuButton,
-  HeaderName,
-  SideNav,
-  SideNavItems,
-  SideNavLink,
-  SkipToContent,
-} from '@carbon/react';
-import {
-  Asleep,
-  ChartLineSmooth,
-  Contrast,
-  Dashboard as DashboardIcon,
-  Document,
-  ListChecked,
-  Notification,
-  Receipt,
-  Settings as SettingsIcon,
-  Sun,
-} from '@carbon/icons-react';
-import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom';
+// V7.1 AppShell -- direct port of frontend-prototype/src/components/shell.js.
+// Header (cds-header) + SideNav (cds-side-nav) with system-status footer.
 
+import { useState } from 'react';
+import { Outlet, useLocation, useNavigate } from 'react-router-dom';
+
+import { I, type IconComponent } from '@/components/icons';
 import { useLiveMock } from '@/hooks/useLiveMock';
 import { initialMock, type MockState } from '@/mocks';
 import { formatTime } from '@/lib/formatters';
@@ -35,26 +16,27 @@ interface AppShellProps {
 }
 
 interface NavItem {
-  to: string;
+  key: string;
   label: string;
-  icon: typeof DashboardIcon;
+  icon: IconComponent;
+  to: string;
   matchPrefix?: string;
 }
 
-// Mirrors `frontend-prototype/src/components/shell.js NAV_ITEMS`.
 const NAV_ITEMS: NavItem[] = [
-  { to: '/dashboard', label: '대시보드', icon: DashboardIcon },
+  { key: 'dashboard', label: '대시보드', icon: I.Dashboard, to: '/dashboard' },
   {
-    to: '/tracked-stocks',
+    key: 'tracked-stocks',
     label: '추적 종목',
-    icon: ListChecked,
+    icon: I.ListChecked,
+    to: '/tracked-stocks',
     matchPrefix: '/tracked-stocks',
   },
-  { to: '/positions', label: '포지션', icon: ChartLineSmooth },
-  { to: '/trade-events', label: '거래 이벤트', icon: Receipt },
-  { to: '/reports', label: '리포트', icon: Document },
-  { to: '/notifications', label: '알림', icon: Notification },
-  { to: '/settings', label: '설정', icon: SettingsIcon },
+  { key: 'positions', label: '포지션', icon: I.Chart, to: '/positions' },
+  { key: 'trade-events', label: '거래 이벤트', icon: I.Receipt, to: '/trade-events' },
+  { key: 'reports', label: '리포트', icon: I.Document, to: '/reports' },
+  { key: 'notifications', label: '알림', icon: I.Bell, to: '/notifications' },
+  { key: 'settings', label: '설정', icon: I.Settings, to: '/settings' },
 ];
 
 const THEME_LABEL: Record<ThemeName, string> = {
@@ -64,21 +46,28 @@ const THEME_LABEL: Record<ThemeName, string> = {
   white: '라이트',
 };
 
-function ThemeIcon({ theme, size = 20 }: { theme: ThemeName; size?: number }) {
-  if (theme === 'g10' || theme === 'white') return <Sun size={size} />;
-  if (theme === 'g90') return <Contrast size={size} />;
-  return <Asleep size={size} />;
+function ThemeIcon({ theme }: { theme: ThemeName }) {
+  const Icon =
+    theme === 'g10' || theme === 'white'
+      ? I.Sun
+      : theme === 'g90'
+        ? I.Contrast
+        : I.Moon;
+  return <Icon className="cds-icon" size={20} />;
 }
 
 export function AppShell({ theme, onCycleTheme }: AppShellProps) {
-  const location = useLocation();
+  const [sideOpen, setSideOpen] = useState(false);
   const navigate = useNavigate();
-  // Single point of truth for live mock + system status; pages read it
-  // from Outlet context.
+  const location = useLocation();
   const mock = useLiveMock(initialMock);
-  const unread = mock.notifications.filter(
-    (n) => n.status !== 'EXPIRED' && n.status !== 'SUPPRESSED',
-  ).length;
+  const unread = mock.notifications.length; // P5.4 wires real "is_read"
+
+  const close = () => setSideOpen(false);
+  const goto = (to: string) => {
+    navigate(to);
+    close();
+  };
 
   const isActive = (item: NavItem) => {
     if (item.matchPrefix) {
@@ -88,154 +77,200 @@ export function AppShell({ theme, onCycleTheme }: AppShellProps) {
   };
 
   return (
-    <HeaderContainer
-      render={({
-        isSideNavExpanded,
-        onClickSideNavExpand,
-      }: {
-        isSideNavExpanded: boolean;
-        onClickSideNavExpand: () => void;
-      }) => (
-        <div className="app-shell">
-          <Header aria-label="V7.1 K-Stock Trading">
-            <SkipToContent />
-            <HeaderMenuButton
-              aria-label={isSideNavExpanded ? '메뉴 닫기' : '메뉴 열기'}
-              onClick={onClickSideNavExpand}
-              isActive={isSideNavExpanded}
-              aria-expanded={isSideNavExpanded}
-            />
-            <HeaderName as={Link} to="/dashboard" prefix="V7.1">
-              K-Stock Trading
-            </HeaderName>
-            <HeaderGlobalBar>
-              <HeaderGlobalAction
-                aria-label={`테마: ${THEME_LABEL[theme]} (클릭해 전환)`}
-                tooltipAlignment="end"
-                onClick={onCycleTheme}
-              >
-                <ThemeIcon theme={theme} />
-              </HeaderGlobalAction>
-              <HeaderGlobalAction
-                aria-label={`알림 (${unread}건 미확인)`}
-                tooltipAlignment="end"
-                onClick={() => navigate('/notifications')}
-              >
-                <Notification size={20} />
-                {unread > 0 ? (
-                  <span className="app-shell__notif-dot">{unread}</span>
-                ) : null}
-              </HeaderGlobalAction>
-              <button
-                type="button"
-                className="app-shell__user"
-                onClick={() => navigate('/settings')}
-                aria-label="사용자 설정"
-              >
-                <span className="app-shell__avatar">박</span>
-                <span className="app-shell__user-name">박균호</span>
-              </button>
-            </HeaderGlobalBar>
-
-            <SideNav
-              aria-label="주 메뉴"
-              expanded={isSideNavExpanded}
-              isPersistent
-              onSideNavBlur={onClickSideNavExpand}
-            >
-              <SideNavItems>
-                {NAV_ITEMS.map((item) => (
-                  <SideNavLink
-                    key={item.to}
-                    as={Link}
-                    to={item.to}
-                    renderIcon={item.icon}
-                    isActive={isActive(item)}
-                  >
-                    {item.label}
-                  </SideNavLink>
-                ))}
-              </SideNavItems>
-              <SideNavSystemStatus mock={mock} />
-            </SideNav>
-          </Header>
-
-          <main className="app-shell__main" id="main-content">
-            <div className="app-shell__content">
-              <Outlet context={{ mock } satisfies AppShellOutletContext} />
-            </div>
-          </main>
-        </div>
-      )}
-    />
-  );
-}
-
-// ---------------------------------------------------------------------
-// SideNav system-status footer
-// ---------------------------------------------------------------------
-
-function SideNavSystemStatus({ mock }: { mock: MockState }) {
-  const sys = mock.systemStatus;
-  return (
-    <div className="sys-status">
-      <div className="sys-status__label">시스템 상태</div>
-      <div className="sys-status-line">
-        <span
-          className={`sys-status-line__dot sys-status-line__dot--${
-            sys.status === 'RUNNING'
-              ? 'ok'
-              : sys.status === 'SAFE_MODE'
-                ? 'err'
-                : 'warn'
-          }`}
+    <div className="app-shell">
+      <AppHeader
+        onToggleSide={() => setSideOpen((s) => !s)}
+        unread={unread}
+        theme={theme}
+        onCycleTheme={onCycleTheme}
+        onNav={goto}
+      />
+      <div className="app-body">
+        <AppSideNav
+          open={sideOpen}
+          onClose={close}
+          isActive={isActive}
+          onNav={goto}
+          mock={mock}
         />
-        <span>
-          {sys.status === 'RUNNING'
-            ? '시스템 정상'
-            : sys.status === 'SAFE_MODE'
-              ? '안전 모드'
-              : '복구 중'}
-        </span>
-      </div>
-      <div className="sys-status-line">
-        <span
-          className={`sys-status-line__dot sys-status-line__dot--${
-            sys.websocket.connected ? 'ok' : 'err'
-          }`}
-        />
-        <span>WebSocket</span>
-      </div>
-      <div className="sys-status-line">
-        <span
-          className={`sys-status-line__dot sys-status-line__dot--${
-            sys.kiwoom_api.available ? 'ok' : 'err'
-          }`}
-        />
-        <span>
-          키움 API {sys.kiwoom_api.rate_limit_used_per_sec}/
-          {sys.kiwoom_api.rate_limit_max}
-        </span>
-      </div>
-      <div className="sys-status-line">
-        <span
-          className={`sys-status-line__dot sys-status-line__dot--${
-            sys.telegram_bot.active ? 'ok' : 'err'
-          }`}
-        />
-        <span>Telegram</span>
-      </div>
-      <div className="sys-status__time">
-        {sys.market.is_open ? '장 진행중' : '장 마감'} ·{' '}
-        {formatTime(sys.current_time)}
+        <main className="app-content">
+          <Outlet context={{ mock } satisfies AppShellOutletContext} />
+        </main>
       </div>
     </div>
   );
 }
 
 // ---------------------------------------------------------------------
-// Outlet context type
+// Header
 // ---------------------------------------------------------------------
+
+function AppHeader({
+  onToggleSide,
+  unread,
+  theme,
+  onCycleTheme,
+  onNav,
+}: {
+  onToggleSide: () => void;
+  unread: number;
+  theme: ThemeName;
+  onCycleTheme: () => ThemeName;
+  onNav: (to: string) => void;
+}) {
+  return (
+    <header className="cds-header">
+      <button
+        type="button"
+        className="cds-header__menu-btn cds-header__menu-btn--hide-desktop"
+        onClick={onToggleSide}
+        aria-label="메뉴"
+      >
+        <I.Menu className="cds-icon" size={20} />
+      </button>
+      <div className="cds-header__name">
+        <strong>V7.1</strong>
+        <span>K-Stock Trading</span>
+      </div>
+      <div className="cds-header__right">
+        <button
+          type="button"
+          className="cds-header__icon-btn"
+          onClick={onCycleTheme}
+          title={`테마: ${THEME_LABEL[theme]} (클릭해 전환)`}
+          aria-label="테마 전환"
+        >
+          <ThemeIcon theme={theme} />
+        </button>
+        <button
+          type="button"
+          className="cds-header__icon-btn"
+          onClick={() => onNav('/notifications')}
+          aria-label="알림"
+        >
+          <I.Bell className="cds-icon" size={20} />
+          {unread > 0 ? <span className="notif-dot">{unread}</span> : null}
+        </button>
+        <div
+          className="cds-header__user"
+          onClick={() => onNav('/settings')}
+        >
+          <div className="cds-header__avatar">박</div>
+          <span className="cds-header__name-text">박균호</span>
+        </div>
+      </div>
+    </header>
+  );
+}
+
+// ---------------------------------------------------------------------
+// SideNav
+// ---------------------------------------------------------------------
+
+function AppSideNav({
+  open,
+  onClose,
+  isActive,
+  onNav,
+  mock,
+}: {
+  open: boolean;
+  onClose: () => void;
+  isActive: (item: NavItem) => boolean;
+  onNav: (to: string) => void;
+  mock: MockState;
+}) {
+  const sys = mock.systemStatus;
+  return (
+    <>
+      {open ? (
+        <div className="cds-side-nav-overlay" onClick={onClose} />
+      ) : null}
+      <aside className={`cds-side-nav${open ? ' is-open' : ''}`}>
+        <nav className="cds-side-nav__items">
+          {NAV_ITEMS.map((it) => {
+            const Icon = it.icon;
+            return (
+              <a
+                key={it.key}
+                className={`cds-side-nav__link${isActive(it) ? ' is-active' : ''}`}
+                onClick={() => onNav(it.to)}
+              >
+                <Icon className="cds-icon" size={16} />
+                <span>{it.label}</span>
+              </a>
+            );
+          })}
+        </nav>
+        <div className="cds-side-nav__footer">
+          <div
+            style={{
+              fontSize: 11,
+              color: 'var(--cds-text-helper)',
+              textTransform: 'uppercase',
+              letterSpacing: 0.32,
+              marginBottom: 8,
+            }}
+          >
+            시스템 상태
+          </div>
+          <div className="sys-status-line">
+            <span
+              className={`sys-status-line__dot sys-status-line__dot--${
+                sys.status === 'RUNNING'
+                  ? 'ok'
+                  : sys.status === 'SAFE_MODE'
+                    ? 'err'
+                    : 'warn'
+              }`}
+            />
+            <span>
+              {sys.status === 'RUNNING'
+                ? '시스템 정상'
+                : sys.status === 'SAFE_MODE'
+                  ? '안전 모드'
+                  : '복구 중'}
+            </span>
+          </div>
+          <div className="sys-status-line">
+            <span
+              className={`sys-status-line__dot sys-status-line__dot--${sys.websocket.connected ? 'ok' : 'err'}`}
+            />
+            <span>WebSocket</span>
+          </div>
+          <div className="sys-status-line">
+            <span
+              className={`sys-status-line__dot sys-status-line__dot--${sys.kiwoom_api.available ? 'ok' : 'err'}`}
+            />
+            <span>
+              키움 API {sys.kiwoom_api.rate_limit_used_per_sec}/
+              {sys.kiwoom_api.rate_limit_max}
+            </span>
+          </div>
+          <div className="sys-status-line">
+            <span
+              className={`sys-status-line__dot sys-status-line__dot--${sys.telegram_bot.active ? 'ok' : 'err'}`}
+            />
+            <span>Telegram</span>
+          </div>
+          <div
+            style={{
+              marginTop: 12,
+              paddingTop: 12,
+              borderTop: '1px solid var(--cds-border-subtle-00)',
+              fontSize: 11,
+              color: 'var(--cds-text-helper)',
+              fontFamily: 'var(--font-mono)',
+            }}
+          >
+            {sys.market.is_open ? '장 진행중' : '장 마감'} ·{' '}
+            {formatTime(sys.current_time)}
+          </div>
+        </div>
+      </aside>
+    </>
+  );
+}
 
 export interface AppShellOutletContext {
   mock: MockState;

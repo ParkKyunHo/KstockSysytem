@@ -1,30 +1,19 @@
-import {
-  Button,
-  DataTable,
-  OverflowMenu,
-  OverflowMenuItem,
-  StructuredListBody,
-  StructuredListCell,
-  StructuredListRow,
-  StructuredListWrapper,
-  Table,
-  TableBody,
-  TableCell,
-  TableContainer,
-  TableHead,
-  TableHeader,
-  TableRow,
-  Tag,
-} from '@carbon/react';
-import { Add, Renew } from '@carbon/icons-react';
+// V7.1 Dashboard -- direct port of frontend-prototype/src/pages/dashboard.js.
+// Uses BEM classes from src/styles/legacy (page-hd, kpi-grid, tile-row,
+// section-hd, cds-data-table, cds-table, cds-slist, ...).
+
 import { useNavigate } from 'react-router-dom';
 
-import { KPITile } from '@/components/kpi/KPITile';
-import { PnLCell } from '@/components/pnl/PnLCell';
+import { I } from '@/components/icons';
 import {
+  Btn,
+  KPITile,
+  OverflowMenu,
+  PnLCell,
   PositionSourceTag,
   SeverityTag,
-} from '@/components/tags/StatusTag';
+  Tag,
+} from '@/components/ui';
 import { useAppShellContext } from '@/hooks/useAppShell';
 import { eventLabel } from '@/lib/eventLabel';
 import {
@@ -43,7 +32,6 @@ export function Dashboard() {
   const navigate = useNavigate();
   const sys = mock.systemStatus;
 
-  // -------- KPI computations --------
   const trackedCount = mock.trackedStocks.filter(
     (t) => t.status !== 'EXITED',
   ).length;
@@ -58,7 +46,6 @@ export function Dashboard() {
   const todayPnl = positions.reduce((s, p) => s + p.pnl_amount, 0);
   const todayPnlPct = (todayPnl / TOTAL_CAPITAL) * 100;
 
-  // -------- imminent boxes (proximity within ±2%) --------
   const upcoming = mock.boxes
     .filter(
       (b) =>
@@ -73,13 +60,10 @@ export function Dashboard() {
     )
     .slice(0, 5);
 
-  // -------- today's trades --------
-  const dayMs = 86_400_000;
   const todaysTrades = mock.tradeEvents.filter(
-    (e) => Date.now() - new Date(e.occurred_at).getTime() < dayMs,
+    (e) => Date.now() - new Date(e.occurred_at).getTime() < 86_400_000,
   );
 
-  // -------- recent notifications --------
   const recentNotifs = [...mock.notifications]
     .sort(
       (a, b) =>
@@ -89,7 +73,7 @@ export function Dashboard() {
 
   return (
     <div>
-      {/* Page header */}
+      {/* page-hd */}
       <div className="page-hd">
         <div>
           <h1 className="page-hd__title">대시보드</h1>
@@ -100,24 +84,17 @@ export function Dashboard() {
           </div>
         </div>
         <div className="page-hd__actions">
-          <Button
-            kind="tertiary"
-            size="sm"
-            renderIcon={Renew}
-            onClick={() => {
-              /* P5.4: TanStack Query refetch */
-            }}
-          >
+          <Btn kind="tertiary" size="sm" icon={I.Renew}>
             새로고침
-          </Button>
-          <Button
+          </Btn>
+          <Btn
             kind="primary"
             size="sm"
-            renderIcon={Add}
+            icon={I.Add}
             onClick={() => navigate('/tracked-stocks?new=1')}
           >
             새 종목 추적
-          </Button>
+          </Btn>
         </div>
       </div>
 
@@ -125,20 +102,20 @@ export function Dashboard() {
       <div className="kpi-grid">
         <KPITile
           label="추적 종목"
-          value={String(trackedCount)}
-          subtitle={`박스 대기 ${boxWaiting} / 진입 완료 ${boxTriggered}`}
+          value={trackedCount}
+          sub={`박스 대기 ${boxWaiting} / 진입 완료 ${boxTriggered}`}
         />
         <KPITile
           label="활성 포지션"
-          value={String(positions.length)}
-          subtitle={`부분청산 ${partial} / 전체 보유 ${
+          value={positions.length}
+          sub={`부분청산 ${partial} / 전체 보유 ${
             positions.length - partial
           }`}
         />
         <KPITile
           label="자본 사용"
           value={`${usedPct.toFixed(1)}%`}
-          subtitle={`가용 ${(100 - usedPct).toFixed(1)}% · ${formatKrw(
+          sub={`가용 ${(100 - usedPct).toFixed(1)}% · ${formatKrw(
             TOTAL_CAPITAL - used,
           )}원`}
           progress={usedPct}
@@ -146,13 +123,12 @@ export function Dashboard() {
         <KPITile
           label="오늘 손익"
           value={`${formatKrwSigned(todayPnl)}원`}
-          subtitle={formatPct(todayPnlPct)}
-          tone={todayPnl >= 0 ? 'profit' : 'loss'}
-          compact
+          sub={formatPct(todayPnlPct)}
+          color={todayPnl >= 0 ? 'profit' : 'loss'}
         />
       </div>
 
-      {/* System status row */}
+      {/* tile-row 시스템 상태 */}
       <div className="tile-row">
         <Tag type={sys.status === 'RUNNING' ? 'green' : 'red'}>
           {sys.status === 'RUNNING' ? '시스템 정상' : '안전 모드'}
@@ -163,7 +139,14 @@ export function Dashboard() {
           {sys.kiwoom_api.rate_limit_max}
         </Tag>
         <Tag type={sys.telegram_bot.active ? 'green' : 'red'}>Telegram</Tag>
-        <span className="tile-row__separator" />
+        <div
+          style={{
+            width: 1,
+            height: 16,
+            background: 'var(--cds-border-subtle-00)',
+            margin: '0 4px',
+          }}
+        />
         <Tag type="blue">
           {sys.market.is_open
             ? `장 진행중 ${formatTime(sys.current_time)}`
@@ -174,325 +157,267 @@ export function Dashboard() {
             마감까지 {formatUntil(sys.market.next_close_at)}
           </span>
         ) : null}
-        <span className="tile-row__spacer" />
-        <span className="text-helper numeric">
+        <span className="spacer" />
+        <span className="text-helper tnum">
           Uptime {formatUptime(sys.uptime_seconds)}
         </span>
       </div>
 
-      {/* Imminent boxes */}
+      {/* 진입 임박 박스 */}
       <div className="section-hd">
         <h2>진입 임박 박스</h2>
-        <Button
+        <Btn
           kind="ghost"
           size="sm"
           onClick={() => navigate('/tracked-stocks')}
         >
           전체 보기
-        </Button>
+        </Btn>
       </div>
       {upcoming.length === 0 ? (
-        <div
-          style={{
-            background: 'var(--cds-layer)',
-            padding: '1rem',
-          }}
-        >
+        <div className="cds-tile">
           <p className="text-helper" style={{ margin: 0 }}>
             현재 진입 임박 박스 없음
           </p>
         </div>
       ) : (
-        <DataTable
-          rows={upcoming.map((b) => {
-            const ts = mock.trackedStocks.find(
-              (t) => t.id === b.tracked_stock_id,
-            );
-            const proximity = b.entry_proximity_pct ?? 0;
-            return {
-              id: b.id,
-              stock: (
-                <span>
-                  <strong>{b.stock_name}</strong>{' '}
-                  <span className="text-helper numeric">{b.stock_code}</span>
-                </span>
-              ),
-              currentPrice: ts ? `${formatKrw(ts.current_price)}원` : '-',
-              box: `${formatKrw(b.lower_price)}~${formatKrw(b.upper_price)}`,
-              distance: (
-                <span className={proximity >= 0 ? 'pnl-profit' : 'pnl-loss'}>
-                  {formatPct(proximity)}
-                </span>
-              ),
-              size: `${b.position_size_pct}%`,
-              strategy: <Tag type="cool-gray">{b.strategy_type}</Tag>,
-              actions: (
-                <OverflowMenu
-                  flipped
-                  aria-label={`${b.stock_name} ${b.box_tier}차 박스 메뉴`}
-                >
-                  <OverflowMenuItem
-                    itemText="박스 수정"
-                    onClick={() =>
-                      navigate(`/tracked-stocks/${b.tracked_stock_id}`)
-                    }
-                  />
-                  <OverflowMenuItem
-                    itemText="종목 상세"
-                    onClick={() =>
-                      navigate(`/tracked-stocks/${b.tracked_stock_id}`)
-                    }
-                  />
-                  <OverflowMenuItem
-                    itemText="박스 취소"
-                    isDelete
-                    hasDivider
-                    onClick={() => {
-                      /* P5.4 mutation */
-                    }}
-                  />
-                </OverflowMenu>
-              ),
-            };
-          })}
-          headers={[
-            { key: 'stock', header: '종목명' },
-            { key: 'currentPrice', header: '현재가' },
-            { key: 'box', header: '박스' },
-            { key: 'distance', header: '거리' },
-            { key: 'size', header: '비중' },
-            { key: 'strategy', header: '전략' },
-            { key: 'actions', header: '' },
-          ]}
-        >
-          {({ rows, headers, getHeaderProps, getRowProps, getTableProps }) => (
-            <TableContainer>
-              <Table {...getTableProps()}>
-                <TableHead>
-                  <TableRow>
-                    {headers.map((h) => (
-                      <TableHeader {...getHeaderProps({ header: h })}>
-                        {h.header}
-                      </TableHeader>
-                    ))}
-                  </TableRow>
-                </TableHead>
-                <TableBody>
-                  {rows.map((row) => (
-                    <TableRow {...getRowProps({ row })}>
-                      {row.cells.map((cell) => (
-                        <TableCell key={cell.id}>{cell.value}</TableCell>
-                      ))}
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </TableContainer>
-          )}
-        </DataTable>
+        <div className="cds-data-table">
+          <div className="table-wrap">
+            <table className="cds-table">
+              <thead>
+                <tr>
+                  <th>종목명</th>
+                  <th style={{ textAlign: 'right' }}>현재가</th>
+                  <th>박스</th>
+                  <th style={{ textAlign: 'right' }}>거리</th>
+                  <th style={{ textAlign: 'right' }}>비중</th>
+                  <th>전략</th>
+                  <th />
+                </tr>
+              </thead>
+              <tbody>
+                {upcoming.map((b) => {
+                  const ts = mock.trackedStocks.find(
+                    (t) => t.id === b.tracked_stock_id,
+                  );
+                  const proximity = b.entry_proximity_pct ?? 0;
+                  return (
+                    <tr key={b.id}>
+                      <td>
+                        <strong>{b.stock_name}</strong>{' '}
+                        <span className="text-helper mono">{b.stock_code}</span>
+                      </td>
+                      <td className="price">
+                        {ts ? `${formatKrw(ts.current_price)}원` : '-'}
+                      </td>
+                      <td className="mono">
+                        {formatKrw(b.lower_price)}~{formatKrw(b.upper_price)}
+                      </td>
+                      <td
+                        className={`price ${
+                          proximity >= 0 ? 'pnl-profit' : 'pnl-loss'
+                        }`}
+                      >
+                        {formatPct(proximity)}
+                      </td>
+                      <td className="price">{b.position_size_pct}%</td>
+                      <td>
+                        <Tag type="cool-gray">{b.strategy_type}</Tag>
+                      </td>
+                      <td style={{ textAlign: 'right' }}>
+                        <OverflowMenu
+                          items={[
+                            {
+                              label: '박스 수정',
+                              onClick: () =>
+                                navigate(
+                                  `/tracked-stocks/${b.tracked_stock_id}`,
+                                ),
+                            },
+                            {
+                              label: '종목 상세',
+                              onClick: () =>
+                                navigate(
+                                  `/tracked-stocks/${b.tracked_stock_id}`,
+                                ),
+                            },
+                            { divider: true },
+                            { label: '박스 취소', danger: true },
+                          ]}
+                        />
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
       )}
 
-      {/* Active positions */}
+      {/* 활성 포지션 */}
       <div className="section-hd">
         <h2>활성 포지션</h2>
-        <Button kind="ghost" size="sm" onClick={() => navigate('/positions')}>
+        <Btn kind="ghost" size="sm" onClick={() => navigate('/positions')}>
           전체 보기
-        </Button>
+        </Btn>
       </div>
       {positions.length === 0 ? (
-        <div style={{ background: 'var(--cds-layer)', padding: '1rem' }}>
+        <div className="cds-tile">
           <p className="text-helper" style={{ margin: 0 }}>
             활성 포지션 없음
           </p>
         </div>
       ) : (
-        <DataTable
-          rows={positions.map((p) => ({
-            id: p.id,
-            stock: (
-              <span>
-                <strong>{p.stock_name}</strong>{' '}
-                <span className="text-helper numeric">{p.stock_code}</span>
-              </span>
-            ),
-            source: <PositionSourceTag source={p.source} />,
-            qty: String(p.total_quantity),
-            avg: formatKrw(p.weighted_avg_price),
-            price: formatKrw(p.current_price),
-            pnl: (
-              <div style={{ textAlign: 'right' }}>
-                <PnLCell amount={p.pnl_amount} pct={p.pnl_pct} />
-              </div>
-            ),
-            stop: formatKrw(p.fixed_stop_price),
-            ts: p.ts_activated ? (
-              <Tag type="green" size="sm">
-                TS 활성
-              </Tag>
-            ) : (
-              <span className="text-helper">-</span>
-            ),
-          }))}
-          headers={[
-            { key: 'stock', header: '종목' },
-            { key: 'source', header: '출처' },
-            { key: 'qty', header: '수량' },
-            { key: 'avg', header: '평단' },
-            { key: 'price', header: '현재가' },
-            { key: 'pnl', header: '손익' },
-            { key: 'stop', header: '손절선' },
-            { key: 'ts', header: 'TS' },
-          ]}
-        >
-          {({ rows, headers, getHeaderProps, getRowProps, getTableProps }) => (
-            <TableContainer>
-              <Table {...getTableProps()}>
-                <TableHead>
-                  <TableRow>
-                    {headers.map((h) => (
-                      <TableHeader {...getHeaderProps({ header: h })}>
-                        {h.header}
-                      </TableHeader>
-                    ))}
-                  </TableRow>
-                </TableHead>
-                <TableBody>
-                  {rows.map((row) => (
-                    <TableRow
-                      {...getRowProps({ row })}
-                      onClick={() => navigate('/positions')}
-                      style={{ cursor: 'pointer' }}
-                    >
-                      {row.cells.map((cell) => (
-                        <TableCell key={cell.id}>{cell.value}</TableCell>
-                      ))}
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </TableContainer>
-          )}
-        </DataTable>
+        <div className="cds-data-table">
+          <div className="table-wrap">
+            <table className="cds-table">
+              <thead>
+                <tr>
+                  <th>종목</th>
+                  <th>출처</th>
+                  <th style={{ textAlign: 'right' }}>수량</th>
+                  <th style={{ textAlign: 'right' }}>평단</th>
+                  <th style={{ textAlign: 'right' }}>현재가</th>
+                  <th style={{ textAlign: 'right' }}>손익</th>
+                  <th style={{ textAlign: 'right' }}>손절선</th>
+                  <th>TS</th>
+                </tr>
+              </thead>
+              <tbody>
+                {positions.map((p) => (
+                  <tr
+                    key={p.id}
+                    style={{ cursor: 'pointer' }}
+                    onClick={() => navigate('/positions')}
+                  >
+                    <td>
+                      <strong>{p.stock_name}</strong>{' '}
+                      <span className="text-helper mono">{p.stock_code}</span>
+                    </td>
+                    <td>
+                      <PositionSourceTag source={p.source} />
+                    </td>
+                    <td className="price">{p.total_quantity}</td>
+                    <td className="price">{formatKrw(p.weighted_avg_price)}</td>
+                    <td className="price">{formatKrw(p.current_price)}</td>
+                    <td>
+                      <div style={{ textAlign: 'right' }}>
+                        <PnLCell amount={p.pnl_amount} pct={p.pnl_pct} />
+                      </div>
+                    </td>
+                    <td className="price">{formatKrw(p.fixed_stop_price)}</td>
+                    <td>
+                      {p.ts_activated ? (
+                        <Tag type="green" size="sm">
+                          TS 활성
+                        </Tag>
+                      ) : (
+                        <span className="text-helper">-</span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
       )}
 
-      {/* Today's trades + recent notifications (2-up) */}
-      <div className="grid-2" style={{ marginTop: '1.5rem' }}>
-        {/* Today's trades */}
+      {/* 오늘 거래 + 최근 알림 */}
+      <div className="grid-2" style={{ marginTop: 24 }}>
         <div>
           <div className="section-hd">
             <h2>오늘 거래</h2>
             <span className="text-helper">{todaysTrades.length}건</span>
           </div>
-          <DataTable
-            rows={
-              todaysTrades.length === 0
-                ? [
-                    {
-                      id: 'empty',
-                      time: '',
-                      stock: '오늘 거래 없음',
-                      kind: '',
-                      qty: '',
-                      price: '',
-                    },
-                  ]
-                : todaysTrades.slice(0, 6).map((e) => {
+          <div className="cds-data-table">
+            <table className="cds-table cds-table--compact">
+              <thead>
+                <tr>
+                  <th>시간</th>
+                  <th>종목</th>
+                  <th>이벤트</th>
+                  <th style={{ textAlign: 'right' }}>수량</th>
+                  <th style={{ textAlign: 'right' }}>가격</th>
+                </tr>
+              </thead>
+              <tbody>
+                {todaysTrades.length === 0 ? (
+                  <tr>
+                    <td
+                      colSpan={5}
+                      style={{ color: 'var(--cds-text-helper)' }}
+                    >
+                      오늘 거래 없음
+                    </td>
+                  </tr>
+                ) : (
+                  todaysTrades.slice(0, 6).map((e) => {
                     const pos = mock.positions.find(
                       (p) => p.id === e.position_id,
                     );
-                    return {
-                      id: e.id,
-                      time: formatTime(e.occurred_at),
-                      stock: pos?.stock_name ?? e.stock_code,
-                      kind: eventLabel(e.event_type),
-                      qty: String(e.quantity),
-                      price: formatKrw(e.price),
-                    };
+                    return (
+                      <tr key={e.id}>
+                        <td className="mono">{formatTime(e.occurred_at)}</td>
+                        <td>{pos?.stock_name ?? e.stock_code}</td>
+                        <td>{eventLabel(e.event_type)}</td>
+                        <td className="price">{e.quantity}</td>
+                        <td className="price">{formatKrw(e.price)}</td>
+                      </tr>
+                    );
                   })
-            }
-            headers={[
-              { key: 'time', header: '시간' },
-              { key: 'stock', header: '종목' },
-              { key: 'kind', header: '이벤트' },
-              { key: 'qty', header: '수량' },
-              { key: 'price', header: '가격' },
-            ]}
-            size="sm"
-          >
-            {({
-              rows,
-              headers,
-              getHeaderProps,
-              getRowProps,
-              getTableProps,
-            }) => (
-              <TableContainer>
-                <Table {...getTableProps()}>
-                  <TableHead>
-                    <TableRow>
-                      {headers.map((h) => (
-                        <TableHeader {...getHeaderProps({ header: h })}>
-                          {h.header}
-                        </TableHeader>
-                      ))}
-                    </TableRow>
-                  </TableHead>
-                  <TableBody>
-                    {rows.map((row) => (
-                      <TableRow {...getRowProps({ row })}>
-                        {row.cells.map((cell) => (
-                          <TableCell key={cell.id}>{cell.value}</TableCell>
-                        ))}
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </TableContainer>
-            )}
-          </DataTable>
+                )}
+              </tbody>
+            </table>
+          </div>
         </div>
 
-        {/* Recent notifications */}
         <div>
           <div className="section-hd">
             <h2>최근 알림</h2>
-            <Button
+            <Btn
               kind="ghost"
               size="sm"
               onClick={() => navigate('/notifications')}
             >
               전체
-            </Button>
+            </Btn>
           </div>
-          <StructuredListWrapper isCondensed>
-            <StructuredListBody>
-              {recentNotifs.map((n) => (
-                <StructuredListRow key={n.id}>
-                  <StructuredListCell style={{ width: '5.5rem' }}>
-                    <SeverityTag severity={n.severity} />
-                  </StructuredListCell>
-                  <StructuredListCell>
-                    <div style={{ fontSize: '0.8125rem', fontWeight: 600 }}>
-                      {n.title}
-                    </div>
-                    <div className="text-helper" style={{ marginTop: '0.125rem' }}>
-                      {n.message}
-                    </div>
-                  </StructuredListCell>
-                  <StructuredListCell
-                    style={{
-                      width: '4rem',
-                      textAlign: 'right',
-                      fontFamily: 'IBM Plex Mono, monospace',
-                      fontSize: '0.75rem',
-                    }}
-                  >
-                    {formatTime(n.created_at)}
-                  </StructuredListCell>
-                </StructuredListRow>
-              ))}
-            </StructuredListBody>
-          </StructuredListWrapper>
+          <div className="cds-slist">
+            {recentNotifs.map((n) => (
+              <div
+                key={n.id}
+                className="cds-slist__row"
+                style={{ gridTemplateColumns: '88px 1fr 64px' }}
+              >
+                <div className="cds-slist__cell">
+                  <SeverityTag severity={n.severity} sm />
+                </div>
+                <div
+                  className="cds-slist__cell"
+                  style={{ background: 'transparent' }}
+                >
+                  <div style={{ fontSize: 13, fontWeight: 600 }}>
+                    {n.title}
+                  </div>
+                  <div className="text-helper" style={{ marginTop: 2 }}>
+                    {n.message}
+                  </div>
+                </div>
+                <div
+                  className="cds-slist__cell mono"
+                  style={{
+                    background: 'transparent',
+                    textAlign: 'right',
+                    fontSize: 12,
+                  }}
+                >
+                  {formatTime(n.created_at)}
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
       </div>
     </div>

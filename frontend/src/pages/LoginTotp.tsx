@@ -1,12 +1,9 @@
-import {
-  Button,
-  InlineNotification,
-  ProgressBar,
-  Stack,
-  TextInput,
-} from '@carbon/react';
+// V7.1 TOTP -- direct port of frontend-prototype/src/pages/login.js TotpPage.
+
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+
+import { Btn, Field, InlineNotif, Input, ProgressBar } from '@/components/ui';
 
 export function LoginTotp() {
   const navigate = useNavigate();
@@ -14,7 +11,6 @@ export function LoginTotp() {
   const [error, setError] = useState<string | null>(null);
   const [seconds, setSeconds] = useState(28);
 
-  // 30s rolling countdown.
   useEffect(() => {
     const id = window.setInterval(
       () => setSeconds((s) => (s <= 0 ? 30 : s - 1)),
@@ -23,7 +19,6 @@ export function LoginTotp() {
     return () => window.clearInterval(id);
   }, []);
 
-  // Auto-verify when 6 digits typed.
   useEffect(() => {
     if (code.length === 6) {
       if (code === '123456') {
@@ -38,50 +33,49 @@ export function LoginTotp() {
   return (
     <div className="login-shell">
       <div className="login-tile">
-        <div className="login-tile__overline">2단계 인증</div>
+        <div
+          style={{
+            fontSize: 12,
+            color: 'var(--cds-text-helper)',
+            letterSpacing: 0.32,
+            textTransform: 'uppercase',
+            marginBottom: 4,
+          }}
+        >
+          2단계 인증
+        </div>
         <h1>TOTP 코드 입력</h1>
-        <p className="login-tile__sub">
+        <p className="sub">
           Google Authenticator의 6자리 코드를 입력하세요. (테스트: 123456)
         </p>
-        <Stack gap={5}>
-          {error ? (
-            <InlineNotification
-              kind="error"
-              title={error}
-              onClose={() => setError(null)}
-              lowContrast
-            />
-          ) : null}
-          <TextInput
-            id="totp-code"
-            labelText="인증 코드"
+        {error ? (
+          <InlineNotif
+            kind="error"
+            title={error}
+            onClose={() => setError(null)}
+          />
+        ) : null}
+        <Field label="인증 코드">
+          <Input
             value={code}
-            onChange={(e) =>
-              setCode(e.target.value.replace(/\D/g, '').slice(0, 6))
-            }
+            onChange={(v) => setCode(v.replace(/\D/g, '').slice(0, 6))}
             placeholder="000000"
             maxLength={6}
-            size="lg"
+            lg
+            mono
             autoFocus
-            inputMode="numeric"
-            style={{ fontFamily: 'IBM Plex Mono, monospace' }}
           />
+        </Field>
+        <div style={{ marginBottom: 16 }}>
           <ProgressBar
-            label="다음 코드까지"
-            helperText={`${seconds}초`}
             value={30 - seconds}
             max={30}
+            helper={`다음 코드까지 ${seconds}초`}
           />
-          <Button
-            kind="ghost"
-            size="sm"
-            onClick={() => {
-              /* P5.4: 백업 코드 화면 */
-            }}
-          >
-            백업 코드 사용
-          </Button>
-        </Stack>
+        </div>
+        <Btn kind="ghost" size="sm">
+          백업 코드 사용
+        </Btn>
       </div>
     </div>
   );

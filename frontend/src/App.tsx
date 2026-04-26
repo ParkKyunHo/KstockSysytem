@@ -1,4 +1,4 @@
-import { Theme } from '@carbon/react';
+import { useEffect } from 'react';
 import { Navigate, Route, Routes } from 'react-router-dom';
 
 import { AppShell } from '@/components/shell/AppShell';
@@ -18,8 +18,19 @@ import { useTheme } from '@/hooks/useTheme';
 export default function App() {
   const { theme, cycleTheme } = useTheme();
 
+  // Apply theme class on <html> -- mirrors prototype's setAttribute call.
+  useEffect(() => {
+    document.documentElement.classList.remove(
+      'theme-g10',
+      'theme-g90',
+      'theme-g100',
+      'theme-white',
+    );
+    document.documentElement.classList.add(`theme-${theme}`);
+  }, [theme]);
+
   return (
-    <Theme theme={theme}>
+    <>
       <Routes>
         {/* Auth pages render without the AppShell. */}
         <Route path="/login" element={<Login />} />
@@ -40,6 +51,6 @@ export default function App() {
           <Route path="*" element={<Navigate to="/dashboard" replace />} />
         </Route>
       </Routes>
-    </Theme>
+    </>
   );
 }

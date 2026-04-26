@@ -1,12 +1,9 @@
-import {
-  Button,
-  InlineNotification,
-  PasswordInput,
-  Stack,
-  TextInput,
-} from '@carbon/react';
+// V7.1 Login -- direct port of frontend-prototype/src/pages/login.js LoginPage.
+
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+
+import { Btn, Field, InlineNotif, Input } from '@/components/ui';
 
 export function Login() {
   const navigate = useNavigate();
@@ -33,51 +30,56 @@ export function Login() {
   return (
     <div className="login-shell">
       <div className="login-tile">
-        <div className="login-tile__overline">V7.1</div>
+        <div
+          style={{
+            fontSize: 12,
+            color: 'var(--cds-text-helper)',
+            letterSpacing: 0.32,
+            textTransform: 'uppercase',
+            marginBottom: 4,
+          }}
+        >
+          V7.1
+        </div>
         <h1>K-Stock Trading</h1>
-        <p className="login-tile__sub">관제 대시보드에 로그인</p>
-        <Stack gap={5}>
-          {error ? (
-            <InlineNotification
-              kind="error"
-              title="인증 실패"
-              subtitle={error}
-              onClose={() => setError(null)}
-              hideCloseButton={false}
-              lowContrast
-            />
-          ) : null}
-          <TextInput
-            id="login-username"
-            labelText="사용자 이름"
-            value={username}
-            onChange={(e) => setUsername(e.target.value)}
-            placeholder="admin"
-            size="lg"
-            autoComplete="username"
+        <p className="sub">관제 대시보드에 로그인</p>
+        {error ? (
+          <InlineNotif
+            kind="error"
+            title="인증 실패"
+            subtitle={error}
+            onClose={() => setError(null)}
           />
-          <PasswordInput
-            id="login-password"
-            labelText="비밀번호"
+        ) : null}
+        <Field label="사용자 이름">
+          <Input
+            value={username}
+            onChange={setUsername}
+            placeholder="admin"
+            lg
+          />
+        </Field>
+        <Field label="비밀번호">
+          <Input
             value={password}
-            onChange={(e) => setPassword(e.target.value)}
+            onChange={setPassword}
+            type="password"
             placeholder="4자리 이상"
-            size="lg"
-            autoComplete="current-password"
+            lg
             onKeyDown={(e) => {
               if (e.key === 'Enter' && valid && !loading) submit();
             }}
           />
-          <Button
-            kind="primary"
-            size="lg"
-            onClick={submit}
-            disabled={!valid || loading}
-            style={{ width: '100%' }}
-          >
-            {loading ? '로그인 중...' : '로그인'}
-          </Button>
-        </Stack>
+        </Field>
+        <Btn
+          kind="primary"
+          size="lg"
+          full
+          onClick={submit}
+          disabled={!valid || loading}
+        >
+          {loading ? '로그인 중...' : '로그인'}
+        </Btn>
       </div>
     </div>
   );

@@ -1,0 +1,628 @@
+/* ==========================================================================
+   Carbon Design System — Colors, Type, Tokens
+   Derived from (v11) Carbon Design System (Community).fig
+   Themes: White / Gray 10 / Gray 90 / Gray 100
+
+   Usage:
+     <html class="theme-white">  (or theme-g10, theme-g90, theme-g100)
+     Then reference tokens via var(--cds-background), var(--cds-text-primary), etc.
+   ========================================================================== */
+
+/* --------------------------------------------------------------------------
+   Fonts — IBM Plex Sans (UI) + IBM Plex Mono (code). Upstream IBM fonts
+   served from Google Fonts under the OFL.
+   -------------------------------------------------------------------------- */
+@import url("https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@300;400;600&display=swap");
+
+/* --------------------------------------------------------------------------
+   Core palette — theme-independent raw values.
+   Named after Carbon's 10-step hue ramps.
+   -------------------------------------------------------------------------- */
+:root {
+  /* Neutrals */
+  --cds-white:        #ffffff;
+  --cds-black:        #000000;
+  --cds-gray-10:      #f4f4f4;
+  --cds-gray-20:      #e0e0e0;
+  --cds-gray-30:      #c6c6c6;
+  --cds-gray-40:      #a8a8a8;
+  --cds-gray-50:      #8d8d8d;
+  --cds-gray-60:      #6f6f6f;
+  --cds-gray-70:      #525252;
+  --cds-gray-80:      #393939;
+  --cds-gray-90:      #262626;
+  --cds-gray-100:     #161616;
+
+  /* Brand interactive — blue */
+  --cds-blue-10:      #edf5ff;
+  --cds-blue-20:      #d0e2ff;
+  --cds-blue-30:      #a6c8ff;
+  --cds-blue-40:      #78a9ff;
+  --cds-blue-50:      #4589ff;
+  --cds-blue-60:      #0f62fe;   /* primary */
+  --cds-blue-60-hover:#0353e9;
+  --cds-blue-70:      #0043ce;
+  --cds-blue-80:      #002d9c;
+  --cds-blue-90:      #001d6c;
+  --cds-blue-100:     #001141;
+
+  /* Danger — red */
+  --cds-red-10:       #fff1f1;
+  --cds-red-20:       #ffd7d9;
+  --cds-red-30:       #ffb3b8;
+  --cds-red-40:       #ff8389;
+  --cds-red-50:       #fa4d56;
+  --cds-red-60:       #da1e28;
+  --cds-red-60-hover: #ba1b23;
+  --cds-red-70:       #a2191f;
+  --cds-red-80:       #750e13;
+
+  /* Success — green */
+  --cds-green-40:     #42be65;
+  --cds-green-50:     #24a148;
+  --cds-green-60:     #198038;
+
+  /* Warning — yellow */
+  --cds-yellow-20:    #fdd13a;
+  --cds-yellow-30:    #f1c21b;
+
+  /* Info / teal */
+  --cds-teal-50:      #009d9a;
+  --cds-teal-60:      #007d79;
+
+  /* AI — purple */
+  --cds-purple-30:    #d4bbff;
+  --cds-purple-50:    #a56eff;
+  --cds-purple-60:    #8a3ffc;
+  --cds-purple-70:    #6929c4;
+  --cds-purple-80:    #491d8b;
+
+  /* --- Type ramp (Productive) --------------------------------------------
+     Tokens named after Carbon's type styles. Sizes in px, line-heights in px.
+  */
+  --cds-font-sans:  "IBM Plex Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --cds-font-mono:  "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+  --cds-label-01-size: 12px;       --cds-label-01-lh: 16px;       --cds-label-01-weight: 400;
+  --cds-helper-01-size: 12px;      --cds-helper-01-lh: 16px;      --cds-helper-01-weight: 400;
+  --cds-code-01-size: 12px;        --cds-code-01-lh: 16px;        --cds-code-01-weight: 400;
+  --cds-code-02-size: 14px;        --cds-code-02-lh: 20px;        --cds-code-02-weight: 400;
+
+  --cds-body-compact-01-size: 14px;--cds-body-compact-01-lh: 18px;--cds-body-compact-01-weight: 400;
+  --cds-body-01-size: 14px;        --cds-body-01-lh: 20px;        --cds-body-01-weight: 400;
+  --cds-body-02-size: 16px;        --cds-body-02-lh: 24px;        --cds-body-02-weight: 400;
+
+  --cds-heading-compact-01-size: 14px; --cds-heading-compact-01-lh: 18px; --cds-heading-compact-01-weight: 600;
+  --cds-heading-01-size: 14px;     --cds-heading-01-lh: 20px;     --cds-heading-01-weight: 600;
+  --cds-heading-02-size: 16px;     --cds-heading-02-lh: 22px;     --cds-heading-02-weight: 600;
+  --cds-heading-03-size: 20px;     --cds-heading-03-lh: 28px;     --cds-heading-03-weight: 400;
+  --cds-heading-04-size: 28px;     --cds-heading-04-lh: 36px;     --cds-heading-04-weight: 400;
+  --cds-heading-05-size: 32px;     --cds-heading-05-lh: 40px;     --cds-heading-05-weight: 400;
+  --cds-heading-06-size: 42px;     --cds-heading-06-lh: 50px;     --cds-heading-06-weight: 300;
+  --cds-heading-07-size: 54px;     --cds-heading-07-lh: 64px;     --cds-heading-07-weight: 300;
+
+  /* Expressive display (marketing) */
+  --cds-fluid-heading-03: clamp(20px, 2vw, 28px);
+  --cds-fluid-heading-05: clamp(32px, 4vw, 60px);
+  --cds-fluid-heading-06: clamp(42px, 6vw, 92px);
+
+  /* --- Spacing (4/8 grid) ------------------------------------------------- */
+  --cds-spacing-01: 2px;
+  --cds-spacing-02: 4px;
+  --cds-spacing-03: 8px;
+  --cds-spacing-04: 12px;
+  --cds-spacing-05: 16px;
+  --cds-spacing-06: 24px;
+  --cds-spacing-07: 32px;
+  --cds-spacing-08: 40px;
+  --cds-spacing-09: 48px;
+  --cds-spacing-10: 64px;
+  --cds-spacing-11: 80px;
+  --cds-spacing-12: 96px;
+  --cds-spacing-13: 160px;
+
+  /* --- Radii -------------------------------------------------------------- */
+  --cds-radius-0: 0;
+  --cds-radius-sm: 2px;   /* tag inner */
+  --cds-radius-md: 4px;   /* tag, ai-label pill */
+  --cds-radius-full: 9999px;
+
+  /* --- Shadow / elevation ------------------------------------------------- */
+  --cds-shadow-popover:  0 2px 6px rgba(0, 0, 0, 0.2);
+  --cds-shadow-dropdown: 0 2px 6px rgba(0, 0, 0, 0.2);
+  --cds-shadow-menu:     0 2px 6px rgba(0, 0, 0, 0.2);
+  --cds-shadow-modal:    0 4px 16px rgba(0, 0, 0, 0.3);
+
+  /* --- Motion ------------------------------------------------------------- */
+  --cds-easing-productive: cubic-bezier(0.2, 0, 0.38, 0.9);
+  --cds-easing-expressive: cubic-bezier(0.4, 0.14, 0.3, 1);
+  --cds-duration-fast-01: 70ms;
+  --cds-duration-fast-02: 110ms;
+  --cds-duration-moderate-01: 150ms;
+  --cds-duration-moderate-02: 240ms;
+  --cds-duration-slow-01: 400ms;
+
+  /* --- Breakpoints (for JS) ---------------------------------------------- */
+  --cds-bp-sm: 320px;
+  --cds-bp-md: 672px;
+  --cds-bp-lg: 1056px;
+  --cds-bp-xl: 1312px;
+  --cds-bp-max: 1584px;
+
+  /* --- Z ------------------------------------------------------------------ */
+  --cds-z-header: 8000;
+  --cds-z-overlay: 6000;
+  --cds-z-modal: 9000;
+  --cds-z-toast: 10000;
+}
+
+/* ==========================================================================
+   Theme — White (default)
+   ========================================================================== */
+:root,
+.theme-white {
+  color-scheme: light;
+
+  /* Background */
+  --cds-background:              #ffffff;
+  --cds-background-hover:        rgba(141, 141, 141, 0.12);
+  --cds-background-active:       rgba(141, 141, 141, 0.50);
+  --cds-background-selected:     rgba(141, 141, 141, 0.20);
+  --cds-background-selected-hover: rgba(141, 141, 141, 0.32);
+  --cds-background-inverse:      #393939;
+  --cds-background-inverse-hover:#4c4c4c;
+  --cds-background-brand:        #0f62fe;
+
+  /* Layer 01 / 02 / 03 */
+  --cds-layer-01:                #f4f4f4;
+  --cds-layer-hover-01:          #e8e8e8;
+  --cds-layer-active-01:         #c6c6c6;
+  --cds-layer-selected-01:       #e0e0e0;
+  --cds-layer-02:                #ffffff;
+  --cds-layer-hover-02:          #e8e8e8;
+  --cds-layer-active-02:         #c6c6c6;
+  --cds-layer-selected-02:       #e0e0e0;
+  --cds-layer-03:                #f4f4f4;
+
+  --cds-layer-accent-01:         #e0e0e0;
+  --cds-layer-accent-02:         #e0e0e0;
+
+  /* Field */
+  --cds-field-01:                #f4f4f4;
+  --cds-field-hover-01:          #e8e8e8;
+  --cds-field-02:                #ffffff;
+  --cds-field-hover-02:          #e8e8e8;
+
+  /* Text */
+  --cds-text-primary:            #161616;
+  --cds-text-secondary:          #525252;
+  --cds-text-placeholder:        #a8a8a8;
+  --cds-text-helper:             #6f6f6f;
+  --cds-text-on-color:           #ffffff;
+  --cds-text-on-color-disabled:  #8d8d8d;
+  --cds-text-error:              #da1e28;
+  --cds-text-inverse:            #ffffff;
+  --cds-text-disabled:           rgba(22, 22, 22, 0.25);
+
+  /* Icon */
+  --cds-icon-primary:            #161616;
+  --cds-icon-secondary:          #525252;
+  --cds-icon-on-color:           #ffffff;
+  --cds-icon-disabled:           rgba(22, 22, 22, 0.25);
+
+  /* Link */
+  --cds-link-primary:            #0f62fe;
+  --cds-link-primary-hover:      #0043ce;
+  --cds-link-secondary:          #0043ce;
+  --cds-link-visited:            #8a3ffc;
+
+  /* Border */
+  --cds-border-subtle-00:        #e0e0e0;
+  --cds-border-subtle-01:        #c6c6c6;
+  --cds-border-strong-01:        #8d8d8d;
+  --cds-border-inverse:          #161616;
+  --cds-border-interactive:      #0f62fe;
+
+  /* Button */
+  --cds-button-primary:          #0f62fe;
+  --cds-button-primary-hover:    #0353e9;
+  --cds-button-primary-active:   #002d9c;
+  --cds-button-secondary:        #393939;
+  --cds-button-secondary-hover:  #4c4c4c;
+  --cds-button-secondary-active: #6f6f6f;
+  --cds-button-tertiary:         #0f62fe;
+  --cds-button-tertiary-hover:   #0353e9;
+  --cds-button-tertiary-active:  #002d9c;
+  --cds-button-danger-primary:   #da1e28;
+  --cds-button-danger-secondary: #da1e28;
+  --cds-button-danger-hover:     #ba1b23;
+  --cds-button-danger-active:    #750e13;
+  --cds-button-separator:        #e0e0e0;
+  --cds-button-disabled:         #c6c6c6;
+
+  /* Support (notifications / status) */
+  --cds-support-error:           #da1e28;
+  --cds-support-success:         #24a148;
+  --cds-support-warning:         #f1c21b;
+  --cds-support-info:            #0043ce;
+  --cds-support-caution-major:   #ff832b;
+  --cds-support-caution-minor:   #f1c21b;
+
+  /* Focus */
+  --cds-focus:                   #0f62fe;
+  --cds-focus-inset:             #ffffff;
+  --cds-focus-inverse:           #ffffff;
+
+  /* Tag */
+  --cds-tag-background-gray:     #e0e0e0;
+  --cds-tag-color-gray:          #161616;
+  --cds-tag-background-blue:     #d0e2ff;
+  --cds-tag-color-blue:          #0043ce;
+  --cds-tag-background-red:      #ffd7d9;
+  --cds-tag-color-red:           #750e13;
+  --cds-tag-background-green:    #a7f0ba;
+  --cds-tag-color-green:         #0e6027;
+  --cds-tag-background-purple:   #e8daff;
+  --cds-tag-color-purple:        #6929c4;
+  --cds-tag-background-cyan:     #bae6ff;
+  --cds-tag-color-cyan:          #00539a;
+  --cds-tag-background-magenta:  #ffd6e8;
+  --cds-tag-color-magenta:       #9f1853;
+  --cds-tag-background-cool-gray: #dde1e6;
+  --cds-tag-color-cool-gray:     #121619;
+
+  /* Overlay */
+  --cds-overlay:                 rgba(22, 22, 22, 0.5);
+}
+
+/* ==========================================================================
+   Theme — Gray 10 (off-white, subtle contrast inversion)
+   ========================================================================== */
+.theme-g10 {
+  color-scheme: light;
+
+  --cds-background:              #f4f4f4;
+  --cds-background-hover:        rgba(141, 141, 141, 0.12);
+  --cds-background-active:       rgba(141, 141, 141, 0.50);
+  --cds-background-selected:     rgba(141, 141, 141, 0.20);
+  --cds-background-selected-hover: rgba(141, 141, 141, 0.32);
+  --cds-background-inverse:      #393939;
+  --cds-background-inverse-hover:#4c4c4c;
+  --cds-background-brand:        #0f62fe;
+
+  --cds-layer-01:                #ffffff;
+  --cds-layer-hover-01:          #e8e8e8;
+  --cds-layer-active-01:         #c6c6c6;
+  --cds-layer-selected-01:       #e0e0e0;
+  --cds-layer-02:                #f4f4f4;
+  --cds-layer-hover-02:          #e8e8e8;
+  --cds-layer-active-02:         #c6c6c6;
+  --cds-layer-selected-02:       #e0e0e0;
+  --cds-layer-03:                #ffffff;
+
+  --cds-layer-accent-01:         #e0e0e0;
+  --cds-layer-accent-02:         #e0e0e0;
+
+  --cds-field-01:                #ffffff;
+  --cds-field-hover-01:          #e8e8e8;
+  --cds-field-02:                #f4f4f4;
+  --cds-field-hover-02:          #e8e8e8;
+
+  --cds-text-primary:            #161616;
+  --cds-text-secondary:          #525252;
+  --cds-text-placeholder:        #a8a8a8;
+  --cds-text-helper:             #6f6f6f;
+  --cds-text-on-color:           #ffffff;
+  --cds-text-on-color-disabled:  #8d8d8d;
+  --cds-text-error:              #da1e28;
+  --cds-text-inverse:            #ffffff;
+  --cds-text-disabled:           rgba(22, 22, 22, 0.25);
+
+  --cds-icon-primary:            #161616;
+  --cds-icon-secondary:          #525252;
+  --cds-icon-on-color:           #ffffff;
+  --cds-icon-disabled:           rgba(22, 22, 22, 0.25);
+
+  --cds-link-primary:            #0f62fe;
+  --cds-link-primary-hover:      #0043ce;
+  --cds-link-secondary:          #0043ce;
+  --cds-link-visited:            #8a3ffc;
+
+  --cds-border-subtle-00:        #c6c6c6;
+  --cds-border-subtle-01:        #e0e0e0;
+  --cds-border-strong-01:        #8d8d8d;
+  --cds-border-inverse:          #161616;
+  --cds-border-interactive:      #0f62fe;
+
+  --cds-button-primary:          #0f62fe;
+  --cds-button-primary-hover:    #0353e9;
+  --cds-button-primary-active:   #002d9c;
+  --cds-button-secondary:        #393939;
+  --cds-button-secondary-hover:  #4c4c4c;
+  --cds-button-secondary-active: #6f6f6f;
+  --cds-button-tertiary:         #0f62fe;
+  --cds-button-tertiary-hover:   #0353e9;
+  --cds-button-tertiary-active:  #002d9c;
+  --cds-button-danger-primary:   #da1e28;
+  --cds-button-danger-secondary: #da1e28;
+  --cds-button-danger-hover:     #ba1b23;
+  --cds-button-danger-active:    #750e13;
+  --cds-button-separator:        #e0e0e0;
+  --cds-button-disabled:         #c6c6c6;
+
+  --cds-support-error:           #da1e28;
+  --cds-support-success:         #24a148;
+  --cds-support-warning:         #f1c21b;
+  --cds-support-info:            #0043ce;
+
+  --cds-focus:                   #0f62fe;
+  --cds-focus-inset:             #ffffff;
+  --cds-focus-inverse:           #ffffff;
+
+  --cds-tag-background-gray:     #c6c6c6;
+  --cds-tag-color-gray:          #161616;
+  --cds-tag-background-blue:     #d0e2ff;
+  --cds-tag-color-blue:          #0043ce;
+  --cds-tag-background-red:      #ffd7d9;
+  --cds-tag-color-red:           #750e13;
+  --cds-tag-background-green:    #a7f0ba;
+  --cds-tag-color-green:         #0e6027;
+  --cds-tag-background-purple:   #e8daff;
+  --cds-tag-color-purple:        #6929c4;
+  --cds-tag-background-cyan:     #bae6ff;
+  --cds-tag-color-cyan:          #00539a;
+  --cds-tag-background-magenta:  #ffd6e8;
+  --cds-tag-color-magenta:       #9f1853;
+  --cds-tag-background-cool-gray: #dde1e6;
+  --cds-tag-color-cool-gray:     #121619;
+
+  --cds-overlay:                 rgba(22, 22, 22, 0.5);
+}
+
+/* ==========================================================================
+   Theme — Gray 90 (dark surface)
+   ========================================================================== */
+.theme-g90 {
+  color-scheme: dark;
+
+  --cds-background:              #262626;
+  --cds-background-hover:        rgba(141, 141, 141, 0.16);
+  --cds-background-active:       rgba(141, 141, 141, 0.40);
+  --cds-background-selected:     rgba(141, 141, 141, 0.24);
+  --cds-background-selected-hover: rgba(141, 141, 141, 0.32);
+  --cds-background-inverse:      #f4f4f4;
+  --cds-background-inverse-hover:#e5e5e5;
+  --cds-background-brand:        #0f62fe;
+
+  --cds-layer-01:                #393939;
+  --cds-layer-hover-01:          #4c4c4c;
+  --cds-layer-active-01:         #6f6f6f;
+  --cds-layer-selected-01:       #525252;
+  --cds-layer-02:                #525252;
+  --cds-layer-hover-02:          #636363;
+  --cds-layer-active-02:         #8d8d8d;
+  --cds-layer-selected-02:       #6f6f6f;
+  --cds-layer-03:                #6f6f6f;
+
+  --cds-layer-accent-01:         #525252;
+  --cds-layer-accent-02:         #6f6f6f;
+
+  --cds-field-01:                #393939;
+  --cds-field-hover-01:          #474747;
+  --cds-field-02:                #525252;
+  --cds-field-hover-02:          #636363;
+
+  --cds-text-primary:            #f4f4f4;
+  --cds-text-secondary:          #c6c6c6;
+  --cds-text-placeholder:        #6f6f6f;
+  --cds-text-helper:             #8d8d8d;
+  --cds-text-on-color:           #ffffff;
+  --cds-text-on-color-disabled:  rgba(255,255,255,0.25);
+  --cds-text-error:              #ffb3b8;
+  --cds-text-inverse:            #161616;
+  --cds-text-disabled:           rgba(244,244,244,0.25);
+
+  --cds-icon-primary:            #f4f4f4;
+  --cds-icon-secondary:          #c6c6c6;
+  --cds-icon-on-color:           #ffffff;
+  --cds-icon-disabled:           rgba(244,244,244,0.25);
+
+  --cds-link-primary:            #78a9ff;
+  --cds-link-primary-hover:      #a6c8ff;
+  --cds-link-secondary:          #a6c8ff;
+  --cds-link-visited:            #be95ff;
+
+  --cds-border-subtle-00:        #525252;
+  --cds-border-subtle-01:        #6f6f6f;
+  --cds-border-strong-01:        #8d8d8d;
+  --cds-border-inverse:          #f4f4f4;
+  --cds-border-interactive:      #4589ff;
+
+  --cds-button-primary:          #0f62fe;
+  --cds-button-primary-hover:    #0353e9;
+  --cds-button-primary-active:   #002d9c;
+  --cds-button-secondary:        #6f6f6f;
+  --cds-button-secondary-hover:  #5e5e5e;
+  --cds-button-secondary-active: #393939;
+  --cds-button-tertiary:         #ffffff;
+  --cds-button-tertiary-hover:   #f4f4f4;
+  --cds-button-tertiary-active:  #c6c6c6;
+  --cds-button-danger-primary:   #da1e28;
+  --cds-button-danger-secondary: #ff8389;
+  --cds-button-danger-hover:     #ba1b23;
+  --cds-button-danger-active:    #750e13;
+  --cds-button-separator:        #161616;
+  --cds-button-disabled:         #525252;
+
+  --cds-support-error:           #ff8389;
+  --cds-support-success:         #42be65;
+  --cds-support-warning:         #f1c21b;
+  --cds-support-info:            #4589ff;
+
+  --cds-focus:                   #ffffff;
+  --cds-focus-inset:             #161616;
+  --cds-focus-inverse:           #0f62fe;
+
+  --cds-tag-background-gray:     #525252;
+  --cds-tag-color-gray:          #f4f4f4;
+  --cds-tag-background-blue:     #0043ce;
+  --cds-tag-color-blue:          #d0e2ff;
+  --cds-tag-background-red:      #a2191f;
+  --cds-tag-color-red:           #ffd7d9;
+  --cds-tag-background-green:    #0e6027;
+  --cds-tag-color-green:         #a7f0ba;
+  --cds-tag-background-purple:   #6929c4;
+  --cds-tag-color-purple:        #e8daff;
+  --cds-tag-background-cyan:     #00539a;
+  --cds-tag-color-cyan:          #bae6ff;
+  --cds-tag-background-magenta:  #9f1853;
+  --cds-tag-color-magenta:       #ffd6e8;
+  --cds-tag-background-cool-gray: #4d5358;
+  --cds-tag-color-cool-gray:     #f2f4f8;
+
+  --cds-overlay:                 rgba(0, 0, 0, 0.65);
+}
+
+/* ==========================================================================
+   Theme — Gray 100 (deepest, near-black)
+   ========================================================================== */
+.theme-g100 {
+  color-scheme: dark;
+
+  --cds-background:              #161616;
+  --cds-background-hover:        rgba(141, 141, 141, 0.16);
+  --cds-background-active:       rgba(141, 141, 141, 0.40);
+  --cds-background-selected:     rgba(141, 141, 141, 0.24);
+  --cds-background-selected-hover: rgba(141, 141, 141, 0.32);
+  --cds-background-inverse:      #f4f4f4;
+  --cds-background-inverse-hover:#e5e5e5;
+  --cds-background-brand:        #0f62fe;
+
+  --cds-layer-01:                #262626;
+  --cds-layer-hover-01:          #333333;
+  --cds-layer-active-01:         #525252;
+  --cds-layer-selected-01:       #393939;
+  --cds-layer-02:                #393939;
+  --cds-layer-hover-02:          #474747;
+  --cds-layer-active-02:         #6f6f6f;
+  --cds-layer-selected-02:       #525252;
+  --cds-layer-03:                #525252;
+
+  --cds-layer-accent-01:         #393939;
+  --cds-layer-accent-02:         #525252;
+
+  --cds-field-01:                #262626;
+  --cds-field-hover-01:          #333333;
+  --cds-field-02:                #393939;
+  --cds-field-hover-02:          #474747;
+
+  --cds-text-primary:            #f4f4f4;
+  --cds-text-secondary:          #c6c6c6;
+  --cds-text-placeholder:        #6f6f6f;
+  --cds-text-helper:             #8d8d8d;
+  --cds-text-on-color:           #ffffff;
+  --cds-text-on-color-disabled:  rgba(255,255,255,0.25);
+  --cds-text-error:              #ff8389;
+  --cds-text-inverse:            #161616;
+  --cds-text-disabled:           rgba(244,244,244,0.25);
+
+  --cds-icon-primary:            #f4f4f4;
+  --cds-icon-secondary:          #c6c6c6;
+  --cds-icon-on-color:           #ffffff;
+  --cds-icon-disabled:           rgba(244,244,244,0.25);
+
+  --cds-link-primary:            #78a9ff;
+  --cds-link-primary-hover:      #a6c8ff;
+  --cds-link-secondary:          #a6c8ff;
+  --cds-link-visited:            #be95ff;
+
+  --cds-border-subtle-00:        #393939;
+  --cds-border-subtle-01:        #525252;
+  --cds-border-strong-01:        #6f6f6f;
+  --cds-border-inverse:          #f4f4f4;
+  --cds-border-interactive:      #4589ff;
+
+  --cds-button-primary:          #0f62fe;
+  --cds-button-primary-hover:    #0353e9;
+  --cds-button-primary-active:   #002d9c;
+  --cds-button-secondary:        #6f6f6f;
+  --cds-button-secondary-hover:  #5e5e5e;
+  --cds-button-secondary-active: #393939;
+  --cds-button-tertiary:         #ffffff;
+  --cds-button-tertiary-hover:   #f4f4f4;
+  --cds-button-tertiary-active:  #c6c6c6;
+  --cds-button-danger-primary:   #da1e28;
+  --cds-button-danger-secondary: #fa4d56;
+  --cds-button-danger-hover:     #ba1b23;
+  --cds-button-danger-active:    #750e13;
+  --cds-button-separator:        #000000;
+  --cds-button-disabled:         #525252;
+
+  --cds-support-error:           #fa4d56;
+  --cds-support-success:         #42be65;
+  --cds-support-warning:         #f1c21b;
+  --cds-support-info:            #4589ff;
+
+  --cds-focus:                   #ffffff;
+  --cds-focus-inset:             #161616;
+  --cds-focus-inverse:           #0f62fe;
+
+  --cds-tag-background-gray:     #393939;
+  --cds-tag-color-gray:          #f4f4f4;
+  --cds-tag-background-blue:     #0043ce;
+  --cds-tag-color-blue:          #d0e2ff;
+  --cds-tag-background-red:      #a2191f;
+  --cds-tag-color-red:           #ffd7d9;
+  --cds-tag-background-green:    #0e6027;
+  --cds-tag-color-green:         #a7f0ba;
+  --cds-tag-background-purple:   #6929c4;
+  --cds-tag-color-purple:        #e8daff;
+  --cds-tag-background-cyan:     #00539a;
+  --cds-tag-color-cyan:          #bae6ff;
+  --cds-tag-background-magenta:  #9f1853;
+  --cds-tag-color-magenta:       #ffd6e8;
+  --cds-tag-background-cool-gray: #4d5358;
+  --cds-tag-color-cool-gray:     #f2f4f8;
+
+  --cds-overlay:                 rgba(0, 0, 0, 0.7);
+}
+
+/* ==========================================================================
+   Semantic utility classes — use these instead of hand-rolling.
+   ========================================================================== */
+
+/* Typography helpers */
+.cds-type-label-01     { font-family: var(--cds-font-sans); font-size: var(--cds-label-01-size);     line-height: var(--cds-label-01-lh);     font-weight: var(--cds-label-01-weight); letter-spacing: 0.32px; }
+.cds-type-helper-01    { font-family: var(--cds-font-sans); font-size: var(--cds-helper-01-size);    line-height: var(--cds-helper-01-lh);    font-weight: var(--cds-helper-01-weight); color: var(--cds-text-helper); }
+.cds-type-code-01      { font-family: var(--cds-font-mono); font-size: var(--cds-code-01-size);      line-height: var(--cds-code-01-lh);      font-weight: var(--cds-code-01-weight); letter-spacing: 0.32px; }
+.cds-type-body-compact-01 { font-family: var(--cds-font-sans); font-size: var(--cds-body-compact-01-size); line-height: var(--cds-body-compact-01-lh); font-weight: 400; }
+.cds-type-body-01      { font-family: var(--cds-font-sans); font-size: var(--cds-body-01-size);      line-height: var(--cds-body-01-lh);      font-weight: 400; }
+.cds-type-body-02      { font-family: var(--cds-font-sans); font-size: var(--cds-body-02-size);      line-height: var(--cds-body-02-lh);      font-weight: 400; }
+.cds-type-heading-01   { font-family: var(--cds-font-sans); font-size: var(--cds-heading-01-size);   line-height: var(--cds-heading-01-lh);   font-weight: 600; }
+.cds-type-heading-02   { font-family: var(--cds-font-sans); font-size: var(--cds-heading-02-size);   line-height: var(--cds-heading-02-lh);   font-weight: 600; }
+.cds-type-heading-03   { font-family: var(--cds-font-sans); font-size: var(--cds-heading-03-size);   line-height: var(--cds-heading-03-lh);   font-weight: 400; }
+.cds-type-heading-04   { font-family: var(--cds-font-sans); font-size: var(--cds-heading-04-size);   line-height: var(--cds-heading-04-lh);   font-weight: 400; }
+.cds-type-heading-05   { font-family: var(--cds-font-sans); font-size: var(--cds-heading-05-size);   line-height: var(--cds-heading-05-lh);   font-weight: 400; }
+.cds-type-heading-06   { font-family: var(--cds-font-sans); font-size: var(--cds-heading-06-size);   line-height: var(--cds-heading-06-lh);   font-weight: 300; }
+.cds-type-heading-07   { font-family: var(--cds-font-sans); font-size: var(--cds-heading-07-size);   line-height: var(--cds-heading-07-lh);   font-weight: 300; }
+
+/* Base element defaults when used inside a theme scope */
+.theme-white, .theme-g10, .theme-g90, .theme-g100 {
+  background: var(--cds-background);
+  color: var(--cds-text-primary);
+  font-family: var(--cds-font-sans);
+  font-size: var(--cds-body-01-size);
+  line-height: var(--cds-body-01-lh);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Standard focus ring — apply via .cds-focusable or :focus-visible */
+.cds-focusable:focus-visible,
+.theme-white :focus-visible,
+.theme-g10   :focus-visible,
+.theme-g90   :focus-visible,
+.theme-g100  :focus-visible {
+  outline: 2px solid var(--cds-focus);
+  outline-offset: -2px;
+}
