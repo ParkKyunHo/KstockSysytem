@@ -212,6 +212,53 @@ ruff             Passed
 
 **보존 (V7.1 검증 방식)**: 페이퍼 트레이드 (Phase 7) + 단위 테스트 (>=90% coverage). 별도 백테스트 인프라 불요.
 
+### P1.4 + P1.5 + P1.6 + P1.7 + P1.8: V7.0 거래 로직 일괄 폐기 (완료)
+
+사용자 지침 "V7.0=레거시, V7.1=완전 구축"에 따라, V7.0 trading_engine부터 V6/V7 신호 시스템 + 의존 V7.0 거래 로직 + 미완성 추상화까지 한 번에 정리. 인프라(candle_builder, websocket, market_*, db, api, notification, utils, risk_manager, universe, system_health_monitor, subscription_manager, realtime_data_manager, background_task_manager, market_monitor, indicator_library, constants)는 보존하여 Phase 2/3에서 V7.1과 통합 결정.
+
+**P1.8 (이미 commit `3a69b09`)**: trading_engine.py + main.py + src/core/__init__.py V7.1 stub 전환, condition_search_handler/manual_command_handler 삭제 (4817 lines deleted).
+
+**P1.4 + P1.5 + P1.6 + P1.7 (이번 commit)**:
+
+| 분류 | 삭제 항목 | 출처 |
+|------|----------|------|
+| V7 신호 시스템 (P1.5) | `signal_pool`, `signal_processor`, `signal_detector_purple`, `v7_signal_coordinator`, `strategy_orchestrator`, `missed_signal_tracker`, `watermark_manager`, `atr_alert_manager`, `indicator_purple` | PRD §2.1.5 |
+| V6 SNIPER_TRAP (P1.4) | `signal_detector` (V6용), `auto_screener`, `exit_manager`, `indicator` (V6 위임) | PRD §2.1.4 |
+| V7.0 거래 인프라 (V7.1에서 새로) | `order_executor`, `position_manager`, `position_recovery_manager`, `position_sync_manager` | 사용자 지침 |
+| V7.0 청산 (P1.7) | `wave_harvest_exit`, `exit_coordinator` | V7.1에서 신규 (`src/core/v71/exit/`) |
+| 폐기 strategies | `strategies/v6_sniper_trap`, `strategies/v7_purple_reabs`, `strategies/base_strategy`, `strategies/__init__` | PRD §2.1.4-§2.1.5 |
+| 미완성 추상화 (P1.6) | `src/core/detectors/`, `src/core/signals/`, `src/core/exit/`, `src/strategy/`, 루트 `strategies/` | PRD §2.1.6 |
+| 폐기 테스트 | `test_wave_harvest_exit`, `test_exit_coordinator`, `test_abc_conformance` | 폐기 모듈 의존 |
+
+**잔존 V7.0 인프라 (Phase 2/3 통합 결정)**
+
+`src/core/`: 14개 모듈
+```
+__init__.py, trading_engine.py (stub), candle_builder.py, websocket_manager.py,
+market_schedule.py, market_monitor.py, background_task_manager.py,
+realtime_data_manager.py, risk_manager.py, universe.py,
+subscription_manager.py, system_health_monitor.py, indicator_library.py,
+constants.py
+```
+
+**검증 (모두 PASS)**
+
+```
+$ pytest tests/ --no-cov -q
+82 passed in 7.03s
+  - tests/test_background_task_manager  18
+  - tests/test_notification_queue       25
+  - tests/test_websocket_manager        15
+  - tests/v71/test_feature_flags        24
+
+$ python scripts/harness/run_all.py --with-7
+PASS 7/7 harness(es)
+  - Harness 6 (Dead Code) WARN count: 32 -> 0  (자동 해소)
+
+$ python -c "import src.core; import src.api; import src.database; ..."
+all import OK
+```
+
 ### P1.3: 임시 파일 정리 (완료)
 
 **참조**: 05_MIGRATION_PLAN.md §3.4
