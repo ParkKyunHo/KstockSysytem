@@ -142,6 +142,38 @@ $ python -m pytest tests/v71/ -v
 
 ---
 
+## Phase 2: V7.1 골격 구축 (진행 중)
+
+### P2.1: 디렉토리 구조 생성 (완료)
+
+**참조**: 04_ARCHITECTURE.md §5.3, 05_MIGRATION_PLAN.md §4.1
+
+**생성 디렉토리** (모두 `__init__.py` 도크스트링 포함, V7.1 격리 패키지)
+
+```
+src/core/v71/                    -- 진입점 패키지 docstring
+├── box/                         -- §3 박스 시스템
+├── strategies/                  -- §4 진입 전략 (PATH_A 눌림/돌파)
+├── exit/                        -- §5 청산 (-5%/-2%/+4%, +5%/+10% 30%, ATR 4/3/2.5/2)
+├── position/                    -- §6 평단가, §7 reconciler
+├── skills/                      -- 8 표준 스킬 (07_SKILLS_SPEC.md)
+└── report/                      -- Phase 6 Claude Opus 4.7 리포트
+
+src/web/                         -- Phase 5 웹 대시보드
+├── api/                         -- FastAPI REST
+├── auth/                        -- JWT + 2FA
+└── dashboard/                   -- React 정적
+
+src/database/migrations/v71/     -- UP/DOWN SQL pair 룰 (Harness 4)
+```
+
+**검증**
+
+- import 검증: 12개 패키지 모두 import OK
+- 하네스: 6/6 PASS
+- Harness 1 (Naming Collision): V7.1 패키지가 v71/ 격리 또는 V71 접두사 룰 준수
+- Harness 5 (Feature Flag Enforcer): 빈 패키지에 진입 함수 없음 → 면제 (EXEMPT_PARTS = `__init__.py`)
+
 ### Phase 0 후속: pre-commit 활성화 시 발견 사항
 
 | 이슈 | 원인 | 조치 |
