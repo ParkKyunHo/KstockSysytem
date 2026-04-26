@@ -686,7 +686,9 @@ PASS 7/7 harness(es)
 | P3.4 평단가 관리 + V71PositionManager (in-memory) | ✅ 완료 |
 | P3.5 수동 거래 처리 (Reconciler) | ✅ 완료 |
 | P3.6 VI 처리 (V71ViMonitor + vi_skill) | ✅ 완료 |
-| P3.7 시스템 재시작 복구 | 다음 |
+| **P3.7 시스템 재시작 복구 (V71RestartRecovery)** | ✅ 완료 |
+
+**Phase 3 = 거래 룰 구현 = 100% 완료** -- 마일스톤 M3 달성
 
 ---
 
@@ -1163,3 +1165,154 @@ PASS 7/7 harness(es)
 ---
 
 *최종 업데이트: 2026-04-26 (P3.6 완료)*
+
+---
+
+### P3.7: 시스템 재시작 복구 -- V71RestartRecovery (완료, 2026-04-26)
+
+**참조**: 02_TRADING_RULES.md §13 (recovery sequence + frequency monitor)
+
+**산출물**
+
+| 분류 | 파일 | 비고 |
+|------|------|------|
+| 코드 | `src/core/v71/v71_constants.py` | `RECOVERY_RECONNECT_MAX_RETRIES = 5`, `RECOVERY_RECONNECT_RETRY_INTERVAL_SECONDS = 1.0` 추가 + PIN 테스트 |
+| 코드 | `src/core/v71/restart_recovery.py` | 시그니처 → 본문. `RecoveryContext` (V71Reconciler + Notifier + Clock + 4 reconnect callbacks + 3 데이터 callbacks + 2 토글). `RecoveryReport` (started_at/completed_at/cancelled_orders/reconciliation_results/resubscribed_count/failures). `run()` 7-step + `_with_retry` (5회 재시도, 1초 간격). `_record_restart` + `_check_restart_frequency` (1/2/3/5+ 단계별 알림, 자동 정지 0). 92.7% 커버리지 |
+| 검증 | `scripts/harness/test_coverage_enforcer.py` | THRESHOLDS에 `restart_recovery.py` 추가 |
+| 테스트 | `tests/v71/test_v71_constants.py` | fallback 상수 PIN 테스트 +2 (총 31 PASS) |
+| 테스트 | `tests/v71/test_v71_restart_recovery.py` (신규) | 16 PASS. 7-step 통합 (2) + Step 1 재시도 (3: 3회째 성공 / 5회 모두 실패 / 다른 step 영향 없음) + Step 2/3/4 실패 (3) + reconciliation 실 호출 (1) + 빈도 모니터 (5: 1회 무알림 / 2회 HIGH / 3회 CRITICAL / 5+ tier / 윈도우 외 무카운트) + Constitution-4 (1: 모든 callback 실패에도 run 완료) + flag gate (1) |
+
+**검증 결과**
+
+```
+$ pytest tests/v71/ --no-cov -q
+398 passed in ~1s
+  - test_feature_flags                24
+  - test_v71_constants                31  (P3.7 +2)
+  - test_box_state_machine            49
+  - test_box_entry_skill              35
+  - test_box_manager                  38
+  - test_v71_buy_executor             18
+  - test_v71_box_entry_detector        8
+  - test_v71_box_strategies            5
+  - test_exit_calc_skill              36
+  - test_v71_trailing_stop             5
+  - test_v71_exit_calculator           6
+  - test_v71_exit_executor            12
+  - test_avg_price_skill              20
+  - test_v71_position_manager         21
+  - test_reconciliation_skill         23
+  - test_v71_reconciler               12
+  - test_vi_skill                     25
+  - test_v71_vi_monitor               14
+  - test_v71_restart_recovery         16  (P3.7 신규)
+
+$ python scripts/harness/run_all.py --with-7
+PASS 7/7 harness(es)
+  - restart_recovery.py    92.7%
+```
+
+**핵심 룰 핀 (테스트 강제)**
+
+| 룰 | 출처 | 테스트 |
+|----|------|--------|
+| 7-step 시퀀스 (0~7) 항상 완주 | §13.1 | `test_full_recovery_success` (failures==[]), `test_run_always_returns_report_even_on_total_meltdown` |
+| Step 0: 안전 모드 진입 | §13.1 | `test_full_recovery_success` (safe_mode entered=1) |
+| Step 1: DB→Kiwoom→WS→Telegram 순서 + 5회 재시도 + 1초 간격 | §13.1 | `test_db_succeeds_on_third_attempt` (3 attempts + sleeps) |
+| Step 1 5회 모두 실패 → failures 기록 + 시퀀스 계속 | §13.1 + 헌법 4 | `test_db_persistent_failure_records_but_continues` |
+| Step 1 한 connection 실패가 다른 connections 차단 안 함 | 헌법 4 | `test_websocket_failure_does_not_block_others` |
+| Step 2: 미완료 주문 모두 취소 (박스 보존) | §13.1 Step 2 | `test_report_records_counts` (cancelled_orders=3) |
+| Step 3: V71Reconciler.reconcile 호출 | §13.1 Step 3 | `test_reconcile_called_with_balances` (Case A 결과) |
+| Step 4: 시세 재구독 | §13.1 Step 4 | `test_report_records_counts` (resubscribed_count=12) |
+| Step 5: 옵션 A (지나간 트리거 무효, no-op) | §13.1 Step 5 | implicit (시퀀스에 추가 처리 없음) |
+| Step 6: 안전 모드 해제 | §13.1 Step 6 | `test_full_recovery_success` (safe_mode exited=1), 모든 failure 케이스에서도 |
+| Step 7: CRITICAL 복구 보고서 | §13.1 Step 7 | `test_full_recovery_success` (RECOVERY_COMPLETED + CRITICAL) |
+| 빈도 1회: 알림 없음 | §13.2 | `test_first_restart_no_alert` |
+| 빈도 2회 (1시간): HIGH | §13.2 | `test_two_restarts_within_hour_emits_high` |
+| 빈도 3회 (1시간): CRITICAL | §13.2 | `test_three_restarts_within_hour_emits_critical` |
+| 빈도 5+ (1시간): CRITICAL + 5 tier | §13.2 | `test_five_plus_restarts_critical_with_5plus_tier` |
+| 1시간 윈도우 외 재시작 무카운트 | §13.2 | `test_restart_outside_window_does_not_count` |
+| **자동 정지 0 (헌법 4)** -- 모든 callback 실패에도 run 완료 | 헌법 4 | `test_run_always_returns_report_even_on_total_meltdown` |
+
+**헌법 5원칙 자체 검증**
+
+| 원칙 | 준수 |
+|------|------|
+| 1. 사용자 판단 불가침 | ✅ 박스/포지션/추적 데이터는 손대지 않음 (DB 보존). Step 5 "지나간 트리거 무효"는 사용자 손실 회피 |
+| 2. NFR1 최우선 | ✅ 7-step 순차 실행 + Step 5는 no-op (재평가 skip). 평균 실행 < 30초~2분 |
+| 3. 충돌 금지 ★ | ✅ V71RestartRecovery + RecoveryContext + RecoveryReport 모두 v71/ 격리. V71Reconciler / Notifier / Clock 재사용 |
+| 4. 시스템 계속 운영 ★ | ✅ **explicit no-auto-stop**. 모든 callback 실패에도 run() 완료 + safe_mode 해제 + CRITICAL 보고서. 빈도 모니터링도 알림만 (정지 X) |
+| 5. 단순함 | ✅ 7개 step 메소드 + 1 retry helper. in-memory 재시작 로그. Step 5는 no-op (옵션 A) |
+
+---
+
+## Phase 3 완료 (마일스톤 M3 달성, 2026-04-26)
+
+```
+$ pytest tests/v71/ --no-cov -q
+398 passed in ~1s
+
+$ python scripts/harness/run_all.py --with-7
+PASS 7/7 harness(es)
+```
+
+### Phase 3 누적 산출물 (P3.1 ~ P3.7)
+
+| Phase | 모듈 (코드) | 모듈 (테스트) | 커버리지 |
+|-------|-------------|---------------|---------|
+| P3.1 | box/box_state_machine, box/box_manager, skills/box_entry_skill | 3 | 94~100% |
+| P3.2 | strategies/v71_buy_executor, strategies/v71_box_pullback/breakout, box/box_entry_detector + skills/kiwoom_api_skill 확장 | 3 | 92~100% |
+| P3.3 | exit/exit_calculator, exit/exit_executor, exit/trailing_stop, position/state, skills/exit_calc_skill | 4 | 92~100% |
+| P3.4 | skills/avg_price_skill, position/v71_position_manager | 2 | 97~100% |
+| P3.5 | skills/reconciliation_skill, position/v71_reconciler | 2 | 95~97% |
+| P3.6 | skills/vi_skill, vi_monitor | 2 | 94~100% |
+| P3.7 | restart_recovery + V71Constants 확장 | 1 | 92.7% |
+
+**합계**: 21개 V7.1 모듈 + 21개 신규 테스트 파일, 모두 90%+ 커버리지
+
+### V7.1 거래 룰 구현 완료 매트릭스
+
+| §/룰 | P3.x | 모듈 |
+|------|------|------|
+| §3 박스 시스템 | P3.1 | box_state_machine, box_manager, box_entry_skill |
+| §3.10/§3.11 PATH_B 09:05 fallback (사용자 patch #1) | P3.2 | v71_buy_executor |
+| §4 매수 실행 (limit×3 + market) | P3.2 | v71_buy_executor |
+| §5.1 손절 (시장가 전량) | P3.3 | exit_executor |
+| §5.2/§5.3 분할 익절 (+5/+10 30%) | P3.3 | exit_executor + exit_calc_skill |
+| §5.4 손절선 단방향 상향 (-5/-2/+4) | P3.3 | exit_calc_skill.stage_after_partial_exit |
+| §5.5 TS (BasePrice + ATR 단방향 4.0/3.0/2.5/2.0) | P3.3 | trailing_stop + exit_calc_skill |
+| §5.6 유효 청산선 max(고정, TS) | P3.3 | exit_calc_skill.calculate_effective_stop |
+| §5.7 Trend Hold Filter 폐기 | P3.3 | (implicit -- exit_calculator는 trigger 즉시 청산) |
+| §5.8 Max Holding 무제한 | P3.3 | (implicit -- 강제 청산 코드 없음) |
+| §6.2 추가 매수 시 가중평균 + 이벤트 리셋 | P3.4 | avg_price_skill + v71_position_manager |
+| §6.4 매도 시 평단가 유지 | P3.4 | avg_price_skill |
+| §7 수동 거래 5 시나리오 (A/B/C/D/E) | P3.5 | reconciliation_skill + v71_reconciler |
+| §10 VI 처리 + vi_recovered_today | P3.6 | vi_skill + vi_monitor |
+| §10.9 시초 VI 안전장치 (PATH_B 09:05) | P3.2 | v71_buy_executor (fallback meta from box_entry_skill) |
+| §13.1 7-step 재시작 복구 | P3.7 | restart_recovery |
+| §13.2 빈도 모니터 (자동 정지 X) | P3.7 | restart_recovery |
+
+### Phase 3 헌법 5원칙 자체 검증 (전체)
+
+| 원칙 | 검증 |
+|------|------|
+| 1. 사용자 판단 불가침 | ✅ 박스 결정 그대로 실행. 09:05 fallback도 결정된 진입의 마무리 (§10.9). MANUAL/SYSTEM 분리 (§7.6) |
+| 2. NFR1 최우선 | ✅ 핵심 경로 모두 sync (PATH_A 매수, exit calculation, VI 판정). DB hop 0. PATH_B 09:01/09:05 + 매수 시퀀스 sleep만 의도적 |
+| 3. 충돌 금지 ★ | ✅ 21개 신규 모듈 모두 v71/ 격리 + V71 접두사. V7.0 → V7.1 import 0. Harness 1/2/6 PASS |
+| 4. 시스템 계속 운영 | ✅ typed exceptions로 surface, 자동 정지 코드 0. 콜백 실패 isolation. 재시작 복구도 모든 step 실패에도 완료 |
+| 5. 단순함 | ✅ pure skill 함수 다수, in-memory store, callback DI, 명확한 lifecycle. 헬퍼 클래스 거대화 없음 |
+
+### 다음 단계
+
+| Phase | 내용 | 예상 |
+|-------|------|------|
+| **Phase 4** | 알림 시스템 (V71NotificationService 구현 -- 현재 Notifier Protocol만) | 2~3일 |
+| **Phase 5** | 웹 대시보드 (FastAPI + JWT + 2FA + React UI) | 5~10일 |
+| **Phase 6** | 리포트 (Claude Opus 4.7 통합) | 3~5일 |
+| **Phase 7** | 통합 테스트 + 페이퍼 트레이드 + AWS 배포 | 5~10일 |
+
+V7.0 인프라 통합도 별도 트랙으로 진행 (kiwoom_api_skill 본문 + ExchangeAdapter 실 구현).
+
+---
+
+*최종 업데이트: 2026-04-26 (P3.7 + Phase 3 100% 완료)*

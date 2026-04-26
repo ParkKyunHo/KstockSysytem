@@ -56,10 +56,11 @@ THRESHOLDS = {
     # P3.6: vi_skill + V71ViMonitor.
     "src/core/v71/skills/vi_skill.py": 90.0,
     "src/core/v71/vi_monitor.py": 90.0,
+    # P3.7: V71RestartRecovery (7-step recovery).
+    "src/core/v71/restart_recovery.py": 90.0,
 }
-# When the next v71 modules graduate from skeleton to implementation, append:
-#   "src/core/v71/restart_recovery.py": 90.0,               # P3.7
-#   ... etc.
+# Phase 3 (trading-rule implementation) thresholds complete.
+# Next: notification skill (P4.1), report generator (P6).
 
 
 def _run_pytest() -> int:

@@ -98,6 +98,12 @@ class V71Constants:
     RESTART_FREQUENCY_WARN_THRESHOLD: Final[int] = 5
     """5+ restarts in 1 hour -> CRITICAL alert."""
 
+    RECOVERY_RECONNECT_MAX_RETRIES: Final[int] = 5
+    """§13.1 Step 1 -- each external connection retried up to 5 times."""
+
+    RECOVERY_RECONNECT_RETRY_INTERVAL_SECONDS: Final[float] = 1.0
+    """§13.1 Step 1 -- 1-second pause between reconnection attempts."""
+
     # ---- Strategy paths ----
     PATH_A_TIMEFRAME_MINUTES: Final[int] = 3
     PATH_B_TIMEFRAME_MINUTES: Final[int] = 1440  # daily

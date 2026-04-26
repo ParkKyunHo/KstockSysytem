@@ -103,6 +103,13 @@ class TestRestartRecovery:
         assert K.RESTART_FREQUENCY_WARN_WINDOW_HOURS == 1
         assert K.RESTART_FREQUENCY_WARN_THRESHOLD == 5
 
+    def test_recovery_reconnect_5_retries(self):
+        """§13.1 Step 1 -- each external connection retried 5 times."""
+        assert K.RECOVERY_RECONNECT_MAX_RETRIES == 5
+
+    def test_recovery_reconnect_interval_1_second(self):
+        assert K.RECOVERY_RECONNECT_RETRY_INTERVAL_SECONDS == 1.0
+
 
 class TestStrategyPaths:
     def test_path_a_is_3min(self):
