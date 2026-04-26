@@ -41,9 +41,18 @@ THRESHOLDS = {
     "src/core/v71/strategies/v71_buy_executor.py": 90.0,
     "src/core/v71/strategies/v71_box_pullback.py": 90.0,
     "src/core/v71/strategies/v71_box_breakout.py": 90.0,
+    # P3.3: post-buy management (stop ladder + partial profit-take + TS).
+    "src/core/v71/skills/exit_calc_skill.py": 90.0,
+    "src/core/v71/exit/exit_calculator.py": 90.0,
+    "src/core/v71/exit/exit_executor.py": 90.0,
+    "src/core/v71/exit/trailing_stop.py": 90.0,
+    "src/core/v71/position/state.py": 90.0,
 }
 # When the next v71 modules graduate from skeleton to implementation, append:
-#   "src/core/v71/exit/": 90.0,                        # P3.3
+#   "src/core/v71/position/v71_position_manager.py": 90.0,  # P3.4
+#   "src/core/v71/position/v71_reconciler.py": 90.0,        # P3.5
+#   "src/core/v71/vi_monitor.py": 90.0,                     # P3.6
+#   "src/core/v71/restart_recovery.py": 90.0,               # P3.7
 #   ... etc.
 
 

@@ -682,8 +682,8 @@ PASS 7/7 harness(es)
 |------|------|
 | P3.1 박스 시스템 (+ 09:05 fallback 메타데이터) | ✅ 완료 |
 | P3.2 매수 실행 (PATH_A/B + 09:05 fallback executor + entry detector) | ✅ 완료 |
-| P3.3 매수 후 관리 | 다음 |
-| P3.4 평단가 관리 | 대기 |
+| P3.3 매수 후 관리 (단계별 손절 + 분할 익절 + TS) | ✅ 완료 |
+| P3.4 평단가 관리 + V71PositionManager DB 연결 | 다음 |
 | P3.5 수동 거래 처리 | 대기 |
 | P3.6 VI 처리 | 대기 |
 | P3.7 시스템 재시작 복구 | 대기 |
@@ -779,3 +779,98 @@ PASS 7/7 harness(es)
 ---
 
 *최종 업데이트: 2026-04-26 (P3.2 완료)*
+
+---
+
+### P3.3: 매수 후 관리 -- 단계별 손절 + 분할 익절 + Trailing Stop (완료, 2026-04-26)
+
+**참조**: 02_TRADING_RULES.md §5 (post-buy management), 07_SKILLS_SPEC.md §3, 04_ARCHITECTURE.md §5.3, 05_MIGRATION_PLAN.md §5.4
+
+**산출물**
+
+| 분류 | 파일 | 비고 |
+|------|------|------|
+| 코드 | `src/core/v71/skills/exit_calc_skill.py` | 시그니처 → 본문. `calculate_effective_stop` (FIXED vs TS-if-binding), `evaluate_profit_take` (+5/+10 30% 분할), `update_trailing_stop` (BasePrice + ATR 배수, 단방향), `select_atr_multiplier` (4.0/3.0/2.5/2.0 단방향 축소), `stage_after_partial_exit` (-5/-2/+4 단방향 상향). 99.1% 커버리지 |
+| 코드 | `src/core/v71/position/state.py` (신규) | `PositionState` mutable dataclass -- 매수/매도 시 in-place mutation. P3.4에서 V71PositionManager가 DB hydration. 100% 커버리지 |
+| 코드 | `src/core/v71/exit/trailing_stop.py` | 시그니처 → 본문. `V71TrailingStop.on_bar_complete(position, current, atr)` -- `update_trailing_stop` 호출 + position에 in-place 반영. 100% 커버리지 |
+| 코드 | `src/core/v71/exit/exit_calculator.py` | 시그니처 → 본문. `V71ExitCalculator.on_tick(position, current, atr) -> ExitDecision`. effective_stop + profit_take 통합. mutation 없음 (decision-only). 100% 커버리지 |
+| 코드 | `src/core/v71/exit/exit_executor.py` | 시그니처 → 본문. `V71ExitExecutor` (execute_stop_loss/ts_exit/profit_take). 매도 시퀀스 (지정가 매수1호가 × 3 + 시장가). 청산 후 PositionState mutate (수량/플래그/손절선/status). §5.9 cleanup: `V71BoxManager.cancel_waiting_for_tracked` + `on_position_closed` 콜백. CRITICAL/HIGH 알림. 92.6% 커버리지 |
+| 코드 | `src/core/v71/box/box_manager.py` | `cancel_waiting_for_tracked(tracked_id, reason)` 메소드 추가 (§5.9 전량 청산 시 미진입 박스 정리) |
+| 테스트 | `tests/v71/test_exit_calc_skill.py` (신규) | 36 PASS. 단계별 손절선 (3) + ATR 배수 매트릭스 (9) + 단방향 축소 (2) + TS 활성화/BasePrice/Stop 단방향 (5) + ATR warmup (1) + effective_stop 단계별 (5) + profit_take 8개 시나리오 |
+| 테스트 | `tests/v71/test_v71_trailing_stop.py` (신규) | 5 PASS. 활성화 임계값, BasePrice 단방향, multiplier tighten-and-lock, ATR warmup |
+| 테스트 | `tests/v71/test_v71_exit_calculator.py` (신규) | 6 PASS. tick 판정, stop trigger, profit_5/10 라우팅, TS binding gate (only after profit_10) |
+| 테스트 | `tests/v71/test_v71_exit_executor.py` (신규) | 12 PASS. 손절 (4: full sell + sibling cancel + callback + market 실패) + TS exit (1) + 분할 익절 (5: profit_5/10 staging + cap + reject + transport) + 매도 시퀀스 (1) |
+| 검증 | `scripts/harness/test_coverage_enforcer.py` | THRESHOLDS에 P3.3 모듈 5개 추가 (모두 90% 임계값) |
+
+**검증 결과**
+
+```
+$ pytest tests/v71/ --no-cov -q
+265 passed in 0.93s
+  - test_feature_flags                24
+  - test_v71_constants                29
+  - test_box_state_machine            49
+  - test_box_entry_skill              35
+  - test_box_manager                  38
+  - test_v71_buy_executor             18
+  - test_v71_box_entry_detector        8
+  - test_v71_box_strategies            5
+  - test_exit_calc_skill              36   (P3.3 신규)
+  - test_v71_trailing_stop             5   (P3.3 신규)
+  - test_v71_exit_calculator           6   (P3.3 신규)
+  - test_v71_exit_executor            12   (P3.3 신규)
+
+$ python scripts/harness/run_all.py --with-7
+PASS 7/7 harness(es)
+  - Harness 7 임계값 (P3.1 + P3.2 + P3.3):
+    skills/exit_calc_skill.py        99.1%
+    exit/exit_calculator.py         100.0%
+    exit/exit_executor.py            92.6%
+    exit/trailing_stop.py           100.0%
+    position/state.py               100.0%
+```
+
+**핵심 룰 핀 (테스트 강제)**
+
+| 룰 | 출처 | 테스트 |
+|----|------|--------|
+| 손절선 단계별 상향: -5% → -2% (after +5%) → +4% (after +10%) | §5.4 | `test_stage_after_partial_exit::test_strictly_upward` |
+| 손절 단방향만 (하향 안 함) | §5.4 | `test_stage_*` (수학적으로 a<b<c 순서 보장) |
+| 분할 익절 +5% 30% 청산 1회만 | §5.2 | `test_5pct_idempotent_after_executed` |
+| 분할 익절 +10% 30% 청산 (1차 후만) | §5.3 | `test_at_10pct_after_5_exits`, `test_10pct_blocked_until_5_first` |
+| ATR 배수 단계: 4.0/3.0/2.5/2.0 (수익률별) | §5.5 | `test_tier_assignment[*]` (9 케이스) |
+| ATR 배수 **단방향 축소만** (다시 안 넓어짐) | §5.5 | `test_one_way_tightening_does_not_widen`, `test_multiplier_tightens_then_locks` |
+| TS BasePrice 단방향 상승 (매수 후 최고가) | §5.5 | `test_base_price_one_way_when_price_drops`, `test_base_price_one_way_upward` |
+| TS 청산선 단방향 상승 (낮아지지 않음) | §5.5 | `test_stop_one_way_upward` |
+| TS 활성화: +5% / 청산선 유효: +10% 청산 후 | §5.5 | `test_ts_binding_only_after_profit_10`, `test_stage_2_uses_fixed_only_even_if_ts_higher` |
+| 유효 청산선 = max(고정, TS-if-binding) | §5.6 | `test_stage_3_max_of_fixed_and_ts`, `test_stage_3_falls_back_to_fixed_when_higher` |
+| Trend Hold Filter 폐기 (조건 충족 즉시 청산) | §5.7 | implicit (calculator는 trigger=true이면 stop_triggered=true 반환) |
+| 손절 시 시장가 매도 전량 (limit phase 스킵) | §5.1 | `test_full_market_sell_closes_position` (orders_sent[0].order_type==MARKET) |
+| 분할 익절: 매수1호가 × 3 + 시장가 | §5.2/§5.3 + §4.2 | `test_three_unfilled_limits_then_market` (4 orders, 3 cancels, last=MARKET) |
+| 전량 청산 시 미진입 박스 CANCELLED | §5.9 | `test_full_exit_cancels_sibling_waiting_boxes` |
+| 전량 청산 시 시세 구독 해제 콜백 | §5.9 | `test_on_position_closed_callback_fires` |
+| 손절 알림 CRITICAL / 익절 알림 HIGH | §5.9 | `test_full_market_sell_closes_position` (severity assertion) |
+
+**헌법 5원칙 자체 검증**
+
+| 원칙 | 준수 |
+|------|------|
+| 1. 사용자 판단 불가침 | ✅ 단계 후퇴 없음 (한 번 +4%로 올라간 손절선은 다시 -2% 안 됨), Trend Hold Filter 폐기로 사용자 룰 그대로 실행 |
+| 2. NFR1 최우선 | ✅ 손절은 시장가 즉시 (limit phase 스킵), 매 틱 sync 판정 (DB 호출 없음) |
+| 3. 충돌 금지 ★ | ✅ V71 접두사 (V71ExitExecutor/Calculator/TrailingStop), v71/exit/ + v71/position/ 격리. V7.0 → V7.1 import 0. Harness 1/2/6 PASS |
+| 4. 시스템 계속 운영 | ✅ Broker reject/transport error는 typed exception + CRITICAL/HIGH 알림으로 surface. position state는 mutation 보수적 (실패 시 미변경) |
+| 5. 단순함 | ✅ exit_calc_skill 5개 함수가 모든 룰 표현. V7.0 "Highest(High,20)" → V7.1 "post-buy 단순 최고가". Trend Hold Filter 폐기. Max Holding 무제한 |
+
+**P3.4 핸드오프 항목**
+
+- `PositionState` → DB 영속화: P3.4 `V71PositionManager`가 in-memory mutation을 Supabase `positions` 테이블 + `trade_events`에 동기화
+- `PositionStore` Protocol 확장: P3.2 `add_position` 외에 `update_after_partial_exit`, `close_position` 추가 (현재 ExitExecutor는 직접 mutate 중)
+- `avg_price_skill` 본문 구현: 추가 매수 가중평균 + 이벤트 리셋 (`profit_5/10_executed = False`) + 손절선 stage 1 복귀
+- `V71BuyExecutor`/`V71ExitExecutor`의 PositionStore 사용을 `V71PositionManager`로 이관
+- ATR 데이터 공급: 현재 `atr_value` float을 외부 주입; P3.4/P3.7에서 V7.0 `indicator_library` 호출 wiring
+- 시세 구독 해제 콜백 (`on_position_closed`): P3.6 V71ViMonitor / P3.7 RestartRecovery에서 wires
+- `Notifier` Protocol 구현체: P4.1 V71NotificationService
+
+---
+
+*최종 업데이트: 2026-04-26 (P3.3 완료)*

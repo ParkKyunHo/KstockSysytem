@@ -284,6 +284,45 @@ class V71BoxManager:
         record.invalidation_reason = reason
         return record
 
+    def cancel_waiting_for_tracked(
+        self,
+        tracked_stock_id: str,
+        *,
+        reason: str = "POSITION_CLOSED",
+        on_orphan_cancel: Callable[[str], None] | None = None,
+    ) -> list[BoxRecord]:
+        """Cancel every WAITING box on this tracked_stock (§5.9).
+
+        Invoked after a full exit so the system does not auto-re-enter
+        on a box whose context (the just-closed position) is gone.
+
+        Args:
+            tracked_stock_id: tracked record whose siblings should be cleared.
+            reason: stored on each cancelled box's ``invalidation_reason``
+                (defaults to ``POSITION_CLOSED`` -- distinct from
+                ``USER_DELETED`` from :meth:`delete_box`).
+            on_orphan_cancel: optional callback for each box id, e.g. so
+                pending orders can be cancelled by the caller.
+
+        Returns:
+            The list of records that transitioned (in order).
+        """
+        ids_to_cancel = [
+            box_id
+            for box_id in self._by_tracked.get(tracked_stock_id, set())
+            if self._boxes[box_id].status is BoxStatus.WAITING
+        ]
+        cancelled: list[BoxRecord] = []
+        for box_id in ids_to_cancel:
+            record = self._boxes[box_id]
+            record.status = transition_box(record.status, BoxEvent.USER_DELETED)
+            record.modified_at = datetime.now()
+            record.invalidation_reason = reason
+            if on_orphan_cancel is not None:
+                on_orphan_cancel(box_id)
+            cancelled.append(record)
+        return cancelled
+
     # -- queries ---------------------------------------------------------
 
     def get(self, box_id: str) -> BoxRecord:
