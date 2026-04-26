@@ -156,6 +156,36 @@ class PostgresNotificationRepository:  # pragma: no cover -- integration only
             return result
         return 0
 
+    async def list_recent(
+        self, *, limit: int, since: datetime | None = None
+    ) -> list[NotificationRecord]:
+        if limit <= 0:
+            return []
+        if since is None:
+            sql = (
+                "SELECT id, severity, channel, event_type, stock_code, title, "
+                "       message, payload, status, priority, rate_limit_key, "
+                "       retry_count, sent_at, failed_at, failure_reason, "
+                "       created_at, expires_at "
+                "FROM notifications "
+                "ORDER BY created_at DESC "
+                "LIMIT $1"
+            )
+            rows = await self.execute(sql, limit)
+        else:
+            sql = (
+                "SELECT id, severity, channel, event_type, stock_code, title, "
+                "       message, payload, status, priority, rate_limit_key, "
+                "       retry_count, sent_at, failed_at, failure_reason, "
+                "       created_at, expires_at "
+                "FROM notifications "
+                "WHERE created_at >= $1 "
+                "ORDER BY created_at DESC "
+                "LIMIT $2"
+            )
+            rows = await self.execute(sql, since, limit)
+        return [self._row_to_record(r) for r in rows]
+
     @staticmethod
     def _row_to_record(row: Any) -> NotificationRecord:
         getter = (

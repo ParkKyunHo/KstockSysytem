@@ -69,9 +69,11 @@ THRESHOLDS = {
     "src/core/v71/notification/v71_circuit_breaker.py": 90.0,
     "src/core/v71/notification/v71_notification_queue.py": 90.0,
     "src/core/v71/notification/v71_notification_service.py": 90.0,
+    # P4.2: telegram command surface (13 commands).
+    "src/core/v71/notification/v71_telegram_commands.py": 90.0,
 }
-# Phase 4 P4.1 (notification grading) thresholds added.
-# Next: telegram commands (P4.2), daily summary (P4.3), monthly review (P4.4).
+# Phase 4 P4.1 + P4.2 thresholds added.
+# Next: daily summary (P4.3), monthly review (P4.4).
 
 
 def _run_pytest() -> int:

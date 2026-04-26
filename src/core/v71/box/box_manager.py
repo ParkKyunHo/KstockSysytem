@@ -337,6 +337,17 @@ class V71BoxManager:
     ) -> list[BoxRecord]:
         return self._waiting_boxes_for_tracked(tracked_stock_id, path_type)
 
+    def list_all(self, *, status: BoxStatus | None = None) -> list[BoxRecord]:
+        """All boxes the manager owns, optionally filtered by status.
+
+        Used by P4.2 telegram commands (/pending lists WAITING boxes,
+        /tracking aggregates by tracked_stock_id) and any future
+        snapshot consumer. Returns a fresh list -- callers may mutate it.
+        """
+        if status is None:
+            return list(self._boxes.values())
+        return [b for b in self._boxes.values() if b.status is status]
+
     # -- 30-day expiry (§3.7) -------------------------------------------
 
     def check_30day_expiry(

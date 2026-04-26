@@ -139,6 +139,17 @@ class NotificationRepository(Protocol):
         """
         ...
 
+    async def list_recent(
+        self, *, limit: int, since: datetime | None = None
+    ) -> list[NotificationRecord]:
+        """Return up to ``limit`` records ordered by ``created_at`` DESC.
+
+        ``since`` filters to records with ``created_at >= since`` when
+        provided (no filter when None). Used by the ``/alerts`` telegram
+        command to surface recent notification history.
+        """
+        ...
+
 
 # ---------------------------------------------------------------------------
 # In-memory implementation
@@ -249,6 +260,19 @@ class InMemoryNotificationRepository:
             )
             count += 1
         return count
+
+    async def list_recent(
+        self, *, limit: int, since: datetime | None = None
+    ) -> list[NotificationRecord]:
+        if limit <= 0:
+            return []
+        candidates: list[NotificationRecord] = [
+            r
+            for r in self._records.values()
+            if since is None or r.created_at >= since
+        ]
+        candidates.sort(key=lambda r: r.created_at, reverse=True)
+        return candidates[:limit]
 
     # ------------------------------------------------------------------
     # Test-only helpers (NOT part of the Protocol surface)

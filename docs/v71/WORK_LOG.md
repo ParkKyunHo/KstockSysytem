@@ -1571,3 +1571,109 @@ P3 14곳에서 `await self._ctx.notifier.notify(severity=..., event_type=..., st
 ---
 
 *최종 업데이트: 2026-04-26 (P4.1 완료)*
+
+---
+
+### P4.2: 텔레그램 명령어 13개 -- V71TelegramCommands + CommandContext (완료, 2026-04-26)
+
+**참조**: 02_TRADING_RULES.md §9 (notification surface), 05_MIGRATION_PLAN.md §6.3 (P4.2), 12_SECURITY.md §3.4 (chat_id 화이트리스트) + §8.3 (audit_logs)
+
+**산출물**
+
+| 분류 | 파일 | 비고 |
+|------|------|------|
+| 코드 | `src/core/v71/notification/v71_telegram_commands.py` (신규) | `V71TelegramCommands` + `CommandContext` + `TrackedSummary` + 9개 pure formatter + 13 명령어 핸들러. 권한 검증 wrapper (`_wrap_handler`) + audit. Feature flag 가드: `v71.telegram_commands_v71`. 98.7% 커버리지 |
+| 코드 | `src/core/v71/box/box_manager.py` | `list_all(*, status=None)` 메서드 추가 (P4.2 /pending /tracking 지원) |
+| 코드 | `src/core/v71/notification/v71_notification_repository.py` | `NotificationRepository` Protocol + `InMemory` 구현에 `list_recent(*, limit, since=None)` 메서드 추가 (P4.2 /alerts 지원). 93.0% 커버리지 (변경 후) |
+| 코드 | `src/core/v71/notification/v71_postgres_notification_repository.py` | `list_recent` Postgres 본문 추가 (since=None / since 분기). Phase 5 통합 테스트 |
+| 코드 | `src/core/v71/notification/__init__.py` | export 확장 (`V71TelegramCommands`, `CommandContext`, `TrackedSummary`, `COMMANDS`) |
+| 검증 | `scripts/harness/test_coverage_enforcer.py` | THRESHOLDS에 v71_telegram_commands.py 추가 (90%) |
+| 테스트 | `tests/v71/test_v71_telegram_commands.py` (신규) | 38 PASS. construction (3) + 권한 게이트 (4) + 명령어별 테스트 (29: status/positions/tracking/pending/today/recent/stop/resume/cancel/report/alerts/settings/help) + pure formatter (6) |
+
+**13 명령어 매트릭스**
+
+| 명령 | 데이터 소스 | 대표 응답 | 인자 |
+|------|-------------|-----------|------|
+| `/status` | V71BoxManager + V71PositionManager + V71CircuitBreaker + repository.list_recent | `[STATUS]` 안전 모드 / 박스 (전체/대기/체결) / OPEN 포지션 / 알림 큐 PENDING / Telegram Circuit | -- |
+| `/positions` | V71PositionManager.list_open() | `[POSITIONS]` 종목별 보유 | -- |
+| `/tracking` | `list_tracked` callback (TrackedSummary list) | `[TRACKING]` 종목 / 경로 / 박스 수 / 포지션 마커 | -- |
+| `/pending` | V71BoxManager.list_all(status=WAITING) | `[PENDING]` 박스 가격대 + 비중 + id | -- |
+| `/today` | V71PositionManager.list_events() filter today | `[TODAY]` 시각 + event_type + 종목 + 수량 | -- |
+| `/recent` | list_events filter 7일 (configurable) | `[RECENT] 최근 7일` 거래 | -- |
+| `/report <종목>` | report_handler callback (Phase 6 wires) | Phase 6 stub (`Phase 6에서 활성화`) | 종목코드 1개 |
+| `/stop` | safe_mode_set(True) | `[STOP] 안전 모드 ON` | -- |
+| `/resume` | safe_mode_set(False) | `[RESUME] 안전 모드 OFF` | -- |
+| `/cancel <id>` | cancel_order callback | 성공/실패 메시지 | order_id 1개 |
+| `/alerts [건수]` | repository.list_recent(limit, since=24h) | `[ALERTS]` 등급 + event + 메시지 첫 줄 | 선택 (기본 10) |
+| `/settings` | feature_flags.all_flags() + V71Constants | `[SETTINGS]` 빈도 제한 / CB / retry / Feature flags 전체 | -- |
+| `/help` | static | `[HELP]` 13개 명령어 도움말 | -- |
+
+**권한 검증 (12 §3.4 + §8.3)**
+
+`_wrap_handler` 가 모든 명령에 적용:
+1. `chat_id` ∈ `authorized_chat_ids` 검증. 무권한이면 silent ignore + `audit_log(authorised=False, reason="UNAUTHORIZED_TELEGRAM_ACCESS")`. 12 §8.3 정합 (응답 자체 없음 = 봇 토큰 노출 시에도 인증된 chat_id 정보 비공개).
+2. 권한 통과 시 `audit_log(authorised=True)`.
+3. 핸들러 예외는 swallow + 사용자에게 "명령 처리 중 오류" 응답 (헌법 4 -- 폴링 루프 정지 X).
+4. `audit_log` 자체가 raise해도 명령 처리 영향 없음 (`_safe_audit`로 wrap).
+
+**검증 결과**
+
+```
+$ pytest tests/v71/ --no-cov -q
+532 passed in ~1.3s
+  - 기존 P3 + P4.1 누적                   494
+  - test_v71_telegram_commands (P4.2 신규)  38
+
+$ python scripts/harness/run_all.py --with-7
+PASS 7/7 harness(es)
+  - notification/v71_telegram_commands.py     98.7%
+  - notification/v71_notification_repository.py 93.0% (list_recent 추가 후)
+```
+
+**핵심 룰 핀 (테스트 강제)**
+
+| 룰 | 출처 | 테스트 |
+|----|------|--------|
+| 13 명령어 모두 register됨 | 05 §6.3 | `test_register_binds_all_thirteen` |
+| 무권한 chat_id silent ignore + audit (UNAUTHORIZED_TELEGRAM_ACCESS) | 12 §3.4/§8.3 | `test_unauthorised_silently_ignored` |
+| 권한 통과 시 audit (authorised=True) | 12 §8.3 | `test_authorised_audit_records_command` |
+| 핸들러 예외 swallow + 오류 메시지 응답 (폴링 정지 X) | 헌법 4 | `test_handler_exception_is_swallowed_and_reported` |
+| audit_log 자체 실패도 명령 처리 영향 없음 | 헌법 4 | `test_audit_failure_does_not_break_command` |
+| `/status` 안전 모드 / 박스 통계 / CB 상태 포함 | 02 §9 | `test_status_includes_safe_mode_and_cb` |
+| `/positions` empty / open 분기 | -- | `test_positions_empty`, `test_positions_lists_open` |
+| `/tracking` TrackedSummary 렌더링 | -- | `test_tracking_renders_summaries` |
+| `/pending` WAITING 박스만 | 02 §3.13 | `test_pending_filters_waiting` |
+| `/today` start_of_today() 이후만 | -- | `test_today_only_today` |
+| `/recent` 기본 7일 윈도 | 02 §9.7 | `test_recent_seven_day_window` |
+| `/stop` 첫 호출만 toggle, 이미 on이면 no-op | -- | `test_stop_toggles_safe_mode`, `test_stop_when_already_safe_no_toggle` |
+| `/resume` 첫 호출만 toggle | -- | `test_resume_toggles_off`, `test_resume_when_already_running` |
+| `/cancel` 인자 누락 / 성공 / False / 예외 | -- | 4개 (TestCancel) |
+| `/report` 인자 누락 / Phase 6 stub / handler 호출 / handler 실패 | 11_REPORTING.md (Phase 6) | 4개 (TestReport) |
+| `/alerts` empty / window filter / 명시 limit / 잘못된 limit 인자 | -- | 4개 (TestAlerts) |
+| `/settings` Feature flags + 빈도 제한 / CB / retry 표기 | 02 §9 + Feature flag enforcer | `test_settings_includes_flags_and_constants` |
+| `/help` 13 명령어 모두 노출 | 05 §6.3 | `test_help_lists_all_commands` |
+| Pure formatter들 empty edge case | -- | 6개 (TestFormatters) |
+
+**헌법 5원칙 자체 검증**
+
+| 원칙 | 준수 |
+|------|------|
+| 1. 사용자 판단 불가침 | ✅ `/stop` `/resume` `/cancel` 모두 사용자 명시 명령으로만 동작. `/report`도 종목 명시 필수 |
+| 2. NFR1 최우선 | ✅ 명령어 핸들러는 모두 read-only 또는 thin wrapper (DB INSERT 0). 거래 path 영향 없음 |
+| 3. 충돌 금지 ★ | ✅ V71TelegramCommands + CommandContext + TrackedSummary 모두 `src/core/v71/notification/` 격리. V7.0 TelegramBot은 Protocol(`CommandRegistrar`)로만 의존, 단방향 |
+| 4. 시스템 계속 운영 | ✅ 핸들러 예외 swallow / audit_log 실패 isolation / telegram_send 실패 isolation. 자동 정지 코드 0 |
+| 5. 단순함 | ✅ pure formatter 분리 + 명령어별 thin handler + 단일 권한 wrapper. 의존성은 frozen dataclass 1개로 묶음 |
+
+**P4.3 핸드오프 항목**
+
+- 운영 bootstrap에서 `V71TelegramCommands` 인스턴스 생성 + `bot.register_command` wiring (V7.0 TelegramBot.start_polling 활용)
+- `safe_mode_get`/`set`은 운영 단계 글로벌 상태로 wires. P3.7 `V71RestartRecovery`의 safe_mode 토글과 통합
+- `cancel_order`: V71BuyExecutor의 미체결 주문 추적 + 키움 cancel API 호출 callback
+- `list_tracked`: 향후 tracked_stocks 테이블 query 또는 in-memory tracker (P3.5 reconciler가 이미 list_tracked_for_stock 사용 중 - 전체 list 제공자 추가 필요)
+- `audit_log`: 운영 시 V7.0 logger + 향후 audit_logs 테이블 INSERT
+- `report_handler`: Phase 6 Claude Opus 4.7 리포트 생성기 wires
+- P4.3 일일 마감 알림 (15:30 cron) + P4.4 월 1회 리뷰 (매월 1일 09:00 cron)
+
+---
+
+*최종 업데이트: 2026-04-26 (P4.2 완료)*
