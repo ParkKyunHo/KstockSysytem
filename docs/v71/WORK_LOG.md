@@ -1902,3 +1902,104 @@ V7.0 인프라 통합도 별도 트랙으로 진행:
 ---
 
 *최종 업데이트: 2026-04-26 (P4.4 + Phase 4 100% 완료)*
+
+---
+
+## Phase 5: 웹 대시보드 (진행 중 -- 프론트엔드 트랙 분리)
+
+### 사용자 결정 사항 (2026-04-26)
+
+| 항목 | 결정 |
+|------|------|
+| 빌드 도구 | **Vite** |
+| 패키지 매니저 | **npm** |
+| 빌드 출력 위치 | **`frontend/`** 신규 디렉토리 (12 §2.4 Nginx 정합) |
+| WebSocket | 네이티브 (FastAPI 정합) |
+| 테마 초기값 | **g100 (다크)** + localStorage 토글 |
+| 시작 위치 | 백엔드(FastAPI) 먼저 (P5.1) → 프론트엔드(Carbon) 나중 |
+| 첫 화면 (백엔드) | health/status + 인증 골격 (B3 결정 보류) |
+| Figma | `(v11) Carbon Design System (Community).fig` 프로젝트 루트에 배치 |
+
+### Phase 5 트랙 분리 (사용자 워크플로우 변경, 2026-04-26)
+
+원래 계획: Claude Code가 백엔드 (FastAPI) → 프론트엔드 (Carbon UI) 순차 작업.
+
+변경: **사용자가 Claude Design으로 프론트엔드 프로토타입 먼저 작업** → Claude Code가 백엔드 동시 진행 → 프로토타입 산출물 갖고 와서 백엔드와 통합.
+
+```
+[사용자 트랙]                        [Claude Code 트랙]
+Claude Design 프롬프트 인계  ─────►  CLAUDE_DESIGN_PROMPT.md 작성 (P5.0)
+       │                                      │
+       ▼                                      ▼
+Claude Design에서 React +              백엔드 P5.1+ 진행 가능
+Carbon 프로토타입 생성                  (FastAPI 골격, V71AppContext, 인증)
+       │                                      │
+       ▼                                      │
+산출물 (frontend/ 디렉토리)                    │
+       │                                      │
+       └────────────► 통합 ◄──────────────────┘
+                        │
+                        ▼
+              Phase 5 P5.5+ (Carbon 컴포넌트 wires + WebSocket + e2e)
+```
+
+### P5.0: Claude Design 프로토타입 프롬프트 (완료, 2026-04-26)
+
+**참조**: 10_UI_GUIDE_CARBON.md (전체 1620 라인 정독), 09_API_SPEC.md (응답 wrapper + 9개 리소스 스키마), 12_SECURITY.md §3 (인증)
+
+**산출물**
+
+| 분류 | 파일 | 비고 |
+|------|------|------|
+| 문서 | `docs/v71/CLAUDE_DESIGN_PROMPT.md` (신규) | 1400 라인 종합 프롬프트. Claude Design (claude.ai/design 또는 동급) 단일 입력으로 V7.1 React + TypeScript + Vite + @carbon/react 프로토타입을 생성하기 위한 명세 |
+
+**프롬프트 구성 (13개 섹션)**
+
+| § | 내용 |
+|---|------|
+| 0 | 프롬프트 사용법 + 산출물 기대 |
+| 1 | 시스템 한 문장 정의 + 사용자/환경/핵심 개념 (박스/추적/포지션/알림) |
+| 2 | 디자인 시스템 절대 룰 (패키지 / 한국식 손익 색상 / g100 다크 / SCSS / 디자인 토큰 / 5대 원칙) |
+| 3 | 9개 화면 명세 (전체 레이아웃 + 라우팅 + 화면 1~9) |
+| 4 | 인터랙션 표준 (폼 검증 / 로딩 / Toast / danger Modal / 키보드 단축키) |
+| 5 | 반응형 (Carbon Grid sm/md/lg/xlg/max + 모바일 적응) |
+| 6 | Mock Data 명세 (응답 wrapper / 디렉토리 구조 / TypeScript 타입 13개 / 시나리오 시뮬레이션) |
+| 7 | 산출물 디렉토리 구조 (`frontend/src/{pages,components,mocks,hooks,types,styles}/`) |
+| 8 | 헌법 5원칙 (UI 적용) |
+| 9 | 절대 금지 사항 (재확인) |
+| 10 | 변환 매핑 (shadcn/ui → Carbon) |
+| 11 | 빌드 + 의존성 (package.json + vite.config.ts) |
+| 12 | 산출물 검증 체크리스트 |
+| 13 | 작업 시작 명령 |
+
+**TypeScript 타입 정의 포함 (§6.2)**
+
+`TrackedStock`, `Box`, `Position`, `TradeEvent`, `NotificationRecord`, `Report`, `SystemStatusData` + 11개 enum (`PathType`, `StrategyType`, `TrackedStatus`, `BoxStatus`, `PositionSource`, `PositionStatus`, `Severity`, `NotificationStatus`, `NotificationChannel`, `ReportStatus`, `SystemStatus`).
+
+**다음 단계 (사용자 측)**
+
+1. 사용자가 `CLAUDE_DESIGN_PROMPT.md` 전체를 Claude Design에 단일 입력으로 붙여넣기
+2. (선택) `(v11) Carbon Design System (Community).fig` 업로드
+3. Claude Design이 9개 화면 React 프로토타입 + mock data + SCSS 생성
+4. 사용자가 산출물 (frontend/ 디렉토리) Claude Code (이 트랙)에게 인계
+5. Claude Code가 백엔드 P5.1+ (FastAPI / 인증 / API 엔드포인트 / WebSocket) 진행하여 통합
+
+**Claude Code 측 다음 단계 (대기)**
+
+- 사용자가 frontend/ 산출물을 갖고 올 때까지 백엔드 P5.1 보류
+- 사용자 결정 시 P5.1 (FastAPI 골격) → P5.2 (JWT + 2FA) → P5.3 (REST API) → P5.4 (WebSocket) → P5.5 (frontend 통합) → P5.6 (e2e + 검증)
+- 또는 사용자 지시에 따라 백엔드를 먼저 진행할 수도 있음 (사용자가 메시지로 결정)
+
+**헌법 5원칙 자체 검증 (P5.0)**
+
+| 원칙 | 준수 |
+|------|------|
+| 1. 사용자 판단 불가침 | ✅ 사용자가 박균호 결정한 Carbon Design System 그대로 prompt에 명시. 자동 추천 UI 금지 명시 (§8 원칙 1) |
+| 2. NFR1 최우선 | ✅ N/A (UI 명세 단계) |
+| 3. 충돌 금지 ★ | ✅ shadcn/ui / Tailwind / Lucide 등 절대 금지 명시 (§9). frontend/ 디렉토리로 격리. V7.0 인프라와 분리. PRD Patch #2 정합 |
+| 4. 시스템 계속 운영 | ✅ N/A (문서 작성) |
+| 5. 단순함 우선 | ✅ pure dataclass + Mock simulator + 단순 컴포넌트 패턴. 화려한 애니메이션 회피 명시 |
+
+---
+
+*최종 업데이트: 2026-04-26 (P5.0 -- Claude Design 프롬프트 완료, 사용자 작업 대기)*
