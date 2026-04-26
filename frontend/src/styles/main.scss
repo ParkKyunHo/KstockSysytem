@@ -13,8 +13,8 @@
 );
 @use '@carbon/styles';
 
-@import './pnl';
-@import './shell';
+@use './pnl';
+@use './shell';
 
 // ---------------------------------------------------------------------
 // Per-theme PnL color overrides (Korean convention).
