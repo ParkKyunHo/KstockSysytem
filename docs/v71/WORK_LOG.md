@@ -142,7 +142,51 @@ $ python -m pytest tests/v71/ -v
 
 ---
 
-## 다음 작업 (Phase 1)
+### Phase 0 후속: pre-commit 활성화 시 발견 사항
+
+| 이슈 | 원인 | 조치 |
+|------|------|------|
+| `pip install ".[dev]"` 실패 (pandas 메타데이터 생성 RecursionError) | 32비트 Python 3.10 (`C:\Python310-32`) pip이 PATH에서 우선 호출되어 source build 시도 | `"C:\Program Files\Python311\python.exe" -m pip install pre-commit ruff mypy pytest-asyncio pytest-cov alembic aiosqlite`로 명시 설치 |
+| 첫 pre-commit 실행이 V7.0 60파일 자동 수정 | ruff scope 패턴 `^(src/\|...)`이 V7.0까지 포함 | scope 축소: `^(src/core/v71/\|src/utils/feature_flags\.py$\|scripts/harness/\|tests/v71/)`. V7.0 lint 정리는 Phase 1 폐기로 자연 해소 |
+
+**Phase 0 최종 검증 (모두 PASS)**:
+```
+$ python -m pre_commit run --all-files
+V71 Harness 1~6  Passed
+ruff             Passed
+```
+
+---
+
+## Phase 1: 인프라 정리 (진행 중)
+
+### P1.1: OpenClaw 정리 (완료)
+
+**참조**: 05_MIGRATION_PLAN.md §3.2
+
+**영향 분석**: `grep -ri "openclaw|OpenClaw|kiwoom_ranking|@stock_Albra_bot|Maltbot|gemini" src/` → **0건** (OpenClaw은 외부 시스템이었음 — 코드 베이스 격리 양호)
+
+**삭제 항목**
+
+| 항목 | 종류 | 비고 |
+|------|------|------|
+| `docs/OPENCLAW_GUIDE.md` | 8.7 KB 문서 | 제거 |
+| `scripts/openclaw/switch-model.ps1` | 모델 전환 스크립트 | 제거 |
+| `scripts/openclaw/` | 디렉토리 | 빈 디렉토리도 제거 |
+| `CLAUDE.md` Part 0 (OpenClaw 텔레그램 AI 어시스턴트, 0.1~0.7) | ~97 라인 섹션 | 제거 |
+| `CLAUDE.md` 라인 9 (OpenClaw 필독 안내) | 1 라인 | 제거 |
+| `CLAUDE.md` 라인 278 (문서 참조표) | 1 라인 | V7.1 PRD 참조로 교체 |
+
+**CLAUDE.md 헤더 업데이트**: 버전 표기를 `V7.0 Purple-ReAbs (Phase 3 리팩토링 완료)` → `V7.1 (Box-Based Trading System, in development) -- V7.0 Purple-ReAbs is legacy`. V7.1 PRD 진입점 명시.
+
+**사용자 직접 정리 (외부 시스템, 코드 베이스 외)**:
+- `~/.openclaw/` 디렉토리 삭제
+- Windows Scheduled Task "OpenClaw Gateway" 비활성/삭제
+- Telegram 봇 (`@stock_Albra_bot`) 정리 (선택)
+
+---
+
+## 다음 작업 (Phase 1 잔여)
 
 **전제**: V7.0 운영에 영향 없음 (현재 모든 작업이 폐기 대상 코드의 *추가/검증*만이며 V7.0 코드 삭제 미진행).
 

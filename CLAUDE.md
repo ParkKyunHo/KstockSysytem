@@ -1,110 +1,14 @@
 # CLAUDE.md
 
 > **K_stock_trading** - 키움증권 REST API 국내 주식 자동매매 시스템
-> **버전**: V7.0 Purple-ReAbs (Phase 3 리팩토링 완료)
+> **버전**: V7.1 (Box-Based Trading System, in development) -- V7.0 Purple-ReAbs is legacy
+> **현재 작업**: V7.1 신규 시스템 구축 중. PRD: `docs/v71/`. 진행 로그: `docs/v71/WORK_LOG.md`.
 
 ---
 
-> **코드 수정 시 필독**: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) - 시스템 구조, 모듈 역할, 데이터 흐름
-> **OpenClaw 작업 시 필독**: [`docs/OPENCLAW_GUIDE.md`](docs/OPENCLAW_GUIDE.md) - 스킬 구조, API 연동, 트러블슈팅
-
----
-
-# Part 0: OpenClaw 텔레그램 AI 어시스턴트
-
-> 키움증권 REST API를 OpenClaw(Gemini 2.5 Pro) 텔레그램 봇으로 연동하여
-> 자연어로 시장 데이터를 조회하는 시스템
-
-## 0.1 시스템 구성
-
-```
-[사용자] ←→ [Telegram] ←→ [OpenClaw Gateway :19000] ←→ [Gemini 2.5 Pro]
-                                    ↓
-                            [exec: kiwoom_ranking.sh]
-                                    ↓
-                            [키움 REST API (api.kiwoom.com)]
-```
-
-| 구성요소 | 설명 |
-|----------|------|
-| OpenClaw v2026.2.23 | 로컬 AI 에이전트 프레임워크 |
-| Gateway | `localhost:19000` (Scheduled Task로 자동시작) |
-| 모델 | `google/gemini-2.5-pro` |
-| 채널 | Telegram (`@stock_Albra_bot`) |
-| 스킬 경로 | `~/.openclaw/skills/` |
-| 워크스페이스 | `~/.openclaw/workspace/` |
-
-## 0.2 구현 완료 스킬
-
-| 스킬 | 설명 | 스크립트 |
-|------|------|----------|
-| `kiwoom-market-ranking` | 거래대금 상위 종목 조회 | `scripts/kiwoom_ranking.sh` |
-
-## 0.3 향후 구축 로드맵
-
-| 우선순위 | 스킬 | 기능 | 키움 API |
-|----------|------|------|----------|
-| **P1** | `kiwoom-stock-price` | 개별 종목 현재가/일봉 조회 | ka10001, ka10081 |
-| **P1** | `kiwoom-portfolio` | 보유 종목 현황 + 수익률 | ka10072 |
-| **P2** | `kiwoom-signal-status` | V7 매매 신호 현황 (DB 조회) | Supabase signals 테이블 |
-| **P2** | `kiwoom-trade-history` | 금일/최근 체결 내역 | ka10073 |
-| **P3** | `kiwoom-market-index` | 코스피/코스닥 지수 현황 | ka80003 |
-| **P3** | `kiwoom-sector-ranking` | 업종별 등락률 순위 | ka10031 |
-
-## 0.4 OpenClaw 운영 명령어
-
-```powershell
-# Gateway 시작 (bash에서 실행 — cmd.exe 한글 경로 깨짐 문제)
-# Scheduled Task "OpenClaw Gateway"로 자동시작 설정됨
-# 수동 시작이 필요한 경우:
-openclaw gateway restart
-
-# 스킬 목록 확인
-openclaw skills list
-
-# 스킬 상세 정보
-openclaw skills info kiwoom-market-ranking
-
-# 텔레그램으로 메시지 전송 테스트
-openclaw agent -m "거래대금 상위 10종목" --agent main --channel telegram --deliver --json --timeout 120
-
-# Gateway 로그 확인
-type %TEMP%\openclaw\openclaw-YYYY-MM-DD.log
-```
-
-## 0.5 스킬 개발 규칙
-
-| 규칙 | 설명 |
-|------|------|
-| **SKILL.md 필수** | YAML frontmatter + When to Use/NOT to Use + 스크립트 사용법 |
-| **TOOLS.md 등록 필수** | managed 스킬은 자동 주입 안 됨 → `~/.openclaw/workspace/TOOLS.md`에 사용법 추가 |
-| **환경변수** | `~/.openclaw/openclaw.json`의 `env` 섹션에 등록 |
-| **requires** | `bins`, `env` 명시 — 미충족 시 스킬이 "missing" 상태 |
-| **경로 주의** | `~` 대신 절대경로 사용 (PowerShell 호환성) |
-| **상세 가이드** | [`docs/OPENCLAW_GUIDE.md`](docs/OPENCLAW_GUIDE.md) 참조 |
-
-## 0.6 알려진 이슈
-
-| 이슈 | 원인 | 해결 |
-|------|------|------|
-| `gateway.cmd` 한글 경로 깨짐 | cmd.exe 코드페이지 + UTF-8 경로 | bash에서 직접 실행 또는 `chcp 65001` |
-| managed 스킬 프롬프트 미주입 | OpenClaw이 bundled 스킬만 자동 주입 | `TOOLS.md`에 수동 등록 |
-| Scheduled Task "Ready" 즉시 종료 | gateway.cmd 인코딩 오류 | bash 기반 시작 스크립트 사용 |
-
-## 0.7 모델 전환 (Gemini <-> Claude)
-
-| 별칭 | 모델 ID |
-|------|---------|
-| gemini | `google/gemini-2.5-pro` |
-| claude | `anthropic/claude-opus-4-6` |
-
-```powershell
-# Claude Opus로 전환
-powershell -ExecutionPolicy Bypass -File "C:\K_stock_trading\scripts\openclaw\switch-model.ps1" -Model claude
-
-# Gemini로 전환
-powershell -ExecutionPolicy Bypass -File "C:\K_stock_trading\scripts\openclaw\switch-model.ps1" -Model gemini
-```
+> **V7.1 구축 시 필독**: [`docs/v71/01_PRD_MAIN.md`](docs/v71/01_PRD_MAIN.md) -- 통합 PRD 진입점
+> **V7.0 (legacy) 참조**: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) -- 폐기 전까지 운영용
+> **헌법 5원칙**: V7.1 PRD §1 -- 사용자 판단 불가침 / NFR1 우선 / 충돌 금지 / 항상 운영 / 단순함
 
 ---
 
@@ -275,7 +179,8 @@ powershell -ExecutionPolicy Bypass -File "C:\K_stock_trading\scripts\deploy\chec
 | `docs/BACKTEST_GUIDE.md` | **백테스트 필독** (API 제한, 병렬처리, 오류해결) |
 | `docs/CHANGELOG.md` | 버전 히스토리 |
 | `docs/DEPLOYMENT_GUIDE.md` | 배포 가이드 |
-| `docs/OPENCLAW_GUIDE.md` | **OpenClaw 스킬 개발** (API 연동, 트러블슈팅) |
+| `docs/v71/01_PRD_MAIN.md` | **V7.1 신규 시스템 PRD** (현재 작업의 단일 진실 원천) |
+| `docs/v71/WORK_LOG.md` | **V7.1 작업 로그** (Phase별 진행 상황) |
 
 ## 4.2 핵심 모듈 (상세: ARCHITECTURE.md 참조)
 
