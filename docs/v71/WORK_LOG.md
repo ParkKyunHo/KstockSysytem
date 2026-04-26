@@ -684,8 +684,8 @@ PASS 7/7 harness(es)
 | P3.2 매수 실행 (PATH_A/B + 09:05 fallback executor + entry detector) | ✅ 완료 |
 | P3.3 매수 후 관리 (단계별 손절 + 분할 익절 + TS) | ✅ 완료 |
 | P3.4 평단가 관리 + V71PositionManager (in-memory) | ✅ 완료 |
-| P3.5 수동 거래 처리 (Reconciler) | 다음 |
-| P3.6 VI 처리 | 대기 |
+| P3.5 수동 거래 처리 (Reconciler) | ✅ 완료 |
+| P3.6 VI 처리 | 다음 |
 | P3.7 시스템 재시작 복구 | 대기 |
 
 ---
@@ -973,3 +973,98 @@ Step 3: 2차 박스 매수 100 @ 175_000  → 170주, avg=177_059
 ---
 
 *최종 업데이트: 2026-04-26 (P3.4 완료)*
+
+---
+
+### P3.5: 수동 거래 처리 -- V71Reconciler + 5 Case Dispatcher (완료, 2026-04-26)
+
+**참조**: 02_TRADING_RULES.md §7 (Scenarios A/B/C/D), 07_SKILLS_SPEC.md §7
+
+**산출물**
+
+| 분류 | 파일 | 비고 |
+|------|------|------|
+| 코드 | `src/core/v71/skills/reconciliation_skill.py` | 시그니처 → 본문. Pure 분류 + 헬퍼: `classify_case` (broker_qty, system_qty, has_active_tracking → A/B/C/D/E), `compute_proportional_split` (이중 경로 비례 차감, 큰 경로 우선 반올림). PRD `reconcile_positions`은 V71Reconciler.reconcile로 이관 (skill은 stateless). 97.3% 커버리지 |
+| 코드 | `src/core/v71/position/v71_reconciler.py` | 시그니처 → 본문. `ReconcilerContext` (V71PositionManager + V71BoxManager + Notifier + Clock + tracked store callbacks). `reconcile()` 메인 + 5 case handlers (A/B/C/D/E). MANUAL 우선 차감 + 이중 경로 비례 차감 + 큰 경로 attribution. `TrackedInfo` dataclass. 95.8% 커버리지 |
+| 검증 | `scripts/harness/test_coverage_enforcer.py` | THRESHOLDS에 P3.5 모듈 2개 추가 |
+| 테스트 | `tests/v71/test_reconciliation_skill.py` (신규) | 23 PASS. classify_case 5 케이스 (5) + 음수/엣지 (2) + compute_proportional_split (10: 0/단일경로/PRD 예제/큰경로/타이/sum-property/엣지) + SystemPosition 집계 (4) + KiwoomBalance smoke (1) |
+| 테스트 | `tests/v71/test_v71_reconciler.py` (신규) | 12 PASS. 5 케이스 통합 시나리오 (E full match, A 단일/이중/타이, B 단일/MANUAL drained/비례/full-sell, C 추적종료+박스 invalidate+MANUAL 신규, D 미추적 MANUAL 신규) + multi-stock walk + flag gate |
+
+**검증 결과**
+
+```
+$ pytest tests/v71/ --no-cov -q
+341 passed in ~1s
+  - test_feature_flags                24
+  - test_v71_constants                29
+  - test_box_state_machine            49
+  - test_box_entry_skill              35
+  - test_box_manager                  38
+  - test_v71_buy_executor             18
+  - test_v71_box_entry_detector        8
+  - test_v71_box_strategies            5
+  - test_exit_calc_skill              36
+  - test_v71_trailing_stop             5
+  - test_v71_exit_calculator           6
+  - test_v71_exit_executor            12
+  - test_avg_price_skill              20
+  - test_v71_position_manager         21
+  - test_reconciliation_skill         23  (P3.5 신규)
+  - test_v71_reconciler               12  (P3.5 신규)
+
+$ python scripts/harness/run_all.py --with-7
+PASS 7/7 harness(es)
+  - skills/reconciliation_skill.py   97.3%
+  - position/v71_reconciler.py       95.8%
+```
+
+**핵심 룰 핀 (테스트 강제)**
+
+| 룰 | 출처 | 테스트 |
+|----|------|--------|
+| Case A: 시스템 + 사용자 추가 매수 → MANUAL_PYRAMID_BUY (이벤트 리셋 포함) | §7.2 | `test_single_path_a_apply_buy_with_event_reset` (profit_5_executed=True → False, weighted avg 재계산) |
+| Case A 단일 경로: 그 경로에 합산 | §7.2 경우 1 | `test_single_path_a_apply_buy_with_event_reset` |
+| Case A 이중 경로: 큰 경로 우선 attribution | §7.2 (디폴트) | `test_dual_path_attributes_to_larger` |
+| Case A 이중 경로 타이: PATH_A 우선 | §7.2 (구현 결정) | `test_dual_path_tie_attributes_to_path_a` |
+| Case B: MANUAL 먼저 차감 | §7.3 경우 2 | `test_manual_drained_first` |
+| Case B 이중 경로: 비례 차감 (큰 경로 우선 반올림) | §7.3 경우 3 | `test_dual_path_proportional_split` + `test_prd_example_larger_first_rounding` |
+| Case B 매도 시 평단가 유지 | §6.4 | `test_single_path_a_qty_decreases` |
+| Case B full sell → CLOSED | §5.9 | `test_full_sell_closes_positions` |
+| Case C: end_tracking + 박스 INVALIDATED + MANUAL 포지션 신규 | §7.4 | `test_ends_tracking_invalidates_boxes_creates_manual` |
+| Case D: MANUAL 포지션만 신규 (tracked 없음) | §7.5 | `test_creates_manual_position_only` |
+| Case E: no-op + 알림 없음 | §7.1 | `test_full_match_no_op` |
+| classify_case truth table | §7 | 5 케이스 매트릭스 |
+| compute_proportional_split sum invariant: a+b == sell_quantity | §7.3 | `test_sum_equals_sell_quantity_property` |
+| 알림 발송 (E 제외 모두 HIGH) | §7.6 | 케이스별 alert assertion |
+
+**§7.3 PRD canonical 예제 (`test_prd_example_larger_first_rounding`)**
+
+```
+보유: PATH_A 100주, PATH_B 50주
+매도: 10주
+비례: 6.67 / 3.33
+반올림: 큰 경로 우선 → PATH_A 7주, PATH_B 3주 (합 10)
+```
+
+**헌법 5원칙 자체 검증**
+
+| 원칙 | 준수 |
+|------|------|
+| 1. 사용자 판단 불가침 | ✅ 사용자 수동 거래를 룰대로 시스템에 동기화. SYSTEM/MANUAL 분리로 사용자 거래는 시스템 자동 청산 안 함 (§7.6) |
+| 2. NFR1 최우선 | ✅ classify_case + compute_proportional_split 모두 sync pure. V71Reconciler reconcile()도 in-memory 호출 (DB hop 0) |
+| 3. 충돌 금지 ★ | ✅ V71Reconciler, ReconcilerContext, TrackedInfo 모두 v71/ 격리. V7.0 → V7.1 import 0. avg_price_skill / V71PositionManager 재사용 |
+| 4. 시스템 계속 운영 | ✅ Case 실패 시 typed exception (ValueError) + per-stock isolation (한 stock 처리 실패가 다른 stock 차단 안 함). 자동 정지 코드 0 |
+| 5. 단순함 | ✅ skill은 2개 pure 함수. V71Reconciler는 5개 handler 메소드. tracked store는 callback 기반 (별도 manager 안 만듦) |
+
+**P3.6 핸드오프 항목**
+
+- `V71ViMonitor`: WebSocket type=1h 구독, NORMAL → VI_TRIGGERED → VI_RESUMED → NORMAL 상태 머신. `is_vi_active(stock_code)` 콜백 (V71BuyExecutor.context.is_vi_active로 wires)
+- VI 해제 후 갭 측정 (3% 한도)
+- `vi_recovered_today` 플래그: 익일 09:00 리셋
+- vi_skill 본문 구현
+- VI 포함 봉 처리는 V7.1에서 그대로 판정 (별도 처리 없음, §10.7)
+- V71Reconciler.reconcile()은 P3.7 RestartRecovery에서 Step 3로 호출됨
+
+---
+
+*최종 업데이트: 2026-04-26 (P3.5 완료)*
