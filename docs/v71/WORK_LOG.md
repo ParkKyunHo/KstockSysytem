@@ -683,8 +683,8 @@ PASS 7/7 harness(es)
 | P3.1 박스 시스템 (+ 09:05 fallback 메타데이터) | ✅ 완료 |
 | P3.2 매수 실행 (PATH_A/B + 09:05 fallback executor + entry detector) | ✅ 완료 |
 | P3.3 매수 후 관리 (단계별 손절 + 분할 익절 + TS) | ✅ 완료 |
-| P3.4 평단가 관리 + V71PositionManager DB 연결 | 다음 |
-| P3.5 수동 거래 처리 | 대기 |
+| P3.4 평단가 관리 + V71PositionManager (in-memory) | ✅ 완료 |
+| P3.5 수동 거래 처리 (Reconciler) | 다음 |
 | P3.6 VI 처리 | 대기 |
 | P3.7 시스템 재시작 복구 | 대기 |
 
@@ -874,3 +874,102 @@ PASS 7/7 harness(es)
 ---
 
 *최종 업데이트: 2026-04-26 (P3.3 완료)*
+
+---
+
+### P3.4: 평단가 관리 + V71PositionManager (완료, 2026-04-26)
+
+**참조**: 02_TRADING_RULES.md §6, 07_SKILLS_SPEC.md §4, 03_DATA_MODEL.md §2.3, 05_MIGRATION_PLAN.md §5.5
+
+**산출물**
+
+| 분류 | 파일 | 비고 |
+|------|------|------|
+| 코드 | `src/core/v71/skills/avg_price_skill.py` | 시그니처 → 본문. 자체 PositionState 제거 + P3.3 PositionState (`src/core/v71/position/state.py`) 재사용. `compute_weighted_average` (pure helper), `update_position_after_buy` (신규/추가 분기 + 이벤트 리셋 + 손절선 stage 1 복귀 + ts_base/initial_avg 보존), `update_position_after_sell` (avg 유지, 수량만 감소). 100% 커버리지 |
+| 코드 | `src/core/v71/position/v71_position_manager.py` | 시그니처 → 본문. `PositionStore` Protocol 구현 (`add_position` async). `apply_buy` (신규/PYRAMID/MANUAL_PYRAMID 이벤트 분기 + avg_price_skill 호출), `apply_sell` (PROFIT_TAKE_5/10에서 stage_after_partial_exit으로 손절선 advance, STOP_LOSS/TS_EXIT는 ladder 유지), `close_position` (idempotent), 쿼리 (`get_by_stock`, `list_open`, `list_for_stock`, `list_events`). `TradeEvent` dataclass + in-memory log. 97.3% 커버리지 |
+| 검증 | `scripts/harness/test_coverage_enforcer.py` | THRESHOLDS에 `avg_price_skill.py` + `v71_position_manager.py` 추가 |
+| 테스트 | `tests/v71/test_avg_price_skill.py` (신규) | 20 PASS. 신규 매수 (2) + 추가 매수 가중평균 + 이벤트 리셋 + ladder fallback + ts_base 보존 (5) + 매도 (6) + PRD §6.3 canonical 시나리오 (1) + compute_weighted_average pure helper (6) |
+| 테스트 | `tests/v71/test_v71_position_manager.py` (신규) | 21 PASS. add_position (3) + apply_buy 분기 + 이벤트 로그 + 잘못된 event_type (5) + apply_sell 분기 (PROFIT_5/10/STOP_LOSS/TS_EXIT 별 ladder + status 전이) (6) + close_position (2) + 쿼리 (4) + Feature Flag (1) |
+
+**검증 결과**
+
+```
+$ pytest tests/v71/ --no-cov -q
+306 passed in ~1s
+  - test_feature_flags                24
+  - test_v71_constants                29
+  - test_box_state_machine            49
+  - test_box_entry_skill              35
+  - test_box_manager                  38
+  - test_v71_buy_executor             18
+  - test_v71_box_entry_detector        8
+  - test_v71_box_strategies            5
+  - test_exit_calc_skill              36
+  - test_v71_trailing_stop             5
+  - test_v71_exit_calculator           6
+  - test_v71_exit_executor            12
+  - test_avg_price_skill              20  (P3.4 신규)
+  - test_v71_position_manager         21  (P3.4 신규)
+
+$ python scripts/harness/run_all.py --with-7
+PASS 7/7 harness(es)
+  - skills/avg_price_skill.py             100.0%
+  - position/v71_position_manager.py       97.3%
+```
+
+**핵심 룰 핀 (테스트 강제)**
+
+| 룰 | 출처 | 테스트 |
+|----|------|--------|
+| 첫 매수: avg = buy_price, initial_avg = buy_price | §6.2 | `test_first_buy_sets_initial_and_avg` |
+| 추가 매수: 가중평균 (qty*avg + new_qty*new_price)/total | §6.2 | `test_pyramid_buy_recomputes_weighted_avg`, PRD §6.3 example |
+| **추가 매수 시 이벤트 리셋** (profit_5/10 → False) | §6.2 ★ | `test_pyramid_resets_event_flags`, `test_pyramid_buy_recomputes_average_and_resets_events` |
+| 추가 매수 시 손절선 stage 1로 복귀 (-5%) | §6.2 | `test_pyramid_falls_back_to_stage_1_stop` |
+| 추가 매수 시 ts_base_price 보존 (최고가 이력) | §6.2 | `test_pyramid_preserves_ts_base` |
+| 추가 매수 시 initial_avg_price 보존 | §6.2 | `test_pyramid_preserves_initial_avg` |
+| 매도 시 weighted_avg_price 변경 없음 | §6.4 | `test_sell_keeps_avg_unchanged` |
+| 매도 시 이벤트 플래그 유지 (profit_5_executed True 유지) | §6.4 | `test_sell_preserves_event_flags` |
+| PROFIT_TAKE_5 → profit_5_executed=True + 손절선 stage 2 (-2%) | §5.4 + §6 | `test_profit_5_advances_stop_and_sets_flag` |
+| PROFIT_TAKE_10 → profit_10_executed=True + 손절선 stage 3 (+4%) | §5.4 + §6 | `test_profit_10_advances_to_stage_3` |
+| STOP_LOSS / TS_EXIT는 ladder 유지 | §5.9 | `test_stop_loss_does_not_advance_ladder`, `test_ts_exit_does_not_advance_ladder` |
+| OPEN → PARTIAL_CLOSED → CLOSED 상태 전이 | §5.9 | `test_partial_to_open_status_progression` |
+| 전량 매도 시 closed_at 기록 | §5.9 | `test_stop_loss_does_not_advance_ladder` (assert closed_at != None) |
+| event_type 화이트리스트 (BUY_EVENT_TYPES vs SELL_EVENT_TYPES) | §6.6 (스킬 사용 강제) | `test_apply_buy_rejects_unknown_event_type`, `test_apply_sell_rejects_unknown_event_type` |
+| 같은 (stock, path) active 1개 보장 (CLOSED는 EXCLUDE) | §3.13 + §2.1 (DB 제약) | `test_get_by_stock_returns_active_only`, `test_get_by_stock_skips_closed` |
+
+**PRD §6.3 canonical scenario 검증**
+
+`test_full_scenario` (avg_price_skill 테스트):
+
+```
+Step 1: 첫 매수 100 @ 180_000        → avg=180_000, initial=180_000
+Step 2: +5% 청산 30주 매도            → 70주, avg=180_000 유지, profit_5_executed=True
+Step 3: 2차 박스 매수 100 @ 175_000  → 170주, avg=177_059
+                                        profit_5_executed=False (RESET) ★
+                                        fixed_stop=avg*0.95 (stage 1 fallback)
+                                        initial_avg=180_000 (preserved)
+```
+
+**헌법 5원칙 자체 검증**
+
+| 원칙 | 준수 |
+|------|------|
+| 1. 사용자 판단 불가침 | ✅ 사용자 매수/매도 모두 동일 avg_price_skill 통과. PYRAMID_BUY (시스템) vs MANUAL_PYRAMID_BUY (수동) 이벤트만 구분 |
+| 2. NFR1 최우선 | ✅ 모든 함수 동기 (in-memory). DB 호출 0. P3.4의 in-memory store는 NFR1을 깨뜨리지 않음 |
+| 3. 충돌 금지 ★ | ✅ `V71PositionManager`, `PositionState`, `PositionUpdate`, `TradeEvent` 모두 v71/ 격리. avg_price_skill의 자체 PositionState 제거 후 P3.3 것 재사용 (헌법 5 단순함도) |
+| 4. 시스템 계속 운영 | ✅ `PositionNotFoundError`, `InvalidEventTypeError` typed exceptions. 잘못된 호출은 예외만 발생, 정지 코드 0 |
+| 5. 단순함 | ✅ avg_price_skill 3개 pure 함수. V71PositionManager는 in-memory dict + apply 메소드. event 화이트리스트로 caller 실수 차단 |
+
+**P3.5 핸드오프 항목**
+
+- `V71BuyExecutor` / `V71ExitExecutor`의 PositionState 직접 mutation을 `V71PositionManager.apply_buy/apply_sell`로 점진 이관 (P3.5 수동 거래 처리에서 Reconciler가 PositionManager API 통해서 통일 호출)
+- `Scenario A` (시스템 + 사용자 추가 매수): Reconciler가 키움 잔고 비교 후 차이 감지 → `apply_buy(event_type="MANUAL_PYRAMID_BUY")` 호출
+- `Scenario B` (시스템 + 사용자 부분 매도): Reconciler가 차이 감지 → `apply_sell(event_type="MANUAL_SELL")` 호출
+- `Scenario C` (추적 중 + 사용자 매수): Reconciler가 박스 INVALIDATED + MANUAL 포지션 신규 생성 (`add_position(path_type="MANUAL")`)
+- `Scenario D` (미추적 + 사용자 매수): MANUAL 포지션 신규 (tracked_stock 없음)
+- 이중 경로 비례 차감 (큰 경로 우선 반올림): P3.5에서 결정
+- DB hydration: P3.4의 in-memory dict + TradeEvent list를 Supabase `positions` + `trade_events` 테이블로 wiring (P3.5 또는 후속 통합 단계)
+
+---
+
+*최종 업데이트: 2026-04-26 (P3.4 완료)*
