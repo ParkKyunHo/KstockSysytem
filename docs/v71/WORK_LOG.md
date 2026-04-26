@@ -1767,3 +1767,138 @@ PASS 7/7 harness(es)
 ---
 
 *최종 업데이트: 2026-04-26 (P4.3 완료)*
+
+---
+
+### P4.4: 월 1회 리뷰 -- V71MonthlyReview + V71MonthlyReviewScheduler (완료, 2026-04-26)
+
+**참조**: 02_TRADING_RULES.md §9.8 (월 1회 추적 리뷰, ABC 구조), 05_MIGRATION_PLAN.md §6.5 (P4.4), 03_DATA_MODEL.md §4 (monthly_reviews -- migration 016)
+
+**산출물**
+
+| 분류 | 파일 | 비고 |
+|------|------|------|
+| 코드 | `src/core/v71/notification/v71_monthly_review.py` (신규) | `V71MonthlyReview` (compose + send) + `V71MonthlyReviewScheduler` (월 1일 09:00 cron) + `MonthlyReviewContext` + `MonthlyReviewItem` (per-stock snapshot) + `MonthlyCounts` (집계) + `compose_monthly_review_body` pure 함수. `DEFAULT_STALE_DAYS=60` (02 §9.8 "장기 정체"). Feature flag: `v71.monthly_review`. 96.8% 커버리지 |
+| 코드 | `src/core/v71/notification/__init__.py` | export 확장 (V71MonthlyReview, V71MonthlyReviewScheduler, MonthlyReviewItem, MonthlyReviewContext, MonthlyCounts) |
+| 검증 | `scripts/harness/test_coverage_enforcer.py` | THRESHOLDS에 v71_monthly_review.py 추가 (90%) |
+| 테스트 | `tests/v71/test_v71_monthly_review.py` (신규) | 24 PASS. MonthlyCounts (1) + compose_monthly_review_body (8: header/전체 현황/장기 정체/holders 면제/만료 임박/상태별 분류/long list 절단/top5 stale 절단) + send (6: feature flag/severity/items 실패/expiring 실패/expiring 값/notifier 실패) + ScheduledTime 검증 (5: 1일 전/1일 후/중순/12월→1월 carry/잘못된 시간) + run_once (2) + lifecycle (2) |
+
+**룰 매트릭스 (02 §9.8 ABC 구조)**
+
+| 섹션 | 구현 | 테스트 |
+|------|------|--------|
+| `[월간 리뷰] {YYYY-MM}` 헤더 | `_fmt_year_month(now)` | `test_header_includes_year_month` |
+| ■ 전체 현황 (추적/박스 대기/포지션 보유/부분 청산) | `MonthlyCounts.from_items` 집계 | `test_full_status_block`, `test_aggregates` |
+| ⚠️ 주의 필요 -- 장기 정체 (60일+ 박스 미체결) | `_is_stale`: TRACKING + has_position=False + age >= 60일 | `test_stale_listed`, `test_stale_excludes_holders` |
+| ⚠️ 주의 필요 -- 박스 만료 임박 (30일) | `list_expiring_boxes` callback 정수 | `test_expiring_boxes_count`, `test_expiring_callback_value` |
+| ● 상태별 분류 (박스 대기 / 포지션 보유) | TRACKING + waiting_box>0 + no position 분류 | `test_status_breakdown_sections` |
+| 부분 청산 marker | `has_partial_exit` 플래그 | `test_status_breakdown_sections` |
+| 📋 전체 목록 | 모든 items 렌더 | `test_status_breakdown_sections`, `test_header_includes_year_month` |
+| 긴 리스트 절단 (10개+ → "외 N개") | sample[:10] + suffix | `test_full_roster_truncates_long_lists` |
+| 정체 종목 5개+ → "외 N개" | sample[:5] + suffix | `test_top5_stale_truncates` |
+| Severity LOW + event=MONTHLY_REVIEW | `notify(severity="LOW", event_type="MONTHLY_REVIEW")` | `test_send_uses_low_severity_and_event` |
+| rate_limit_key=`monthly_review:{YYYY-MM}` (월별 1건) | `_fmt_year_month(now)` | 동일 테스트 |
+| Callback 실패 swallow + 섹션 생략 | items_raises / expiring_raises | `test_items_callback_failure_renders_empty`, `test_expiring_callback_failure_skips_line` |
+
+**스케줄러 (V71MonthlyReviewScheduler)**
+
+| 동작 | 구현 | 테스트 |
+|------|------|--------|
+| `next_target(now)` 미래 시각 | now <= 1일 09:00이면 이번 달, 초과면 다음 달 | `test_before_target_today_first_of_month`, `test_after_target_rolls_to_next_month`, `test_mid_month_rolls_to_first_of_next` |
+| 12월 → 1월 carry (year+1) | `_first_of_next_month` helper | `test_december_rolls_to_january` |
+| `run_once()` sleep_until + send | 동일 패턴 (P4.3과 일관) | `test_run_once_sleeps_until_target_then_sends` |
+| send 실패 시 None + log (loop 안 죽음) | try/except in run_once | `test_run_once_send_failure_swallowed` |
+| start/stop idempotent | `task is None / done` 체크 | `test_start_stop_idempotent` |
+| 매월 1회만 발송 (60초 advance + next_target carry) | run_once 후 sleep(60) | `test_loop_fires_review_at_least_once` |
+| 잘못된 시간 거부 | `0 <= hour <= 23 and 0 <= minute <= 59` | `test_invalid_time_raises` |
+
+**검증 결과**
+
+```
+$ pytest tests/v71/ --no-cov -q
+585 passed in ~1.4s
+  - 기존 P3 + P4.1 + P4.2 + P4.3 누적         561
+  - test_v71_monthly_review (P4.4 신규)         24
+
+$ python scripts/harness/run_all.py --with-7
+PASS 7/7 harness(es)
+  - notification/v71_monthly_review.py    96.8%
+```
+
+**헌법 5원칙 자체 검증**
+
+| 원칙 | 준수 |
+|------|------|
+| 1. 사용자 판단 불가침 | ✅ 사용자 박스 결정 후 진행되지 않은 종목을 정체로 표시할 뿐, 자동 박스 만료/삭제 없음 (02 §3.7과 정합) |
+| 2. NFR1 최우선 | ✅ 월 1회 발송, 거래 path latency 영향 0. compose는 pure 함수 + DB hop 0 |
+| 3. 충돌 금지 ★ | ✅ V71 prefix (V71MonthlyReview, V71MonthlyReviewScheduler). v71/notification/ 격리. Notifier Protocol 단방향 의존 |
+| 4. 시스템 계속 운영 | ✅ items / expiring callback 실패는 swallow + 섹션만 생략. send 실패는 scheduler 안에서 swallow + 다음 달 재시도 |
+| 5. 단순함 | ✅ pure compose 함수 + thin send wrapper + 단순 cron loop (P4.3 V71DailySummaryScheduler와 동일 패턴, AsyncIOScheduler 미도입) |
+
+---
+
+## Phase 4 완료 (마일스톤 M4 진입, 2026-04-26)
+
+```
+$ pytest tests/v71/ --no-cov -q
+585 passed in ~1.4s
+
+$ python scripts/harness/run_all.py --with-7
+PASS 7/7 harness(es)
+```
+
+### Phase 4 누적 산출물 (P4.1 ~ P4.4)
+
+| Phase | 모듈 (코드) | 테스트 | 커버리지 |
+|-------|-------------|--------|----------|
+| P4.1 | skills/notification_skill (본문) + notification/v71_notification_repository + v71_postgres_notification_repository + v71_circuit_breaker + v71_notification_queue + v71_notification_service | 5 | 93~100% |
+| P4.2 | notification/v71_telegram_commands (13 명령어) + box_manager.list_all + repository.list_recent | 1 | 98.7% |
+| P4.3 | notification/v71_daily_summary | 1 | 96.6% |
+| P4.4 | notification/v71_monthly_review | 1 | 96.8% |
+
+**합계**: 8개 V7.1 신규 모듈 (notification/ 패키지 + 1 Postgres adapter) + 8개 신규 테스트 파일, 모두 90%+ 커버리지
+
+### V7.1 알림 시스템 구현 완료 매트릭스
+
+| §/룰 | P4.x | 모듈 |
+|------|------|------|
+| §9.1 4-등급 시스템 (CRITICAL/HIGH/MEDIUM/LOW) | P4.1 | notification_skill, v71_notification_queue |
+| §9.2 채널 (CRITICAL/HIGH→BOTH, MEDIUM/LOW→TELEGRAM) | P4.1 | v71_notification_queue._resolve_channel |
+| §9.3 우선순위 큐 (priority + FIFO) | P4.1 | v71_notification_repository.fetch_next_pending |
+| §9.4 Circuit Breaker (3-fail / 30s / probe) | P4.1 | v71_circuit_breaker |
+| §9.4 CRITICAL/HIGH 영구 보관 + MEDIUM/LOW 5분 만료 | P4.1 | repository._is_expired + expire_stale |
+| §9.5 빈도 제한 (5분, CRITICAL 우회) | P4.1 | v71_notification_queue.is_rate_limited |
+| §9.6 표준 메시지 포맷터 (8개) | P4.1 | notification_skill.format_* |
+| §9.7 일일 마감 (15:30, LOW) | P4.3 | v71_daily_summary |
+| §9.8 월 1회 리뷰 (1일 09:00, ABC 구조) | P4.4 | v71_monthly_review |
+| §9.9 raw telegram 호출 차단 | P4.1 + Harness 3 | trading_rule_enforcer enforce |
+| 텔레그램 명령어 13개 + 권한 검증 + audit | P4.2 | v71_telegram_commands |
+| `/stop` `/resume` 안전 모드 토글 | P4.2 | v71_telegram_commands._cmd_stop/resume |
+| 12 §3.4 + §8.3 chat_id 화이트리스트 + 무권한 silent ignore | P4.2 | _wrap_handler |
+
+### Phase 4 헌법 5원칙 자체 검증 (전체)
+
+| 원칙 | 검증 |
+|------|------|
+| 1. 사용자 판단 불가침 | ✅ 사용자 거래/박스/추적 데이터를 그대로 알림으로 전환. 자동 추천 0. /stop /resume /cancel만 액션 명령 (모두 사용자 명시 입력) |
+| 2. NFR1 최우선 | ✅ Notifier.notify는 enqueue만 (DB INSERT 1번). 모든 P3 14개 호출지점에서 거래 path latency < 1ms |
+| 3. 충돌 금지 ★ | ✅ 8개 신규 모듈 모두 `src/core/v71/notification/` 격리 + V71 접두사. `V71CircuitState`는 V7.0 `src/api/client.py`의 `CircuitState`와 충돌 회피. V7.0 → V7.1 import 0. Harness 1/2/6 PASS |
+| 4. 시스템 계속 운영 | ✅ Circuit OPEN 시에도 큐 작동 + CRITICAL/HIGH 영구 보관. Worker step 예외 swallow. 명령어 핸들러 예외 swallow. 모든 callback 실패 isolation. 자동 정지 코드 0 |
+| 5. 단순함 | ✅ pure helper 다수, in-memory + DB-backed 분리, callback DI, 단순한 cron loop (AsyncIOScheduler 미도입). 전체 알림 surface = 8개 모듈, P3.x와 같은 비율 |
+
+### 다음 단계
+
+| Phase | 내용 | 예상 |
+|-------|------|------|
+| **Phase 5** | 웹 대시보드 (FastAPI + JWT + 2FA + React UI) | 5~10일 |
+| **Phase 6** | 리포트 (Claude Opus 4.7 통합) | 3~5일 |
+| **Phase 7** | 통합 테스트 + 페이퍼 트레이드 + AWS 배포 | 5~10일 |
+
+V7.0 인프라 통합도 별도 트랙으로 진행:
+- `kiwoom_api_skill` 본문 (실 HTTP 호출)
+- `PostgresNotificationRepository` 통합 테스트 (Phase 5 또는 별도 시점)
+- 운영 bootstrap에서 V71NotificationService + V71TelegramCommands + V71DailySummaryScheduler + V71MonthlyReviewScheduler wiring
+
+---
+
+*최종 업데이트: 2026-04-26 (P4.4 + Phase 4 100% 완료)*

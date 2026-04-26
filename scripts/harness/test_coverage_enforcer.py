@@ -73,9 +73,11 @@ THRESHOLDS = {
     "src/core/v71/notification/v71_telegram_commands.py": 90.0,
     # P4.3: daily 15:30 summary + scheduler.
     "src/core/v71/notification/v71_daily_summary.py": 90.0,
+    # P4.4: monthly 1st-of-month review + scheduler.
+    "src/core/v71/notification/v71_monthly_review.py": 90.0,
 }
-# Phase 4 P4.1 + P4.2 + P4.3 thresholds added.
-# Next: monthly review (P4.4).
+# Phase 4 (P4.1 + P4.2 + P4.3 + P4.4) thresholds complete.
+# Next: Phase 5 web dashboard (FastAPI + JWT + 2FA + React UI).
 
 
 def _run_pytest() -> int:

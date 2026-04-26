@@ -33,6 +33,13 @@ from src.core.v71.notification.v71_daily_summary import (
     V71DailySummary,
     V71DailySummaryScheduler,
 )
+from src.core.v71.notification.v71_monthly_review import (
+    MonthlyCounts,
+    MonthlyReviewContext,
+    MonthlyReviewItem,
+    V71MonthlyReview,
+    V71MonthlyReviewScheduler,
+)
 from src.core.v71.notification.v71_notification_queue import (
     V71NotificationQueue,
 )
@@ -64,8 +71,13 @@ __all__ = [
     "TrackedSummary",
     "V71CircuitBreaker",
     "V71CircuitState",
+    "MonthlyCounts",
+    "MonthlyReviewContext",
+    "MonthlyReviewItem",
     "V71DailySummary",
     "V71DailySummaryScheduler",
+    "V71MonthlyReview",
+    "V71MonthlyReviewScheduler",
     "V71NotificationQueue",
     "V71NotificationService",
     "V71TelegramCommands",
