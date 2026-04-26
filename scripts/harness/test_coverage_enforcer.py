@@ -32,14 +32,17 @@ from _common import REPO_ROOT, HarnessResult
 THRESHOLDS = {
     "src/utils/feature_flags.py": 90.0,
     "src/core/v71/v71_constants.py": 90.0,
-    # P3.1: trading-rule modules.
+    # P3.1: box system.
     "src/core/v71/box/box_state_machine.py": 90.0,
     "src/core/v71/box/box_manager.py": 90.0,
     "src/core/v71/skills/box_entry_skill.py": 90.0,
+    # P3.2: buy executor + entry detector + strategy wrappers.
+    "src/core/v71/box/box_entry_detector.py": 90.0,
+    "src/core/v71/strategies/v71_buy_executor.py": 90.0,
+    "src/core/v71/strategies/v71_box_pullback.py": 90.0,
+    "src/core/v71/strategies/v71_box_breakout.py": 90.0,
 }
 # When the next v71 modules graduate from skeleton to implementation, append:
-#   "src/core/v71/box/box_entry_detector.py": 90.0,    # P3.2
-#   "src/core/v71/strategies/": 90.0,                  # P3.2
 #   "src/core/v71/exit/": 90.0,                        # P3.3
 #   ... etc.
 

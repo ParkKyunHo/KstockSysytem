@@ -680,9 +680,9 @@ PASS 7/7 harness(es)
 
 | Task | 상태 |
 |------|------|
-| P3.1 박스 시스템 (+ 09:05 fallback) | ✅ 완료 |
-| P3.2 매수 실행 (PATH_A/B + 09:05 fallback executor) | 다음 |
-| P3.3 매수 후 관리 | 대기 |
+| P3.1 박스 시스템 (+ 09:05 fallback 메타데이터) | ✅ 완료 |
+| P3.2 매수 실행 (PATH_A/B + 09:05 fallback executor + entry detector) | ✅ 완료 |
+| P3.3 매수 후 관리 | 다음 |
 | P3.4 평단가 관리 | 대기 |
 | P3.5 수동 거래 처리 | 대기 |
 | P3.6 VI 처리 | 대기 |
@@ -690,4 +690,92 @@ PASS 7/7 harness(es)
 
 ---
 
-*최종 업데이트: 2026-04-26 (P3.1 완료)*
+### P3.2: 매수 실행 + 09:05 fallback executor + entry detector (완료, 2026-04-26)
+
+**참조**: 02_TRADING_RULES.md §4 (매수 실행), §3.10/§3.11 (PATH_B), §10.9 (시초 VI 안전장치), 04_ARCHITECTURE.md §5.3, 05_MIGRATION_PLAN.md §5.3, 07_SKILLS_SPEC.md §1
+
+**산출물**
+
+| 분류 | 파일 | 비고 |
+|------|------|------|
+| 코드 | `src/core/v71/skills/kiwoom_api_skill.py` | `V71OrderType`, `V71OrderSide`, `V71Orderbook`, `V71OrderResult`, `V71OrderStatus` 추가 (V7.0 충돌 회피, V71 접두사). `OrderRejectedError` 추가. `ExchangeAdapter` Protocol (P3.2의 매수/청산 executor 진입점). 실제 HTTP 본문은 V7.0 통합 단계에서 |
+| 코드 | `src/core/v71/strategies/v71_buy_executor.py` (신규) | `V71BuyExecutor` 메인 코디네이터. PATH_A 즉시 매수 + PATH_B 09:01 1차 + PATH_B 09:05 2차 fallback. 매수 시퀀스 (limit × 3, 5s wait + market). 30% per-stock cap (§3.4). VI 가드 (PATH_A 차단, PATH_B 1차/2차 정책 차등). `BuyExecutorContext` (5개 의존성 + 4개 callable). `BuyOutcome` (FILLED/PARTIAL_FILLED/ABANDONED_*/REJECTED/FAILED). 91.3% 커버리지 |
+| 코드 | `src/core/v71/box/box_entry_detector.py` | P3.1 시그니처 → P3.2 본문. one-detector-per-path 정책. `start()` idempotent. `check_entry()`: prev candle 캐시 + box_entry_skill 호출 + on_entry callback. `_on_bar_complete_sync`: V7.0 candle pipeline에 sync 콜백 등록 + asyncio.create_task로 스케줄 + 예외 swallow. 93.1% 커버리지 |
+| 코드 | `src/core/v71/strategies/v71_box_pullback.py` / `v71_box_breakout.py` | thin factory wrappers (PRD §5.3 명시). `create_box`가 `strategy_type` 자동 pinning. dedicated feature flag (`v71.pullback_strategy` / `v71.breakout_strategy`) 가드. 100% 커버리지 |
+| 테스트 | `tests/v71/test_v71_buy_executor.py` (신규) | 18 PASS. PATH_A 즉시(4) + 매수 시퀀스(2) + PATH_B 1차/2차(5) + negative-decision(1) + broker errors(2) + fallback edge cases(4: rejected short-circuit, transport→fallback defer, fallback transport, fallback cap during window) |
+| 테스트 | `tests/v71/test_v71_box_entry_detector.py` (신규) | 8 PASS. start idempotent + 라우팅 (unresolved/empty/pullback dispatch/path mismatch/callback exception isolation) + sync hook (no loop / running loop schedule) |
+| 테스트 | `tests/v71/test_v71_box_strategies.py` (신규) | 5 PASS. PULLBACK/BREAKOUT 전략 type pinning + feature flag gate |
+| 검증 | `scripts/harness/test_coverage_enforcer.py` | THRESHOLDS에 P3.2 모듈 4개 추가 (모두 90% 임계값) |
+
+**검증 결과**
+
+```
+$ pytest tests/v71/ --no-cov -q
+206 passed in 0.84s
+  - test_feature_flags                24
+  - test_v71_constants                29
+  - test_box_state_machine            49
+  - test_box_entry_skill              35
+  - test_box_manager                  38
+  - test_v71_buy_executor             18  (P3.2 신규)
+  - test_v71_box_entry_detector        8  (P3.2 신규)
+  - test_v71_box_strategies            5  (P3.2 신규)
+
+$ python scripts/harness/run_all.py --with-7
+PASS 7/7 harness(es)
+  - Harness 1 (Naming Collision):  Order* → V71Order* rename으로 V7.0 충돌 0건
+  - Harness 7 임계값 (P3.1 + P3.2):
+    box/box_state_machine.py        100.0%
+    box/box_manager.py               99.3%
+    skills/box_entry_skill.py        94.1%
+    box/box_entry_detector.py        93.1%
+    strategies/v71_buy_executor.py   91.3%
+    strategies/v71_box_pullback.py  100.0%
+    strategies/v71_box_breakout.py  100.0%
+```
+
+**핵심 룰 핀 (테스트 강제)**
+
+| 룰 | 출처 | 테스트 |
+|----|------|--------|
+| 매수 시퀀스: 지정가(매도1호가) × 3 + 시장가 | §4.1, §4.2 | `test_three_unfilled_limits_then_market_fills` |
+| 매수 시퀀스 모두 미체결 → FAILED | §4.8 | `test_all_attempts_fail` |
+| PATH_A VI active → 즉시 차단 | §4 | `test_vi_active_blocks_path_a` |
+| 30% per-stock cap | §3.4 | `test_cap_exceeded_blocks_buy` |
+| target_qty=0 (cap/가격 부적합) → ABANDONED_CAP | §3.3 | `test_target_quantity_zero_blocks_buy` |
+| **PATH_B 1차 09:01 시점에 sleep_until** | §3.10 | `test_primary_normal_fill` (sleep_untils=[09:01]) |
+| **갭업 5%(1차) → fallback 미발동, 매수 영구 포기** | §3.10/§3.11 | `test_primary_gap_up_5pct_blocks_buy_no_fallback` (sleep_untils=[09:01]만, 09:05 미진입) |
+| **PATH_B 1차 미체결 → 09:05 fallback 시장가 진입** | §10.9 | `test_primary_unfilled_triggers_905_fallback_and_fills` (sleep_untils=[09:01, 09:05]) |
+| **fallback 시점 갭업 재검증 5% 초과 → 안전장치 무력화** | §10.9 | `test_fallback_gap_recheck_invalidates_safety_net` |
+| **부분 체결 + fallback 잔량 시장가 → 가중평균 평단가** | §4.3, §10.9 | `test_fallback_after_partial_fill_uses_weighted_average` (200@18200 + 349@18500) |
+| **PATH_B 1차 broker reject → fallback 미발동, REJECTED** | §4.8 | `test_path_b_primary_rejected_short_circuits` |
+| **PATH_B 1차 transport error → fallback 자동 진입** | §10.9 | `test_path_b_primary_transport_error_defers_to_fallback` |
+| **fallback transport error → FAILED** | §4.8 | `test_fallback_transport_error_returns_failed` |
+| **fallback 시점 cap 재검증** (09:01~09:05 사이 사용자 수동 매수 감지) | §3.4 | `test_fallback_cap_exceeded_during_window` |
+| Box marked TRIGGERED + position 생성 + HIGH 알림 (성공 시) | §4.9 | `test_normal_full_fill` |
+| Box WAITING 유지 + 알림만 (포기 시) | §3.13 | 모든 ABANDONED_* 테스트 |
+
+**헌법 5원칙 자체 검증**
+
+| 원칙 | 준수 |
+|------|------|
+| 1. 사용자 판단 불가침 | ✅ `BoxRecord` 그대로 실행, 자동 추천 0. 09:05 fallback도 사용자 박스 결정의 마무리 |
+| 2. NFR1 최우선 | ✅ PATH_A는 동기 cap/VI 검증 후 즉시 매수. DB 호출 없음. PATH_B 09:01/09:05만 의도적 sleep |
+| 3. 충돌 금지 ★ | ✅ Order* → V71Order* rename으로 V7.0 (`src/api/endpoints/order.py`, `src/database/models.py`) 충돌 해소. `v71/strategies/`, `v71/box/` 격리. V7.0 → V7.1 import 0. Harness 1/2/6 PASS |
+| 4. 시스템 계속 운영 | ✅ Broker reject/transport error는 typed exception + HIGH 알림으로 surface, 시스템 정지 0. detector callback exception은 isolation (한 box 실패가 다른 box 차단 안 함) |
+| 5. 단순함 | ✅ 매수 시퀀스 4단계 + fallback 1회. 의존성은 5개 Protocol/Callable로 명시. detector one-per-path |
+
+**P3.3 핸드오프 항목**
+
+- `BoxRecord`에 `stock_code` 필드 추가 검토 (현재 `tracked_stock_resolver` callback hop 사용 중)
+- `PositionStore` Protocol 구현체: P3.4 V71PositionManager가 정식 DB 연결 (Supabase `positions` 테이블)
+- `Notifier` Protocol 구현체: P4.1 V71NotificationService
+- `Clock` Protocol 구현체: 운영용 RealClock (asyncio.sleep + datetime.now wrapper) — 현재 테스트만 FakeClock 사용
+- `is_vi_active` callable: P3.6 V71ViMonitor가 wires
+- `_buy_sequence`의 호가 소진(§4.4) 처리는 별도 구현 필요 — 현재는 limit 가격 ask_1 한 번만 사용
+- 부분 체결 시 §4.3에 따른 "재시도 시 시도 카운트 1회 증가" 룰 — 현재 구현은 한 attempt에서 partial fill되면 다음 attempt가 잔량 처리 (정확)
+- 슬리피지 알림 (§4.4): 향후 결정 (PRD에 임계치 미정)
+
+---
+
+*최종 업데이트: 2026-04-26 (P3.2 완료)*
