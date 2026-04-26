@@ -71,9 +71,11 @@ THRESHOLDS = {
     "src/core/v71/notification/v71_notification_service.py": 90.0,
     # P4.2: telegram command surface (13 commands).
     "src/core/v71/notification/v71_telegram_commands.py": 90.0,
+    # P4.3: daily 15:30 summary + scheduler.
+    "src/core/v71/notification/v71_daily_summary.py": 90.0,
 }
-# Phase 4 P4.1 + P4.2 thresholds added.
-# Next: daily summary (P4.3), monthly review (P4.4).
+# Phase 4 P4.1 + P4.2 + P4.3 thresholds added.
+# Next: monthly review (P4.4).
 
 
 def _run_pytest() -> int:

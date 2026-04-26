@@ -1677,3 +1677,93 @@ PASS 7/7 harness(es)
 ---
 
 *최종 업데이트: 2026-04-26 (P4.2 완료)*
+
+---
+
+### P4.3: 일일 마감 알림 -- V71DailySummary + V71DailySummaryScheduler (완료, 2026-04-26)
+
+**참조**: 02_TRADING_RULES.md §9.7 (일일 마감, LOW severity), 05_MIGRATION_PLAN.md §6.4 (P4.3), 07_SKILLS_SPEC.md §6 (DAILY_SUMMARY event)
+
+**산출물**
+
+| 분류 | 파일 | 비고 |
+|------|------|------|
+| 코드 | `src/core/v71/notification/v71_daily_summary.py` (신규) | `V71DailySummary` (compose + send) + `V71DailySummaryScheduler` (15:30 cron loop) + `DailySummaryContext` + `ScheduledTime` + 5개 module-level pure helper (`compose_daily_summary_body`, `compute_event_pnl`, `_filter_events_today`, `_start_of_day`, formatters). Feature flag: `v71.daily_summary`. 96.6% 커버리지 |
+| 코드 | `src/core/v71/notification/__init__.py` | export 확장 (V71DailySummary, V71DailySummaryScheduler, DailySummaryContext, ScheduledTime) |
+| 검증 | `scripts/harness/test_coverage_enforcer.py` | THRESHOLDS에 v71_daily_summary.py 추가 (90%) |
+| 테스트 | `tests/v71/test_v71_daily_summary.py` (신규) | 29 PASS. compose_daily_summary_body (6) + compute_event_pnl (5) + send (8) + ScheduledTime (2) + scheduler.next_target (4) + run_once (2) + lifecycle (2) |
+
+**룰 매트릭스 (02 §9.7)**
+
+| 룰 | 구현 | 테스트 |
+|----|------|--------|
+| 매일 15:30 발송 | `V71DailySummaryScheduler(target=ScheduledTime(15, 30))` + `next_target` | `test_before_target_today`, `test_after_target_rolls_to_tomorrow` |
+| 거래 없는 날도 발송 ("오늘 거래 없음") | `compose_daily_summary_body` 분기 | `test_no_trades_today`, `test_send_no_trades_renders_placeholder` |
+| 손익 절대값 + 자본 있으면 % | `total_capital` 옵션 분기 | `test_pnl_with_capital`, `test_pnl_without_capital_no_percent` |
+| 거래 내역 (매수/매도 분리) | buy/sell 이벤트 분리 + 카운트 + 종목/수량/가격 | `test_send_includes_today_events_only` |
+| 추적 변화 (자동 이탈 / 진입 임박) | TrackedSummary status=EXITED + (TRACKING + box>0 + no position) | `test_tracked_changes`, `test_tracked_more_than_three_summarised` |
+| 내일 주목 (있다면) | `get_tomorrow_events` 옵션 callback, 비어있으면 섹션 생략 | `test_tomorrow_events_listed` |
+| Severity LOW + event=DAILY_SUMMARY | `notify(severity="LOW", event_type="DAILY_SUMMARY", ...)` | `test_send_uses_low_severity_and_daily_summary_event` |
+| rate_limit_key=`daily_summary:{date}` (날짜별 1건) | `_fmt_date(now)` | 동일 테스트 |
+| 오늘 이벤트만 (어제 제외) | `_filter_events_today` start_of_day 기준 | `test_send_includes_today_events_only` |
+
+**PnL 계산 (compute_event_pnl)**
+
+| 이벤트 타입 | 처리 | 테스트 |
+|-------------|------|--------|
+| BUY_EXECUTED / PYRAMID_BUY / MANUAL_PYRAMID_BUY | None 반환 (PnL 없음) | `test_buy_returns_none` |
+| PROFIT_TAKE_5 / PROFIT_TAKE_10 | (price - avg) * qty (양수 일반적) | `test_profit_take_pnl` |
+| STOP_LOSS / TS_EXIT / MANUAL_SELL | (price - avg) * qty (음수 일반적) | `test_stop_loss_pnl_negative` |
+| 알 수 없는 event_type / 없는 position_id | None 반환 (defensive) | `test_unknown_event_type_returns_none`, `test_unknown_position_returns_none` |
+
+avg_price_index는 V71PositionManager.get(position_id).weighted_avg_price 조회. §6 이벤트 리셋 후 avg가 변경되어도 *현재* avg를 사용 (사용자 멘탈 모델에 부합).
+
+**스케줄러 (V71DailySummaryScheduler)**
+
+| 동작 | 구현 | 테스트 |
+|------|------|--------|
+| `next_target(now)` 미래 시각만 반환 | now <= target이면 today, 초과면 tomorrow | 4개 (TestSchedulerNextTarget) |
+| `run_once()` sleep_until + send | Clock.sleep_until(target) 후 daily_summary.send() | `test_run_once_sleeps_until_target_then_sends` |
+| send 실패 시 None 반환 + 로그 (loop 안 죽음) | try/except in run_once | `test_run_once_returns_none_on_summary_failure` |
+| start/stop idempotent | task is None / done 체크 | `test_start_stop_idempotent` |
+| 매일 1회만 발송 (60초 advance로 다음 target = 내일) | run_once 후 sleep(60) | `test_loop_fires_summary_at_least_once` |
+| Custom HHMM (테스트용) | `target` 인자 | `test_custom_target` |
+| 잘못된 HHMM 거부 | `ScheduledTime.from_hhmm` ValueError | `test_invalid_format` |
+
+**검증 결과**
+
+```
+$ pytest tests/v71/ --no-cov -q
+561 passed in ~1.2s
+  - 기존 P3 + P4.1 + P4.2 누적                532
+  - test_v71_daily_summary (P4.3 신규)         29
+
+$ python scripts/harness/run_all.py --with-7
+PASS 7/7 harness(es)
+  - notification/v71_daily_summary.py    96.6%
+```
+
+**헌법 5원칙 자체 검증**
+
+| 원칙 | 준수 |
+|------|------|
+| 1. 사용자 판단 불가침 | ✅ 사용자 거래/박스 데이터를 그대로 요약 (자동 추천 0). 내일 주목 이벤트는 사용자가 등록한 캘린더만 |
+| 2. NFR1 최우선 | ✅ send()는 daily 한 번만 실행 (15:30). 거래 path latency 영향 0 |
+| 3. 충돌 금지 ★ | ✅ V71 prefix (V71DailySummary, V71DailySummaryScheduler). v71/notification/ 격리. V71PositionManager / V71BoxManager / TrackedSummary 단방향 의존. V7.0 → V7.1 import 0 |
+| 4. 시스템 계속 운영 | ✅ get_total_capital / get_tomorrow_events / list_tracked 실패는 swallow (해당 섹션만 생략). send 실패도 scheduler가 swallow + 다음 날 재시도. `_loop`는 step 예외도 swallow + 60초 sleep으로 다음 target |
+| 5. 단순함 | ✅ pure compose_daily_summary_body 함수 + thin send wrapper + 단순 cron loop (AsyncIOScheduler 미도입 -- Constitution 5). 의존성은 frozen dataclass 1개 |
+
+**P4.4 핸드오프 항목**
+
+- `V71DailySummary` + scheduler 패턴을 그대로 monthly review에 적용:
+  - `V71MonthlyReview` (compose + send) + `V71MonthlyReviewScheduler` (매월 1일 09:00 트리거)
+  - LOW severity + event=MONTHLY_REVIEW
+  - 02 §9.8 ABC 구조 (전체 현황 / 주의 필요 / 상태별 분류 / 전체 목록)
+- 운영 bootstrap에서 `V71DailySummaryScheduler.start()` 호출 wiring (이미 P3.7 RestartRecovery의 Step 6/7 후속에서 시작 가능)
+- `get_total_capital`: V7.0 RiskManager에서 wires (Phase 5 통합 트랙)
+- `get_tomorrow_events`: 사용자 별도 캘린더 source (외부 calendar feed 또는 사용자 등록 입력)
+- P3.4 `V71PositionManager.list_events()`는 in-memory; Phase 5 DB hydration 시 trade_events 테이블 query로 wires
+
+---
+
+*최종 업데이트: 2026-04-26 (P4.3 완료)*
