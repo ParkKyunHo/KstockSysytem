@@ -1,0 +1,36 @@
+// Korean stock-market profit/loss color convention.
+//
+// The actual token values are set on :root by main.scss per theme
+// so component code never references hex codes directly.
+
+.pnl-profit {
+  color: var(--cds-pnl-profit);
+  font-family: 'IBM Plex Mono', monospace;
+  font-weight: 600;
+  font-feature-settings: 'tnum';
+}
+
+.pnl-loss {
+  color: var(--cds-pnl-loss);
+  font-family: 'IBM Plex Mono', monospace;
+  font-weight: 600;
+  font-feature-settings: 'tnum';
+}
+
+.pnl-neutral {
+  color: var(--cds-pnl-neutral);
+  font-family: 'IBM Plex Mono', monospace;
+  font-feature-settings: 'tnum';
+}
+
+// KPI tile big numbers.
+.kpi-value {
+  font-size: 2rem;
+  font-weight: 600;
+  line-height: 1.1;
+
+  &.pnl-profit,
+  &.pnl-loss {
+    // Token already applied; nothing extra.
+  }
+}

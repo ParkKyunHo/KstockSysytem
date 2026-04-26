@@ -2088,3 +2088,127 @@ PRD Patch #3은 본 산출물 입력 시점 (P5.0 프롬프트 작성) 이후에
 ---
 
 *최종 업데이트: 2026-04-26 (P5.1 -- Claude Design 산출물 implement 완료)*
+
+---
+
+### P5.1 hotfix: 햄버거 메뉴 데스크톱 숨김 (완료, 2026-04-27)
+
+**입력**: 사용자가 Claude Design에서 햄버거 메뉴 수정 후 새 산출물 인계 (`https://api.anthropic.com/v1/design/h/ENXb2cTwwZOHbN36uKu8dA`, gzip 123.9 KB).
+
+**변경**
+
+| 파일 | 차이 |
+|------|------|
+| `frontend-prototype/src/styles/app.css` | +3 라인. `@media (min-width: 1056px) { .cds-header__menu-btn--hide-desktop { display: none; } }` -- 데스크톱에서 햄버거 버튼 숨김 (HANDOFF.md §3.4 AppShell 룰과 정합) |
+| `frontend-prototype/V7.1 Dashboard.html` | cache-bust `app.css?v=14` → `?v=15` |
+| `docs/v71/design_handoff/chat1.md` | 디자인 측 대화 갱신 |
+
+다른 파일 변경 없음 (shell.js / pages / mocks 모두 동일).
+
+**검증**: 사용자가 "검토 결과 다 제대로 구현된 것 같다"로 디자인 승인.
+
+**commit**: `e37fb0f` / **tag**: `v71-p51-hotfix-hamburger`
+
+---
+
+### P5.2: Vite + React + TS bootstrap (완료, 2026-04-27)
+
+**참조**: `frontend/HANDOFF.md §7` (즉시 시작하는 법), `docs/v71/CLAUDE_DESIGN_PROMPT.md §11` (빌드 + 의존성), 12 §2.4 (Nginx 정합), PRD Patch #3 (path_type 박스 속성)
+
+**디렉토리 분리**
+
+```
+frontend/                     ← Production target (Vite + React + TS) -- 신규
+frontend-prototype/           ← Claude Design vanilla JS (P5.1, 검토 완료)
+```
+
+`git mv frontend/ → frontend-prototype/`로 vanilla JS 산출물 이동. 기존 `frontend/CLAUDE_DESIGN_HANDOFF_README.md`, `HANDOFF.md`, `MIGRATION_NOTES.md`도 함께 이동 (history 보존).
+
+**산출물 (frontend/, 25 파일)**
+
+| 분류 | 파일 | 비고 |
+|------|------|------|
+| 빌드 | `package.json`, `vite.config.ts`, `tsconfig.json`, `tsconfig.node.json`, `.gitignore`, `README.md` | npm + @carbon/react v11+ + sass + Vitest |
+| 진입점 | `index.html`, `src/main.tsx` | data-cds-theme="g100" + Pretendard CDN + #root |
+| App | `src/App.tsx` | Theme + React Router v6 + 11개 Route + AppShell layout route |
+| Shell | `src/components/shell/AppShell.tsx` | Carbon `HeaderContainer` + `Header` + `SideNav` (7 메뉴) + `Outlet` |
+| Shell | `src/components/shell/PlaceholderPage.tsx` | P5.2 stub 공통 컴포넌트 (P5.3에서 실제 구현) |
+| Pages (9) | `Login`, `LoginTotp`, `Dashboard`, `TrackedStocks`, `TrackedStockDetail`, `BoxWizard`, `Positions`, `Reports`, `Notifications`, `Settings` | 모두 placeholder. 인증 2개 + 메인 9개 |
+| Hooks | `src/hooks/useTheme.ts` | g100 → g10 → g90 → g100 cycle, localStorage persist |
+| Styles | `src/styles/main.scss`, `_pnl.scss`, `_shell.scss` | Carbon @use g100 + 한국식 손익 토큰 + AppShell layout |
+| Types | `src/types/index.ts` | **PRD Patch #3 적용** -- TrackedStock에서 path_type 제거 + summary 확장, Box.path_type 필수, Position.path_type은 box 상속 |
+| Test | `src/test/setup.ts` | Vitest + jsdom |
+
+**라우팅**
+
+| 경로 | 페이지 | Shell |
+|------|--------|-------|
+| `/login` | Login | ❌ (인증 페이지) |
+| `/login/totp` | LoginTotp | ❌ |
+| `/` | Dashboard로 redirect | ✅ |
+| `/dashboard` | Dashboard | ✅ |
+| `/tracked-stocks` | TrackedStocks | ✅ |
+| `/tracked-stocks/:id` | TrackedStockDetail | ✅ |
+| `/boxes/new` | BoxWizard | ✅ |
+| `/positions` | Positions | ✅ |
+| `/reports` | Reports | ✅ |
+| `/notifications` | Notifications | ✅ |
+| `/settings` | Settings | ✅ |
+| `*` | `/dashboard`로 redirect | ✅ |
+
+**PRD Patch #3 반영**
+
+`src/types/index.ts`:
+- `TrackedStock`: `path_type` **제거**. `TrackedStockSummary`에 `path_a_box_count`, `path_b_box_count` **추가**.
+- `Box`: `path_type: PathType` **필수**.
+- `Position`: `path_type: PathType | 'MANUAL'` 박스로부터 상속 (또는 수동).
+
+`BoxWizard.tsx` placeholder 주석에 7-step 명시:
+1. 경로 선택 (PATH_A/PATH_B) ★ Patch #3 신규
+2. 진입 전략 → 3. 가격 → 4. 비중 → 5. 손절 → 6. 확인 → 7. 저장
+
+**한국식 손익 색상 (theme별)**
+
+| 테마 | profit (수익) | loss (손실) |
+|------|--------------|-------------|
+| g100 (다크 강) | `#ee5396` (마젠타-레드, Carbon support-error 톤) | `#4589ff` (블루, Carbon support-info 톤) |
+| g90 | 동일 | 동일 |
+| g10 / white (라이트) | `#da1e28` (Carbon red 60) | `#0f62fe` (Carbon blue 60) |
+
+테마 미정의 테마(`white`)도 g10과 동일 색상 사용. `data-cds-theme` 속성에 의해 자동 적용.
+
+**다음 단계 (사용자 액션 필요)**
+
+```bash
+cd C:/K_stock_trading/frontend
+npm install              # 1회 (~3분)
+npm run typecheck        # tsc --noEmit (의존성 누락 시 실패)
+npm run dev              # http://localhost:5173 (FastAPI proxy 미실행 상태에서도 React Router 동작)
+```
+
+**P5.3 작업 범위 (다음 단계)**
+
+순서:
+1. `frontend-prototype/src/pages/dashboard.js` → `src/pages/Dashboard.tsx` JSX 변환 + Carbon 컴포넌트 직접 사용
+2. `tracked-stocks.js` (가장 복잡) → JSX + Patch #3 (종목 등록 모달 RadioButtonGroup 제거)
+3. `box-wizard.js` (6-step) → JSX + 7-step 변환 (Step 1 RadioTile 추가)
+4. `positions.js` → ExpandableTile + PnL 셀
+5. `login.js` + `notifications-settings.js` + `reports.js` 등 나머지 5 페이지
+
+데이터 source:
+- 우선 `frontend-prototype/src/mocks/index.js` 데이터를 `src/mocks/index.ts`로 이전 (TS 타입 적용 + Patch #3 형태로 변환)
+- 백엔드 P5.4 (FastAPI REST/WS) 후 TanStack Query로 실 API 교체
+
+**헌법 5원칙 자체 검증 (P5.2)**
+
+| 원칙 | 준수 |
+|------|------|
+| 1. 사용자 판단 불가침 | ✅ 사용자 결정 (Vite/npm/frontend-prototype 분리/g100/네이티브 WS) 그대로 적용. 자동 추천 UI 0 |
+| 2. NFR1 최우선 | ✅ N/A (UI 부트스트랩) |
+| 3. 충돌 금지 ★ | ✅ frontend/ 격리 (12 §2.4 Nginx 정합). V7.0 + V7.1 백엔드 영향 0. shadcn/ui / Tailwind / Lucide 0건 |
+| 4. 시스템 계속 운영 | ✅ N/A |
+| 5. 단순함 | ✅ Vite 표준 + Carbon 기본 + 단일 SCSS entry. 9 page placeholder는 PlaceholderPage 1개 컴포넌트로 통일 |
+
+---
+
+*최종 업데이트: 2026-04-27 (P5.2 -- Vite + React + TS bootstrap + AppShell + 9-page placeholder + Patch #3 적용)*

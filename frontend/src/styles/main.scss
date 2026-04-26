@@ -1,0 +1,91 @@
+// V7.1 Carbon Design System -- Korean trader theme
+//
+// Defaults to g100 (darkest). The user toggles via the header icon
+// (g100 -> g10 -> g90 -> g100); persisted to localStorage by useTheme.
+//
+// HANDOFF.md §3.2: --cds-pnl-profit / --cds-pnl-loss are Carbon-token
+// driven. We override them per Korean stock convention (red = up,
+// blue = down) -- the opposite of US.
+
+@use '@carbon/react/scss/themes';
+@use '@carbon/react/scss/theme' with (
+  $theme: themes.$g100
+);
+@use '@carbon/styles';
+
+@import './pnl';
+@import './shell';
+
+// ---------------------------------------------------------------------
+// Per-theme PnL color overrides (Korean convention).
+// Carbon's support-error / support-info already match the magenta-red
+// and blue tokens we want, but we double-pin them here so a future
+// theme upgrade doesn't silently drift to US convention.
+// ---------------------------------------------------------------------
+
+:root,
+[data-cds-theme='g100'] {
+  --cds-pnl-profit: #ee5396; // 한국식 수익 (마젠타-레드)
+  --cds-pnl-loss: #4589ff;   // 한국식 손실 (블루)
+  --cds-pnl-neutral: var(--cds-text-secondary);
+}
+
+[data-cds-theme='g90'] {
+  --cds-pnl-profit: #ee5396;
+  --cds-pnl-loss: #4589ff;
+  --cds-pnl-neutral: var(--cds-text-secondary);
+}
+
+[data-cds-theme='g10'],
+[data-cds-theme='white'] {
+  --cds-pnl-profit: #da1e28;
+  --cds-pnl-loss: #0f62fe;
+  --cds-pnl-neutral: var(--cds-text-secondary);
+}
+
+// ---------------------------------------------------------------------
+// Global type defaults.
+// ---------------------------------------------------------------------
+
+body {
+  font-family:
+    'Pretendard',
+    'IBM Plex Sans KR',
+    'IBM Plex Sans',
+    -apple-system,
+    BlinkMacSystemFont,
+    sans-serif;
+  font-feature-settings: 'tnum';
+  margin: 0;
+  background: var(--cds-background);
+  color: var(--cds-text-primary);
+}
+
+.numeric,
+.price,
+.pnl,
+.kpi-value,
+[data-numeric] {
+  font-family: 'IBM Plex Mono', monospace;
+  font-feature-settings: 'tnum';
+}
+
+// Scrollbar in dark themes (Carbon doesn't theme this by default).
+[data-cds-theme='g100'],
+[data-cds-theme='g90'] {
+  ::-webkit-scrollbar {
+    width: 12px;
+    height: 12px;
+  }
+  ::-webkit-scrollbar-track {
+    background: var(--cds-background);
+  }
+  ::-webkit-scrollbar-thumb {
+    background: var(--cds-border-subtle);
+    border: 3px solid var(--cds-background);
+    border-radius: 6px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--cds-border-strong);
+  }
+}
