@@ -685,8 +685,8 @@ PASS 7/7 harness(es)
 | P3.3 매수 후 관리 (단계별 손절 + 분할 익절 + TS) | ✅ 완료 |
 | P3.4 평단가 관리 + V71PositionManager (in-memory) | ✅ 완료 |
 | P3.5 수동 거래 처리 (Reconciler) | ✅ 완료 |
-| P3.6 VI 처리 | 다음 |
-| P3.7 시스템 재시작 복구 | 대기 |
+| P3.6 VI 처리 (V71ViMonitor + vi_skill) | ✅ 완료 |
+| P3.7 시스템 재시작 복구 | 다음 |
 
 ---
 
@@ -1068,3 +1068,98 @@ PASS 7/7 harness(es)
 ---
 
 *최종 업데이트: 2026-04-26 (P3.5 완료)*
+
+---
+
+### P3.6: VI 처리 -- V71ViMonitor + vi_skill (완료, 2026-04-26)
+
+**참조**: 02_TRADING_RULES.md §10 (VI handling), 07_SKILLS_SPEC.md §5
+
+**산출물**
+
+| 분류 | 파일 | 비고 |
+|------|------|------|
+| 코드 | `src/core/v71/skills/vi_skill.py` | 시그니처 → 본문. Pure 함수 3개: `transition_vi_state` (4 events: VI_DETECTED/RESOLVED/RESETTLED/DAILY_RESET, NORMAL→TRIGGERED→RESUMED→NORMAL), `check_post_vi_gap` (절대값 3% 한도, gap-up/down 모두), `handle_vi_state` (state machine + decision). 100% 커버리지 |
+| 코드 | `src/core/v71/vi_monitor.py` | 시그니처 → 본문. `V71ViMonitor` (per-stock state dict + recovered_today set). `on_vi_triggered`/`on_vi_resolved` (idempotent). `is_vi_active`/`is_vi_recovered_today` 쿼리 (BuyExecutorContext와 MarketContext.is_vi_recovered_today wires). `_auto_resettle` (RESUMED→NORMAL + recovered_today 플래그). `reset_daily` (09:00 일괄 리셋). `make_sync_dispatcher` (V7.0 WebSocket 브리지). 94.5% 커버리지 |
+| 검증 | `scripts/harness/test_coverage_enforcer.py` | THRESHOLDS에 P3.6 모듈 2개 추가 |
+| 테스트 | `tests/v71/test_vi_skill.py` (신규) | 25 PASS. transition 합법/불법 매트릭스 + DAILY_RESET 모든 상태 + 갭 검증 (under/at/over/down/invalid) + handle (4 events) + public surface |
+| 테스트 | `tests/v71/test_v71_vi_monitor.py` (신규) | 14 PASS. 상태 쿼리 + trigger 알림 + idempotent + full cycle (recovered_today set) + on_vi_resumed callback + callback exception isolation + drop unmatched + reset_daily + sync dispatcher + flag gate |
+
+**검증 결과**
+
+```
+$ pytest tests/v71/ --no-cov -q
+380 passed in ~1s
+  - test_feature_flags                24
+  - test_v71_constants                29
+  - test_box_state_machine            49
+  - test_box_entry_skill              35
+  - test_box_manager                  38
+  - test_v71_buy_executor             18
+  - test_v71_box_entry_detector        8
+  - test_v71_box_strategies            5
+  - test_exit_calc_skill              36
+  - test_v71_trailing_stop             5
+  - test_v71_exit_calculator           6
+  - test_v71_exit_executor            12
+  - test_avg_price_skill              20
+  - test_v71_position_manager         21
+  - test_reconciliation_skill         23
+  - test_v71_reconciler               12
+  - test_vi_skill                     25  (P3.6 신규)
+  - test_v71_vi_monitor               14  (P3.6 신규)
+
+$ python scripts/harness/run_all.py --with-7
+PASS 7/7 harness(es)
+  - skills/vi_skill.py     100.0%
+  - vi_monitor.py           94.5%
+```
+
+**핵심 룰 핀 (테스트 강제)**
+
+| 룰 | 출처 | 테스트 |
+|----|------|--------|
+| 상태 머신: NORMAL → TRIGGERED → RESUMED → NORMAL | §10.3 | `test_normal_to_triggered`, `test_triggered_to_resumed`, `test_resumed_to_normal_on_resettle` |
+| 불법 전이는 ValueError | §10.3 | `test_illegal_raises` (6 케이스) |
+| DAILY_RESET 모든 상태 → NORMAL | §10.6 (익일 09:00) | `test_daily_reset_returns_normal_from_any_state` (3 케이스) |
+| 갭 3% 한도 (절대값 양/음 모두 abort) | §10.4 Step 3 | `test_gap_at_3pct_aborts`, `test_gap_down_3pct_also_aborts` |
+| RESETTLED만 block_new_entries_today=True | §10.6 | `test_resettled_sets_block_flag` |
+| DAILY_RESET은 block flag 안 set | §10.6 | `test_daily_reset_does_not_set_block_flag` |
+| VI 발동 시 손절/익절 일시 정지 (`is_vi_active`) | §10.5 | `test_state_after_trigger` (BuyExecutorContext.is_vi_active wires) |
+| VI 발동 idempotent (중복 알림 차단) | §10.2 | `test_idempotent_when_already_triggered` |
+| Full cycle 후 `vi_recovered_today=True` (당일 신규 진입 금지) | §10.6 | `test_full_cycle_sets_recovered_today` |
+| `on_vi_resumed` callback (즉시 재평가, NFR1 < 1초) | §10.5 | `test_resume_fires_on_vi_resumed_callback` |
+| Callback exception은 auto_resettle 차단 안 함 | 헌법 4 | `test_callback_exception_does_not_block_auto_resettle` |
+| Resolved without trigger는 무시 | §10.2 (defensive) | `test_resume_without_prior_trigger_is_dropped` |
+| `reset_daily` 모든 플래그 리셋 | §10.6 (익일 09:00) | `test_reset_clears_recovered_today` |
+| Sync dispatcher (V7.0 WebSocket 브리지) | §10.2 | `test_dispatcher_routes_flag_*` |
+| No running loop은 swallow (V7.0 pipeline crash 방지) | 헌법 4 | `test_dispatcher_no_running_loop_logs_only` |
+
+**헌법 5원칙 자체 검증**
+
+| 원칙 | 준수 |
+|------|------|
+| 1. 사용자 판단 불가침 | ✅ VI 룰 그대로 (사용자 결정 §10.7 봉 그대로 판정 + §10.6 당일 진입 금지). 09:05 fallback에서만 vi_recovered_today 무시 (§10.9 PRD patch #1) |
+| 2. NFR1 최우선 | ✅ vi_skill pure 동기. on_vi_resumed callback이 즉시 재평가 트리거 (NFR1 < 1초 보장 wiring) |
+| 3. 충돌 금지 ★ | ✅ V71ViMonitor + ViMonitorContext + OnViResumedFn 모두 v71/ 격리. Notifier/Clock는 P3.2 BuyExecutor와 동일 Protocol 재사용 |
+| 4. 시스템 계속 운영 | ✅ idempotent handlers (중복 이벤트 무시) + callback exception isolation + sync dispatcher가 loop 없을 때 swallow. 자동 정지 코드 0 |
+| 5. 단순함 | ✅ skill 3개 pure 함수. monitor는 dict 기반 in-memory + 명확한 lifecycle (trigger → resolve → auto_resettle → reset_daily) |
+
+**P3.7 핸드오프 항목**
+
+- `V71RestartRecovery`: 7-Step 복구 시퀀스 (§13)
+  - Step 0: 안전 모드 진입 (신규 매수/박스 등록 차단)
+  - Step 1: 외부 시스템 연결 (DB, Kiwoom OAuth, WebSocket, Telegram)
+  - Step 2: 미완료 주문 모두 취소
+  - Step 3: V71Reconciler.reconcile() 호출 (포지션 정합성)
+  - Step 4: 시세 재구독
+  - Step 5: 박스 진입 조건 재평가 (지나간 트리거 무효, 옵션 A)
+  - Step 6: 안전 모드 해제
+  - Step 7: 복구 보고서 (텔레그램 CRITICAL)
+- `V71ViMonitor.reset_daily()` 09:00 호출 wiring (RestartRecovery 또는 별도 스케줄러)
+- 재시작 빈도 모니터링 (1시간 5회+ 시 CRITICAL)
+- 안전 모드 동안 BuyExecutor 차단 wiring
+
+---
+
+*최종 업데이트: 2026-04-26 (P3.6 완료)*
