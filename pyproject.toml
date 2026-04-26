@@ -72,6 +72,21 @@ ignore = [
 [tool.ruff.isort]
 known-first-party = ["src"]
 
+# Phase 2 stubs raise NotImplementedError after gating on a feature flag,
+# so __init__ parameters look "unused" until Phase 3 wires the body in.
+# Re-enable ARG when each module's implementation lands.
+[tool.ruff.per-file-ignores]
+"src/core/v71/box/*.py" = ["ARG001", "ARG002"]
+"src/core/v71/strategies/*.py" = ["ARG001", "ARG002"]
+"src/core/v71/exit/*.py" = ["ARG001", "ARG002"]
+"src/core/v71/position/*.py" = ["ARG001", "ARG002"]
+"src/core/v71/skills/*.py" = ["ARG001", "ARG002"]
+"src/core/v71/path_manager.py" = ["ARG001", "ARG002"]
+"src/core/v71/vi_monitor.py" = ["ARG001", "ARG002"]
+"src/core/v71/event_logger.py" = ["ARG001", "ARG002"]
+"src/core/v71/restart_recovery.py" = ["ARG001", "ARG002"]
+"src/core/v71/audit_scheduler.py" = ["ARG001", "ARG002"]
+
 # ========================
 # MyPy 설정 (타입 체크)
 # ========================

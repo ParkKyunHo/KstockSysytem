@@ -260,6 +260,71 @@ PASS 7/7 harness(es)
 
 **검증**: pytest 25/25 PASS, harnesses 7/7 PASS.
 
+### P2.4 (잔여) + P2.5: 핵심 클래스 시그니처 + Feature Flag 가드 (완료)
+
+**참조**: 04_ARCHITECTURE.md §5.3, 02_TRADING_RULES.md §3~§13
+
+15개 V7.1 핵심 클래스/모듈 시그니처. 각 클래스의 `__init__`은 (1) 해당 Feature Flag로 `require_enabled()` 가드 호출, (2) `NotImplementedError` 발생. Phase 3에서 본문 채움.
+
+| 모듈 | 클래스 | Feature Flag | 구현 Phase |
+|------|--------|--------------|-----------|
+| `box/box_manager.py` | `V71BoxManager` | `v71.box_system` | P3.1 |
+| `box/box_entry_detector.py` | `V71BoxEntryDetector` | `v71.box_system` | P3.2 |
+| `box/box_state_machine.py` | `TrackedStatus`, `BoxStatus`, transitions | `v71.box_system` | P3.1 |
+| `strategies/v71_box_pullback.py` | `V71BoxPullbackStrategy` | `v71.pullback_strategy` | P3.2 |
+| `strategies/v71_box_breakout.py` | `V71BoxBreakoutStrategy` | `v71.breakout_strategy` | P3.2 |
+| `exit/exit_calculator.py` | `V71ExitCalculator` | `v71.exit_v71` | P3.3 |
+| `exit/trailing_stop.py` | `V71TrailingStop` | `v71.exit_v71` | P3.3 |
+| `exit/exit_executor.py` | `V71ExitExecutor` | `v71.exit_v71` | P3.3 |
+| `position/v71_position_manager.py` | `V71PositionManager` | `v71.position_v71` | P3.4 |
+| `position/v71_reconciler.py` | `V71Reconciler` | `v71.reconciliation_v71` | P3.5 |
+| `path_manager.py` | `PathManager` | `v71.box_system` | P3.2 |
+| `vi_monitor.py` | `V71ViMonitor` | `v71.vi_monitor` | P3.6 |
+| `event_logger.py` | `EventLogger` | (인프라, 가드 없음) | Phase 3 |
+| `restart_recovery.py` | `V71RestartRecovery` | `v71.restart_recovery` | P3.7 |
+| `audit_scheduler.py` | `AuditScheduler` | `v71.monthly_review` | Phase 4 |
+
+**Feature Flag 동작 검증**:
+
+```
+$ python -c "from src.core.v71.box.box_manager import V71BoxManager; V71BoxManager(db_context=None)"
+RuntimeError: Feature flag 'v71.box_system' is disabled.
+Enable in config/feature_flags.yaml or set V71_FF__V71__BOX_SYSTEM=true.
+```
+
+→ 모든 V7.1 신규 모듈은 import OK + Flag 가드가 `__init__` 시점에 차단. Phase 3 통합 시점에 플래그 활성화.
+
+### 헌법 5원칙 자체 검증 (Phase 2 종료 시점)
+
+| 원칙 | 준수 |
+|------|------|
+| 1. 사용자 판단 불가침 | ✅ 자동 추천 0, 시그니처 모두 사용자가 PRD에서 명시 |
+| 2. NFR1 최우선 | ✅ N/A (시그니처 단계) |
+| 3. **충돌 금지 ★** | ✅ 모든 v71 클래스에 V71 접두사. Harness 1 PASS. V7.0 인프라(candle_builder.Candle 등) 그대로 import. V7.0 → V7.1 import 0 |
+| 4. 시스템 계속 운영 | ✅ stub은 fail-fast로 안내, Flag 가드도 명확한 RuntimeError |
+| 5. 단순함 우선 | ✅ Phase 2는 시그니처만, 본문은 Phase 3 |
+
+### Phase 2 완료 (M2 마일스톤)
+
+```
+$ pytest tests/v71/ --no-cov -q
+49 passed (test_feature_flags 24 + test_v71_constants 25)
+
+$ python scripts/harness/run_all.py --with-7
+PASS 7/7 harness(es)
+
+$ python -c "import src.core.v71; ..."
+all V7.1 packages + 15 modules + 8 skills import OK
+```
+
+산출물 (Phase 2 누적):
+- 23 모듈 (8 skills + 15 core classes + v71_constants)
+- 17 DB migrations (UP+DOWN paired, FK-ordered)
+- 49 단위 테스트
+- 모든 신규 클래스에 Feature Flag 가드
+
+다음: **Phase 3 (거래 룰 구현)**. 가장 중요한 단계 (10~15일 예상).
+
 ### Phase 0 후속: pre-commit 활성화 시 발견 사항
 
 | 이슈 | 원인 | 조치 |
