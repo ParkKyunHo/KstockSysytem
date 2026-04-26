@@ -184,6 +184,34 @@ ruff             Passed
 - Windows Scheduled Task "OpenClaw Gateway" 비활성/삭제
 - Telegram 봇 (`@stock_Albra_bot`) 정리 (선택)
 
+### P1.2: 백테스트 시스템 삭제 (완료)
+
+**참조**: 05_MIGRATION_PLAN.md §3.3
+
+**영향 분석**: `grep -ri "backtest|backtest_modules" src/` → **0건** (백테스트는 항상 src/ 외부에 있음)
+
+**삭제 항목** (git + 디스크)
+
+| 항목 | 종류 | 비고 |
+|------|------|------|
+| `scripts/backtest/` | 디렉토리 (113 파일, 11 서브 디렉토리) | daily_equity_curve, december_pipeline, ema_split_buy, leading_stock_analysis, sniper_trap_*.py, v7_intraday |
+| `run_backtest_ui.py` | 루트 진입 스크립트 | 제거 |
+| `docs/BACKTEST_GUIDE.md` | 가이드 문서 | 제거 |
+| `data/backtest/`, `data/cache/` | V7.0 백테스트 캐시 | 디스크 정리 (이미 .gitignored) |
+| `3m_data/` | 3분봉 .xls 캐시 (57 파일, 128 MB) | 디스크 정리 (이미 .gitignored) |
+| `results/` | 백테스트 결과 디렉토리 | 디스크 정리 (이미 .gitignored) |
+| 루트 `*.csv` (3mintest, testday, past1000*) | 백테스트 입력 캐시 | 디스크 정리 |
+| 루트 `*.xlsx` (ema_split_buy_*, full_3min_backtest_*, improved_entry_backtest_*) | 백테스트 결과 | 디스크 정리 |
+| `__pycache__/` (scripts/backtest 내) | 컴파일 캐시 | 디스크 정리 |
+
+**git 영향**: 56개 파일 삭제 (트래킹 파일 기준)
+
+**CLAUDE.md 변경**:
+- Part 3.6 "백테스트" 섹션을 V7.1에서 폐기됨 안내로 축약
+- Part 4.1 "문서" 표에서 `docs/BACKTEST_GUIDE.md` 행 제거
+
+**보존 (V7.1 검증 방식)**: 페이퍼 트레이드 (Phase 7) + 단위 테스트 (>=90% coverage). 별도 백테스트 인프라 불요.
+
 ---
 
 ## 다음 작업 (Phase 1 잔여)

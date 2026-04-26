@@ -148,23 +148,9 @@ powershell -ExecutionPolicy Bypass -File "C:\K_stock_trading\scripts\deploy\chec
 | 신호 탐지 | 09:05~15:20 |
 | NXT 청산 | 08:00~20:00 |
 
-## 3.6 백테스트
+## 3.6 백테스트 (V7.1에서 폐기)
 
-> **필독**: 백테스트 작업 전 반드시 `docs/BACKTEST_GUIDE.md` 참조
-
-| 핵심 설정 | 값 |
-|----------|-----|
-| API 속도 | 초당 4.5회 (실전), 0.33회 (모의) |
-| 병렬 워커 | 10~15개 권장 |
-| 캐시 경로 | `data/backtest/v7_purple_3min/cache/` |
-
-```powershell
-# 기본 실행 (캐시 사용)
-"C:\Program Files\Python311\python.exe" -m scripts.backtest.v7_intraday.main --use-cache --parallel 15
-
-# 데이터 수집 포함
-"C:\Program Files\Python311\python.exe" -m scripts.backtest.v7_intraday.main --fetch --start 2025-12-01 --parallel 15
-```
+V7.1은 룰 기반 시스템(02_TRADING_RULES.md)으로, 별도의 백테스트 인프라를 사용하지 않습니다. 검증은 페이퍼 트레이드(Phase 7)와 단위 테스트(>=90% 커버리지)로 수행합니다. 기존 백테스트 코드는 P1.2에서 제거되었습니다.
 
 ---
 
@@ -176,7 +162,6 @@ powershell -ExecutionPolicy Bypass -File "C:\K_stock_trading\scripts\deploy\chec
 |------|------|
 | `docs/ARCHITECTURE.md` | **시스템 아키텍처** (모듈 구조, 데이터 흐름, 리팩토링 현황) |
 | `docs/TECHNICAL_DOCUMENTATION.md` | 시스템 전체 상세 |
-| `docs/BACKTEST_GUIDE.md` | **백테스트 필독** (API 제한, 병렬처리, 오류해결) |
 | `docs/CHANGELOG.md` | 버전 히스토리 |
 | `docs/DEPLOYMENT_GUIDE.md` | 배포 가이드 |
 | `docs/v71/01_PRD_MAIN.md` | **V7.1 신규 시스템 PRD** (현재 작업의 단일 진실 원천) |
