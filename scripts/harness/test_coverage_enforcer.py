@@ -58,9 +58,20 @@ THRESHOLDS = {
     "src/core/v71/vi_monitor.py": 90.0,
     # P3.7: V71RestartRecovery (7-step recovery).
     "src/core/v71/restart_recovery.py": 90.0,
+    # P4.1: notification severity tiers + queue + circuit breaker
+    # + V71NotificationService (Notifier Protocol impl).
+    # NOTE: PostgresNotificationRepository lives in a dedicated module
+    # (v71_postgres_notification_repository.py) and is excluded -- it
+    # is a thin SQL adapter exercised by Phase 5 integration tests, not
+    # by these unit tests.
+    "src/core/v71/skills/notification_skill.py": 90.0,
+    "src/core/v71/notification/v71_notification_repository.py": 90.0,
+    "src/core/v71/notification/v71_circuit_breaker.py": 90.0,
+    "src/core/v71/notification/v71_notification_queue.py": 90.0,
+    "src/core/v71/notification/v71_notification_service.py": 90.0,
 }
-# Phase 3 (trading-rule implementation) thresholds complete.
-# Next: notification skill (P4.1), report generator (P6).
+# Phase 4 P4.1 (notification grading) thresholds added.
+# Next: telegram commands (P4.2), daily summary (P4.3), monthly review (P4.4).
 
 
 def _run_pytest() -> int:

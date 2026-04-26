@@ -91,7 +91,30 @@ class V71Constants:
     """Default REST polling cadence."""
 
     NOTIFICATION_RATE_LIMIT_MINUTES: Final[int] = 5
-    """Per-stock notification cooldown (CRITICAL severity bypasses)."""
+    """Per-stock notification cooldown (CRITICAL severity bypasses).
+
+    See 02_TRADING_RULES.md §9.5.
+    """
+
+    # ---- §9 Notification Circuit Breaker (P4.1) ----
+    NOTIFICATION_CIRCUIT_BREAKER_FAILURE_THRESHOLD: Final[int] = 3
+    """3 consecutive failures -> Circuit OPEN (02_TRADING_RULES.md §9.4)."""
+
+    NOTIFICATION_CIRCUIT_BREAKER_TIMEOUT_SECONDS: Final[int] = 30
+    """OPEN -> HALF_OPEN after 30s (02_TRADING_RULES.md §9.4)."""
+
+    NOTIFICATION_CRITICAL_RETRY_COUNT: Final[int] = 3
+    """CRITICAL send failures retried 3 times (02_TRADING_RULES.md §9.3)."""
+
+    NOTIFICATION_CRITICAL_RETRY_DELAY_SECONDS: Final[int] = 5
+    """5-second pause between CRITICAL retries (02_TRADING_RULES.md §9.3)."""
+
+    NOTIFICATION_MEDIUM_LOW_EXPIRY_MINUTES: Final[int] = 5
+    """MEDIUM/LOW notifications discarded after 5 minutes if Circuit OPEN
+    blocked delivery (02_TRADING_RULES.md §9.4)."""
+
+    NOTIFICATION_WORKER_INTERVAL_SECONDS: Final[float] = 0.5
+    """Worker dequeue cadence -- balance latency vs DB load."""
 
     # ---- §13 Restart recovery ----
     RESTART_FREQUENCY_WARN_WINDOW_HOURS: Final[int] = 1

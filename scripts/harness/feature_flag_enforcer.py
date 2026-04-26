@@ -18,7 +18,19 @@ from pathlib import Path
 
 from _common import SRC_V71, HarnessResult, iter_v71_python_files
 
-EXEMPT_PARTS = ("__init__.py", "/skills/", "constants", "v71_constants")
+EXEMPT_PARTS = (
+    "__init__.py",
+    "/skills/",
+    "constants",
+    "v71_constants",
+    # Building blocks composed by V71NotificationQueue / V71NotificationService
+    # (which themselves carry require_enabled guards). Adding the gate to a
+    # plain repository / state machine module would be redundant and
+    # complicate test setup.
+    "v71_circuit_breaker",
+    "v71_notification_repository",
+    "v71_postgres_notification_repository",
+)
 GUARD_TOKENS = ("feature_flags.is_enabled", "is_enabled(", "require_enabled(")
 
 

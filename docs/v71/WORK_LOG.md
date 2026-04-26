@@ -1451,4 +1451,123 @@ V7.1 거래 룰 코어가 모두 테스트로 핀(pin)되어 있으므로, Phase
 
 ---
 
-*최종 업데이트: 2026-04-26 (Phase 4 핸드오프 준비 완료)*
+## Phase 4: 알림 시스템 (진행 중)
+
+### P4.1: 알림 등급 시스템 -- V71NotificationService + V71NotificationQueue + V71CircuitBreaker (완료, 2026-04-26)
+
+**참조**: 02_TRADING_RULES.md §9 (4 등급 + 우선순위 큐 + Circuit Breaker + 빈도 제한 + 표준 메시지), 07_SKILLS_SPEC.md §6 (notification_skill), 03_DATA_MODEL.md §3.4 (notifications 테이블), 12_SECURITY.md §3.4 (텔레그램 권한)
+
+**PRD 변경 사항 (patch #2)**
+
+PRD 05_MIGRATION_PLAN.md §6.2은 P4.1 산출물을 `src/notification/severity.py` 등 V7.0 위치에 두는 것으로 명시. 사용자 권고안 + 헌법 3 (격리) 정합을 위해 모든 P4.1 신규 모듈을 `src/core/v71/notification/`으로 이동. PRD §6.2와 13_APPENDIX 변경 이력은 후속 작업으로 갱신 예정 (PRD patch #2).
+
+**위치 결정 매트릭스 (사용자 권고안 4건 채택)**
+
+| 항목 | 결정 | 이유 |
+|------|------|------|
+| V7.1 알림 패키지 위치 | `src/core/v71/notification/` (신규) | P3 패턴(`v71/box/`, `v71/exit/`, `v71/position/`) + 헌법 3 격리. PRD patch #2 |
+| DB 영속화 시점 | 즉시 PostgreSQL wiring (마이그레이션 014) | §9.3 CRITICAL 큐 영구 보관 + §13.1 재시작 복구 wiring |
+| V7.0 TelegramBot 재사용 | 단방향 import (callable로 주입) | parse_mode 가드 자동 상속 + 헌법 5 (단순함) |
+| Web dispatcher Phase 4 범위 | P4.1: deferred queue (channel="BOTH" enqueue만), Phase 5: WebSocket push wiring | §9.2 (CRITICAL/HIGH 동시 표시) 정합 |
+
+**산출물**
+
+| 분류 | 파일 | 비고 |
+|------|------|------|
+| 코드 | `src/core/v71/v71_constants.py` | `NOTIFICATION_CIRCUIT_BREAKER_FAILURE_THRESHOLD = 3`, `NOTIFICATION_CIRCUIT_BREAKER_TIMEOUT_SECONDS = 30`, `NOTIFICATION_CRITICAL_RETRY_COUNT = 3`, `NOTIFICATION_CRITICAL_RETRY_DELAY_SECONDS = 5`, `NOTIFICATION_MEDIUM_LOW_EXPIRY_MINUTES = 5`, `NOTIFICATION_WORKER_INTERVAL_SECONDS = 0.5` 추가 |
+| 코드 | `src/core/v71/notification/__init__.py` (신규) | 패키지 entry + export 8개 |
+| 코드 | `src/core/v71/notification/v71_notification_repository.py` (신규) | `NotificationRepository` Protocol + `InMemoryNotificationRepository` (단위 테스트 + bootstrap impl) + `NotificationRecord`/`NotificationStatus` dataclass + `new_notification_id()`. 94.2% 커버리지 |
+| 코드 | `src/core/v71/notification/v71_postgres_notification_repository.py` (신규) | `PostgresNotificationRepository` -- thin SQL adapter (Phase 5 통합 테스트로 검증). `# pragma: no cover` 마킹 + Harness 7 THRESHOLDS 제외 |
+| 코드 | `src/core/v71/notification/v71_circuit_breaker.py` (신규) | `V71CircuitBreaker` + `V71CircuitState` (CLOSED/OPEN/HALF_OPEN). 3회 실패 → OPEN, 30초 후 → HALF_OPEN, probe 성공 → CLOSED. CircuitState 명칭은 V7.0 `src/api/client.py`와 충돌 → `V71CircuitState`로 prefix (Harness 1). 98.1% 커버리지 |
+| 코드 | `src/core/v71/notification/v71_notification_queue.py` (신규) | `V71NotificationQueue` + `EnqueueOutcome` -- Repository 위에 우선순위/만료/빈도 제한 추가. CRITICAL은 빈도 제한 우회. CRITICAL/HIGH는 channel="BOTH" + expires_at=None, MEDIUM/LOW는 channel="TELEGRAM" + 5분 만료. Feature flag: `v71.notification_v71`. 98.5% 커버리지 |
+| 코드 | `src/core/v71/notification/v71_notification_service.py` (신규) | `V71NotificationService` -- Notifier Protocol 구현체 (P3 14곳 호출 wires). async worker (`start`/`stop`/`run_once`/`_worker_loop`). `_dispatch_standard` (HIGH/MEDIUM/LOW) + `_dispatch_critical` (5초 x 3회 재시도, 모두 실패 시 PENDING 영구 보관). `_maybe_dispatch_web` (channel="BOTH" 팬아웃, 실패 시 텔레그램 메인 path 영향 없음). 96.7% 커버리지 |
+| 코드 | `src/core/v71/skills/notification_skill.py` | 시그니처 → 본문. `Severity`/`EventType` Enum 확장 (CRITICAL/HIGH/MEDIUM/LOW 매핑), `NotificationRequest`/`NotificationResult`, `severity_to_priority` (1~4), `make_rate_limit_key` (`{event}:{stock or '_'}`), 8개 표준 메시지 포맷터 (stop_loss/buy/profit_take/manual_trade/vi_triggered/box_entry_imminent/system_restart/websocket_disconnected -- 02 §9.6), `send_notification` (NotificationRequest → queue.enqueue thin wrapper). 100% 커버리지 |
+| 검증 | `scripts/harness/test_coverage_enforcer.py` | THRESHOLDS에 P4.1 5개 모듈 추가 (PostgresNotificationRepository는 제외) |
+| 검증 | `scripts/harness/feature_flag_enforcer.py` | `EXEMPT_PARTS`에 `v71_circuit_breaker`/`v71_notification_repository`/`v71_postgres_notification_repository` 추가 (V71NotificationQueue + Service가 entry-point 역할이므로 building blocks는 면제) |
+| 테스트 | `tests/v71/test_notification_skill.py` (신규) | 24 PASS. severity_to_priority (7) + make_rate_limit_key (4) + 8개 formatter (9) + send_notification 큐 통합 (4) |
+| 테스트 | `tests/v71/test_v71_notification_repository.py` (신규) | 19 PASS. insert (2) + fetch_next_pending priority/FIFO/skip-expired/critical-never-expire/skip-non-pending (6) + mark_sent/mark_failed (4) + find_recent_by_rate_limit_key (4) + expire_stale (2) + snapshot (1) |
+| 테스트 | `tests/v71/test_v71_circuit_breaker.py` (신규) | 12 PASS. construction (3) + CLOSED→OPEN (3) + OPEN→HALF_OPEN→CLOSED/OPEN (5) + CLOSED+success (1) |
+| 테스트 | `tests/v71/test_v71_notification_queue.py` (신규) | 19 PASS. feature flag gate (2) + enqueue shape (5) + rate limit (7) + consumer side (5) |
+| 테스트 | `tests/v71/test_v71_notification_service.py` (신규) | 22 PASS. construction (2) + Notifier Protocol surface (3) + run_once standard (4) + CRITICAL retry (4) + Circuit integration (2) + web dispatch (3) + worker lifecycle (3 + 1 fault tolerance) |
+
+**검증 결과**
+
+```
+$ pytest tests/v71/ --no-cov -q
+494 passed in ~1.3s
+  - 기존 P3 테스트 398 PASS
+  - 신규 P4.1 테스트 96 PASS (24 + 19 + 12 + 19 + 22)
+
+$ python scripts/harness/run_all.py --with-7
+PASS 7/7 harness(es)
+  - skills/notification_skill.py                      100.0%
+  - notification/v71_notification_repository.py        94.2%
+  - notification/v71_circuit_breaker.py                98.1%
+  - notification/v71_notification_queue.py             98.5%
+  - notification/v71_notification_service.py           96.7%
+  - notification/v71_postgres_notification_repository.py  (excluded; integration test)
+```
+
+**핵심 룰 핀 (테스트 강제)**
+
+| 룰 | 출처 | 테스트 |
+|----|------|--------|
+| Severity → priority: CRITICAL=1, HIGH=2, MEDIUM=3, LOW=4 | §9.3 | `test_critical_is_one`, `test_strict_ordering` |
+| Channel 결정: CRITICAL/HIGH → BOTH, MEDIUM/LOW → TELEGRAM | §9.2 | `test_critical_channel_both_no_expiry`, `test_medium_channel_telegram_with_expiry` |
+| Expires_at: CRITICAL/HIGH None, MEDIUM/LOW now+5min | §9.4 | `test_critical_channel_both_no_expiry`, `test_medium_channel_telegram_with_expiry` |
+| 우선순위 큐 ORDER BY priority ASC, FIFO within priority | §9.3 | `test_priority_order`, `test_fifo_within_priority`, `test_next_pending_priority_order` |
+| CRITICAL/HIGH는 만료 없음 (`expires_at` 무시) | §9.4 | `test_critical_never_expires`, `test_expires_only_medium_low` |
+| MEDIUM/LOW만 expire_stale로 EXPIRED 전이 | §9.4 | `test_expires_only_medium_low`, `test_idempotent` |
+| 5분 빈도 제한 윈도 (CRITICAL 우회) | §9.5 | `test_high_within_window_suppressed`, `test_window_expiry_lets_through`, `test_critical_bypasses_rate_limit` |
+| 빈도 제한 키 분리: 다른 키는 독립 | §9.5 | `test_distinct_keys_independent`, `test_distinct_per_stock` |
+| Circuit Breaker 3회 실패 → OPEN | §9.4 | `test_threshold_trips_open` |
+| Circuit OPEN 30초 후 → HALF_OPEN | §9.4 | `test_open_to_half_open_after_timeout` |
+| HALF_OPEN probe 성공 → CLOSED | §9.4 | `test_half_open_success_returns_to_closed` |
+| HALF_OPEN probe 실패 → OPEN (timer 재시작) | §9.4 | `test_half_open_failure_returns_to_open_with_new_timer` |
+| Circuit OPEN 시 dispatch 차단 (CRITICAL 포함) | §9.4 | `test_circuit_open_skips_dispatch` |
+| CRITICAL 발송 실패 시 5초 후 3회 재시도 | §9.3 | `test_critical_third_attempt_succeeds`, `test_critical_all_retries_fail_stays_pending` |
+| CRITICAL 모든 재시도 실패 후 PENDING 영구 보관 | §9.4 | `test_critical_all_retries_fail_stays_pending` (revert_to_pending=True) |
+| HIGH 실패는 PENDING 복귀 (재시도) | §9.4 | `test_high_failure_reverts_to_pending` |
+| MEDIUM/LOW 실패는 FAILED 종결 (5분 후 폐기) | §9.4 | `test_medium_failure_terminal` |
+| Web dispatcher 실패는 텔레그램 메인 path 영향 없음 | §9.2 | `test_web_exception_does_not_block_telegram` |
+| Worker는 step 예외 swallow + 계속 polling | 헌법 4 | `test_worker_swallows_step_exceptions` |
+| parse_mode 사용 안 함 (plain text) | CLAUDE.md 1.1 | (V7.0 TelegramBot 가드 + V71NotificationService._render_text는 plain string 합성) |
+
+**§9.3 / §9.5 빈도 제한 정밀 검증**
+
+`test_critical_bypasses_rate_limit`: CRITICAL은 같은 (event_type, stock_code) + 같은 rate_limit_key를 5초 내 5번 연속 enqueue해도 5건 모두 accepted (빈도 제한 우회).
+
+`test_high_within_window_suppressed`: HIGH는 1차 enqueue 후 5분 내 같은 키로 다시 enqueue → SUPPRESSED + reason="RATE_LIMIT".
+
+`test_window_expiry_lets_through`: 같은 키라도 6분 후 다시 enqueue → ACCEPTED.
+
+**Notifier Protocol wiring 검증**
+
+P3 14곳에서 `await self._ctx.notifier.notify(severity=..., event_type=..., stock_code=..., message=..., rate_limit_key=...)` 호출 패턴이 V71NotificationService.notify와 정합. P4.1 단위 테스트 `test_notify_enqueues` + `test_notify_with_explicit_key` + `test_notify_silently_swallows_suppression`로 확인.
+
+**헌법 5원칙 자체 검증**
+
+| 원칙 | 준수 |
+|------|------|
+| 1. 사용자 판단 불가침 | ✅ 사용자 박스/거래 룰에서 발생한 이벤트를 그대로 알림으로 전환. 자동 추천 0. CRITICAL/HIGH는 우선 보장, MEDIUM/LOW는 빈도 제한으로 노이즈 차단 |
+| 2. NFR1 최우선 | ✅ Notifier.notify는 enqueue만 (DB INSERT 1번). 실제 텔레그램 발송은 worker가 비동기. 거래 path latency 영향 < 1ms |
+| 3. 충돌 금지 ★ | ✅ V71 접두사 (V71CircuitBreaker, V71CircuitState, V71NotificationQueue, V71NotificationService). V71CircuitState는 V7.0 `src/api/client.py`의 CircuitState와 충돌 회피. v71/notification/ 패키지 격리. V7.0 → V7.1 import 0. Harness 1/2/6 PASS |
+| 4. 시스템 계속 운영 | ✅ Circuit OPEN 시에도 큐는 작동 (CRITICAL/HIGH 영구 보관). Worker는 step 예외 swallow + 계속 polling. CRITICAL retry 실패도 PENDING 보존. 자동 정지 코드 0 |
+| 5. 단순함 | ✅ Repository Protocol + 2 구현체 (in-memory + Postgres). CB는 1개 FSM. Service는 enqueue + worker + dispatch. CRITICAL/standard 분기는 명시적. dependency cycle 없음 (Harness 2 PASS) |
+
+**P4.2 핸드오프 항목**
+
+- `V71NotificationService` instance를 운영 bootstrap에서 생성하고 P3 14개 호출지점의 `Notifier`로 wire (BuyExecutorContext.notifier, ExitExecutorContext.notifier, ViMonitorContext.notifier, ReconcilerContext.notifier, RecoveryContext.notifier)
+- `PostgresNotificationRepository` 통합: bootstrap 시 SQLAlchemy AsyncSession 어댑터로 `execute(sql, *params) -> rows` callable 작성 (asyncpg/SQLAlchemy 둘 다 지원)
+- `telegram_send`: V7.0 `TelegramBot.send_message`를 lambda로 wrap하여 주입 (parse_mode 가드 자동 상속)
+- Phase 5 wiring: Web dispatcher (`web_dispatch`) -- 대시보드 WebSocket push로 channel="BOTH" 레코드 fan-out
+- P4.2 텔레그램 명령어 13개: V71NotificationQueue + V71PositionManager + V71BoxManager 사용한 read-only 응답 + `/stop`/`/resume`/`/cancel` 안전 모드 토글
+- `audit_scheduler.py` (P2.5에서 시그니처 작성됨) 본문: 매월 1일 09:00 트리거 → P4.4 monthly_review
+
+**관찰: PRD 시그니처와 실제 구현 차이**
+
+`07_SKILLS_SPEC.md §6.2`의 `send_notification(request, *, db_context, telegram_client, web_dispatcher)` 시그니처는 P2.3 시점 stub. 실제 P4.1 구현은 V71NotificationService가 owner이므로 `send_notification`은 thin wrapper로 단순화 (queue 인자 1개). 의미는 동등 (큐 enqueue → worker가 telegram + web 라우팅). PRD §6.2 후속 갱신 권장 (P4.2 시작 전 patch #2).
+
+---
+
+*최종 업데이트: 2026-04-26 (P4.1 완료)*
