@@ -1,0 +1,179 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# PyInstaller
+*.manifest
+*.spec
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
+pytest_cache/
+
+# Translations
+*.mo
+*.pot
+
+# Environments
+.env
+.env.local
+.env.*.local
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# ruff
+.ruff_cache/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# pytype static type analyzer
+.pytype/
+
+# Cython debug symbols
+cython_debug/
+
+# ========================
+# 프로젝트 특화 설정
+# ========================
+
+# 민감 정보 (절대 커밋 금지!)
+config.py
+*.key
+*.pem
+credentials/
+secrets/
+.claude/
+.mcp.json
+.openclaw/
+
+# OpenClaw / Node.js
+node_modules/
+openclaw-app/.env
+openclaw-app/.env.*
+
+# 토큰 상태/캐시 파일
+.token_state.json
+token_state.json
+.token_cache.json
+*token_cache*
+
+# 로컬 설정 파일
+settings.json
+settings.local.yaml
+config/settings.local.yaml
+
+# 데이터베이스
+*.db
+*.sqlite
+*.sqlite3
+
+# 로그 파일
+logs/
+*.log
+
+# 엑셀 파일 (API 문서 제외)
+# 키움 REST API 문서.xlsx는 버전 관리에 포함
+
+# 임시 파일
+tmp/
+temp/
+*.tmp
+*.bak
+tmpclaude-*-cwd
+
+# 잘못 생성된 파일 (V7.0 잔재, P1.3 정리 대상)
+nul
+*.recovered
+*.new
+# 파일명에 Windows 콜론(:)이 U+F03A 등 비가시 문자로 인코딩된 변종도 차단 (* 사용)
+C*K_stock_trading*
+C*Users*temp*
+C*templogs*
+*tradingdataanalysislogs*
+*tradingtemp_*
+*K_stock_tradingtemp*
+temp_*.txt
+temp_*.log
+
+# 분석/리뷰 임시 산출물 (P1.3 정리 대상)
+data/analysis/
+analysis_results/
+
+# 백테스트 캐시 (V7.1에서 폐기, P1.2 정리 대상)
+3m_data/
+data/backtest/
+data/cache/
+results/
+*.xlsx
+!docs/**/*.xlsx
+!키움 REST API 문서.xlsx
+3mintest.csv
+testday.csv
+past1000*.csv
+ema_split_buy_*.xlsx
+full_3min_backtest_result.xlsx
+improved_entry_backtest_result*.xlsx
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini

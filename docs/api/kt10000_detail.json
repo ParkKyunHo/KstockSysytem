@@ -1,0 +1,141 @@
+{
+  "sheet_name": "주식 매수주문(kt10000)",
+  "basic_info": {
+    "api_name": "주식 매수주문",
+    "api_id": "kt10000",
+    "method": "POST",
+    "prod_domain": "https://api.kiwoom.com",
+    "mock_domain": "https://mockapi.kiwoom.com(KRX만 지원가능)",
+    "url": "/api/dostk/ordr"
+  },
+  "request_header": [
+    {
+      "element": "api-id",
+      "name_kr": "TR명",
+      "type": "String",
+      "required": "Y",
+      "length": "10",
+      "description": ""
+    },
+    {
+      "element": "authorization",
+      "name_kr": "접근토큰",
+      "type": "String",
+      "required": "Y",
+      "length": "1000",
+      "description": "토큰 지정시 토큰타입(\"Bearer\") 붙혀서 호출 \n 예) Bearer Egicyx..."
+    },
+    {
+      "element": "cont-yn",
+      "name_kr": "연속조회여부",
+      "type": "String",
+      "required": "N",
+      "length": "1",
+      "description": "응답 Header의 연속조회여부값이 Y일 경우 다음데이터 요청시 응답 Header의 cont-yn값 세팅"
+    },
+    {
+      "element": "next-key",
+      "name_kr": "연속조회키",
+      "type": "String",
+      "required": "N",
+      "length": "50",
+      "description": "응답 Header의 연속조회여부값이 Y일 경우 다음데이터 요청시 응답 Header의 next-key값 세팅"
+    }
+  ],
+  "request_body": [
+    {
+      "element": "dmst_stex_tp",
+      "name_kr": "국내거래소구분",
+      "type": "String",
+      "required": "Y",
+      "length": "3",
+      "description": "KRX,NXT,SOR"
+    },
+    {
+      "element": "stk_cd",
+      "name_kr": "종목코드",
+      "type": "String",
+      "required": "Y",
+      "length": "12",
+      "description": ""
+    },
+    {
+      "element": "ord_qty",
+      "name_kr": "주문수량",
+      "type": "String",
+      "required": "Y",
+      "length": "12",
+      "description": ""
+    },
+    {
+      "element": "ord_uv",
+      "name_kr": "주문단가",
+      "type": "String",
+      "required": "N",
+      "length": "12",
+      "description": ""
+    },
+    {
+      "element": "trde_tp",
+      "name_kr": "매매구분",
+      "type": "String",
+      "required": "Y",
+      "length": "2",
+      "description": "0:보통 , 3:시장가 , 5:조건부지정가 , 81:장마감후시간외 , 61:장시작전시간외, 62:시간외단일가 , 6:최유리지정가 , 7:최우선지정가 , 10:보통(IOC) , 13:시장가(IOC) , 16:최유리(IOC) , 20:보통(FOK) , 23:시장가(FOK) , 26:최유리(FOK) , 28:스톱지정가,29:중간가,30:중간가(IOC),31:중간가(FOK)"
+    },
+    {
+      "element": "cond_uv",
+      "name_kr": "조건단가",
+      "type": "String",
+      "required": "N",
+      "length": "12",
+      "description": ""
+    }
+  ],
+  "response_header": [
+    {
+      "element": "api-id",
+      "name_kr": "TR명",
+      "type": "String",
+      "required": "Y",
+      "length": "10",
+      "description": ""
+    },
+    {
+      "element": "cont-yn",
+      "name_kr": "연속조회여부",
+      "type": "String",
+      "required": "N",
+      "length": "1",
+      "description": "다음 데이터가 있을시 Y값 전달"
+    },
+    {
+      "element": "next-key",
+      "name_kr": "연속조회키",
+      "type": "String",
+      "required": "N",
+      "length": "50",
+      "description": "다음 데이터가 있을시 다음 키값 전달"
+    }
+  ],
+  "response_body": [
+    {
+      "element": "ord_no",
+      "name_kr": "주문번호",
+      "type": "String",
+      "required": "N",
+      "length": "7",
+      "description": ""
+    },
+    {
+      "element": "dmst_stex_tp",
+      "name_kr": "국내거래소구분",
+      "type": "String",
+      "required": "N",
+      "length": "6",
+      "description": ""
+    }
+  ],
+  "request_example": "{\n    \"dmst_stex_tp\": \"KRX\",\n    \"stk_cd\": \"005930\",\n    \"ord_qty\": \"1\",\n    \"ord_uv\": \"\",\n    \"trde_tp\": \"3\",\n    \"cond_uv\": \"\"\n}",
+  "response_example": "{\n    \"ord_no\" : \"00024\"\n    \"return_code\":0,\n    \"return_msg\":\"정상적으로 처리되었습니다\"\n}"
+}

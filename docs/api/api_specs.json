@@ -1,0 +1,93 @@
+{
+  "접근토큰 발급(au10001)": {
+    "api_id": "au10001",
+    "method": "POST",
+    "prod_domain": "https://api.kiwoom.com",
+    "url": "/oauth2/token",
+    "format": "JSON"
+  },
+  "주식 매수주문(kt10000)": {
+    "api_id": "kt10000",
+    "method": "POST",
+    "prod_domain": "https://api.kiwoom.com",
+    "url": "/api/dostk/ordr",
+    "format": "JSON"
+  },
+  "주식 매도주문(kt10001)": {
+    "api_id": "kt10001",
+    "method": "POST",
+    "prod_domain": "https://api.kiwoom.com",
+    "url": "/api/dostk/ordr",
+    "format": "JSON"
+  },
+  "주식 정정주문(kt10002)": {
+    "api_id": "kt10002",
+    "method": "POST",
+    "prod_domain": "https://api.kiwoom.com",
+    "url": "/api/dostk/ordr",
+    "format": "JSON"
+  },
+  "주식 취소주문(kt10003)": {
+    "api_id": "kt10003",
+    "method": "POST",
+    "prod_domain": "https://api.kiwoom.com",
+    "url": "/api/dostk/ordr",
+    "format": "JSON"
+  },
+  "조건검색 목록조회(ka10171)": {
+    "api_id": "ka10171",
+    "method": "POST",
+    "prod_domain": "wss://api.kiwoom.com:10000",
+    "url": "/api/dostk/websocket",
+    "format": "JSON"
+  },
+  "조건검색 요청 일반(ka10172)": {
+    "api_id": "ka10172",
+    "method": "POST",
+    "prod_domain": "wss://api.kiwoom.com:10000",
+    "url": "/api/dostk/websocket",
+    "format": "JSON"
+  },
+  "조건검색 요청 실시간(ka10173)": {
+    "api_id": "ka10173",
+    "method": "POST",
+    "prod_domain": "wss://api.kiwoom.com:10000",
+    "url": "/api/dostk/websocket",
+    "format": "JSON"
+  },
+  "조건검색 실시간 해제(ka10174)": {
+    "api_id": "ka10174",
+    "method": "POST",
+    "prod_domain": "wss://api.kiwoom.com:10000",
+    "url": "/api/dostk/websocket",
+    "format": "JSON"
+  },
+  "계좌평가현황요청(kt00004)": {
+    "api_id": "kt00004",
+    "method": "POST",
+    "prod_domain": "https://api.kiwoom.com",
+    "url": "/api/dostk/acnt",
+    "format": "JSON"
+  },
+  "체결잔고요청(kt00005)": {
+    "api_id": "kt00005",
+    "method": "POST",
+    "prod_domain": "https://api.kiwoom.com",
+    "url": "/api/dostk/acnt",
+    "format": "JSON"
+  },
+  "미체결요청(ka10075)": {
+    "api_id": "ka10075",
+    "method": "POST",
+    "prod_domain": "https://api.kiwoom.com",
+    "url": "/api/dostk/acnt",
+    "format": "JSON"
+  },
+  "체결요청(ka10076)": {
+    "api_id": "ka10076",
+    "method": "POST",
+    "prod_domain": "https://api.kiwoom.com",
+    "url": "/api/dostk/acnt",
+    "format": "JSON"
+  }
+}

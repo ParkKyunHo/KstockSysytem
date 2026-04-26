@@ -1,0 +1,54 @@
+[Unit]
+Description=K-Stock Trading System
+Documentation=https://github.com/K_stock_trading
+After=network.target network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+
+# 작업 디렉토리 (current 심볼릭 링크 사용)
+WorkingDirectory=/home/ubuntu/K_stock_trading/current
+
+# 환경 설정
+Environment=PYTHONPATH=/home/ubuntu/K_stock_trading/current
+EnvironmentFile=/home/ubuntu/K_stock_trading/shared/.env
+
+# 실행 명령
+ExecStart=/home/ubuntu/K_stock_trading/current/venv/bin/python /home/ubuntu/K_stock_trading/current/launcher.py
+ExecStop=/bin/kill -TERM $MAINPID
+
+# 재시작 정책
+# launcher.py가 자체 재시작 로직을 포함하므로 on-failure만 설정
+Restart=on-failure
+RestartSec=10
+StartLimitIntervalSec=3600
+StartLimitBurst=5
+
+# 타임아웃
+TimeoutStartSec=30
+TimeoutStopSec=30
+
+# 로그
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=k-stock-trading
+
+# 리소스 제한
+MemoryMax=1G
+CPUQuota=80%
+
+# 보안 강화
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/ubuntu/K_stock_trading/shared/logs
+ReadWritePaths=/home/ubuntu/K_stock_trading/shared/data
+
+# 네트워크 접근 허용 (API 통신 필요)
+PrivateNetwork=false
+
+[Install]
+WantedBy=multi-user.target

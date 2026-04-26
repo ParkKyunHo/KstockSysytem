@@ -1,0 +1,3664 @@
+{
+  "접근토큰 발급(au10001)": {
+    "sheet_name": "접근토큰 발급(au10001)",
+    "basic_info": {
+      "api_name": "접근토큰 발급",
+      "api_id": "au10001",
+      "method": "POST",
+      "prod_domain": "https://api.kiwoom.com",
+      "mock_domain": "https://mockapi.kiwoom.com(KRX만 지원가능)",
+      "url": "/oauth2/token"
+    },
+    "request_header": [
+      {
+        "element": "api-id",
+        "name_kr": "TR명",
+        "type": "String",
+        "required": "Y",
+        "length": "10",
+        "description": ""
+      },
+      {
+        "element": "authorization",
+        "name_kr": "접근토큰",
+        "type": "String",
+        "required": "Y",
+        "length": "1000",
+        "description": "토큰 지정시 토큰타입(\"Bearer\") 붙혀서 호출 \n 예) Bearer Egicyx..."
+      },
+      {
+        "element": "cont-yn",
+        "name_kr": "연속조회여부",
+        "type": "String",
+        "required": "N",
+        "length": "1",
+        "description": "응답 Header의 연속조회여부값이 Y일 경우 다음데이터 요청시 응답 Header의 cont-yn값 세팅"
+      },
+      {
+        "element": "next-key",
+        "name_kr": "연속조회키",
+        "type": "String",
+        "required": "N",
+        "length": "50",
+        "description": "응답 Header의 연속조회여부값이 Y일 경우 다음데이터 요청시 응답 Header의 next-key값 세팅"
+      }
+    ],
+    "request_body": [
+      {
+        "element": "grant_type",
+        "name_kr": "grant_type",
+        "type": "String",
+        "required": "Y",
+        "length": "",
+        "description": "client_credentials 입력"
+      },
+      {
+        "element": "appkey",
+        "name_kr": "앱키",
+        "type": "String",
+        "required": "Y",
+        "length": "",
+        "description": ""
+      },
+      {
+        "element": "secretkey",
+        "name_kr": "시크릿키",
+        "type": "String",
+        "required": "Y",
+        "length": "",
+        "description": ""
+      }
+    ],
+    "response_header": [
+      {
+        "element": "api-id",
+        "name_kr": "TR명",
+        "type": "String",
+        "required": "Y",
+        "length": "10",
+        "description": ""
+      },
+      {
+        "element": "cont-yn",
+        "name_kr": "연속조회여부",
+        "type": "String",
+        "required": "N",
+        "length": "1",
+        "description": "다음 데이터가 있을시 Y값 전달"
+      },
+      {
+        "element": "next-key",
+        "name_kr": "연속조회키",
+        "type": "String",
+        "required": "N",
+        "length": "50",
+        "description": "다음 데이터가 있을시 다음 키값 전달"
+      }
+    ],
+    "response_body": [
+      {
+        "element": "expires_dt",
+        "name_kr": "만료일",
+        "type": "String",
+        "required": "Y",
+        "length": "",
+        "description": ""
+      },
+      {
+        "element": "token_type",
+        "name_kr": "토큰타입",
+        "type": "String",
+        "required": "Y",
+        "length": "",
+        "description": ""
+      },
+      {
+        "element": "token",
+        "name_kr": "접근토큰",
+        "type": "String",
+        "required": "Y",
+        "length": "",
+        "description": ""
+      }
+    ],
+    "request_example": "{\n    \"grant_type\": \"client_credentials\",\n    \"appkey\": \"AxserEsdcredca.....\",\n    \"secretkey\": \"SEefdcwcforehDre2fdvc....\"\n}",
+    "response_example": "{\n    \"expires_dt\":\"20241107083713\",\n    \"token_type\":\"bearer\",\n    \"token\":\"WQJCwyqInphKnR3bSRtB9NE1lv...\"\n    \"return_code\":0,\n    \"return_msg\":\"정상적으로 처리되었습니다\"\n}"
+  },
+  "주식 매수주문(kt10000)": {
+    "sheet_name": "주식 매수주문(kt10000)",
+    "basic_info": {
+      "api_name": "주식 매수주문",
+      "api_id": "kt10000",
+      "method": "POST",
+      "prod_domain": "https://api.kiwoom.com",
+      "mock_domain": "https://mockapi.kiwoom.com(KRX만 지원가능)",
+      "url": "/api/dostk/ordr"
+    },
+    "request_header": [
+      {
+        "element": "api-id",
+        "name_kr": "TR명",
+        "type": "String",
+        "required": "Y",
+        "length": "10",
+        "description": ""
+      },
+      {
+        "element": "authorization",
+        "name_kr": "접근토큰",
+        "type": "String",
+        "required": "Y",
+        "length": "1000",
+        "description": "토큰 지정시 토큰타입(\"Bearer\") 붙혀서 호출 \n 예) Bearer Egicyx..."
+      },
+      {
+        "element": "cont-yn",
+        "name_kr": "연속조회여부",
+        "type": "String",
+        "required": "N",
+        "length": "1",
+        "description": "응답 Header의 연속조회여부값이 Y일 경우 다음데이터 요청시 응답 Header의 cont-yn값 세팅"
+      },
+      {
+        "element": "next-key",
+        "name_kr": "연속조회키",
+        "type": "String",
+        "required": "N",
+        "length": "50",
+        "description": "응답 Header의 연속조회여부값이 Y일 경우 다음데이터 요청시 응답 Header의 next-key값 세팅"
+      }
+    ],
+    "request_body": [
+      {
+        "element": "dmst_stex_tp",
+        "name_kr": "국내거래소구분",
+        "type": "String",
+        "required": "Y",
+        "length": "3",
+        "description": "KRX,NXT,SOR"
+      },
+      {
+        "element": "stk_cd",
+        "name_kr": "종목코드",
+        "type": "String",
+        "required": "Y",
+        "length": "12",
+        "description": ""
+      },
+      {
+        "element": "ord_qty",
+        "name_kr": "주문수량",
+        "type": "String",
+        "required": "Y",
+        "length": "12",
+        "description": ""
+      },
+      {
+        "element": "ord_uv",
+        "name_kr": "주문단가",
+        "type": "String",
+        "required": "N",
+        "length": "12",
+        "description": ""
+      },
+      {
+        "element": "trde_tp",
+        "name_kr": "매매구분",
+        "type": "String",
+        "required": "Y",
+        "length": "2",
+        "description": "0:보통 , 3:시장가 , 5:조건부지정가 , 81:장마감후시간외 , 61:장시작전시간외, 62:시간외단일가 , 6:최유리지정가 , 7:최우선지정가 , 10:보통(IOC) , 13:시장가(IOC) , 16:최유리(IOC) , 20:보통(FOK) , 23:시장가(FOK) , 26:최유리(FOK) , 28:스톱지정가,29:중간가,30:중간가(IOC),31:중간가(FOK)"
+      },
+      {
+        "element": "cond_uv",
+        "name_kr": "조건단가",
+        "type": "String",
+        "required": "N",
+        "length": "12",
+        "description": ""
+      }
+    ],
+    "response_header": [
+      {
+        "element": "api-id",
+        "name_kr": "TR명",
+        "type": "String",
+        "required": "Y",
+        "length": "10",
+        "description": ""
+      },
+      {
+        "element": "cont-yn",
+        "name_kr": "연속조회여부",
+        "type": "String",
+        "required": "N",
+        "length": "1",
+        "description": "다음 데이터가 있을시 Y값 전달"
+      },
+      {
+        "element": "next-key",
+        "name_kr": "연속조회키",
+        "type": "String",
+        "required": "N",
+        "length": "50",
+        "description": "다음 데이터가 있을시 다음 키값 전달"
+      }
+    ],
+    "response_body": [
+      {
+        "element": "ord_no",
+        "name_kr": "주문번호",
+        "type": "String",
+        "required": "N",
+        "length": "7",
+        "description": ""
+      },
+      {
+        "element": "dmst_stex_tp",
+        "name_kr": "국내거래소구분",
+        "type": "String",
+        "required": "N",
+        "length": "6",
+        "description": ""
+      }
+    ],
+    "request_example": "{\n    \"dmst_stex_tp\": \"KRX\",\n    \"stk_cd\": \"005930\",\n    \"ord_qty\": \"1\",\n    \"ord_uv\": \"\",\n    \"trde_tp\": \"3\",\n    \"cond_uv\": \"\"\n}",
+    "response_example": "{\n    \"ord_no\" : \"00024\"\n    \"return_code\":0,\n    \"return_msg\":\"정상적으로 처리되었습니다\"\n}"
+  },
+  "주식 매도주문(kt10001)": {
+    "sheet_name": "주식 매도주문(kt10001)",
+    "basic_info": {
+      "api_name": "주식 매도주문",
+      "api_id": "kt10001",
+      "method": "POST",
+      "prod_domain": "https://api.kiwoom.com",
+      "mock_domain": "https://mockapi.kiwoom.com(KRX만 지원가능)",
+      "url": "/api/dostk/ordr"
+    },
+    "request_header": [
+      {
+        "element": "api-id",
+        "name_kr": "TR명",
+        "type": "String",
+        "required": "Y",
+        "length": "10",
+        "description": ""
+      },
+      {
+        "element": "authorization",
+        "name_kr": "접근토큰",
+        "type": "String",
+        "required": "Y",
+        "length": "1000",
+        "description": "토큰 지정시 토큰타입(\"Bearer\") 붙혀서 호출 \n 예) Bearer Egicyx..."
+      },
+      {
+        "element": "cont-yn",
+        "name_kr": "연속조회여부",
+        "type": "String",
+        "required": "N",
+        "length": "1",
+        "description": "응답 Header의 연속조회여부값이 Y일 경우 다음데이터 요청시 응답 Header의 cont-yn값 세팅"
+      },
+      {
+        "element": "next-key",
+        "name_kr": "연속조회키",
+        "type": "String",
+        "required": "N",
+        "length": "50",
+        "description": "응답 Header의 연속조회여부값이 Y일 경우 다음데이터 요청시 응답 Header의 next-key값 세팅"
+      }
+    ],
+    "request_body": [
+      {
+        "element": "dmst_stex_tp",
+        "name_kr": "국내거래소구분",
+        "type": "String",
+        "required": "Y",
+        "length": "3",
+        "description": "KRX,NXT,SOR"
+      },
+      {
+        "element": "stk_cd",
+        "name_kr": "종목코드",
+        "type": "String",
+        "required": "Y",
+        "length": "12",
+        "description": ""
+      },
+      {
+        "element": "ord_qty",
+        "name_kr": "주문수량",
+        "type": "String",
+        "required": "Y",
+        "length": "12",
+        "description": ""
+      },
+      {
+        "element": "ord_uv",
+        "name_kr": "주문단가",
+        "type": "String",
+        "required": "N",
+        "length": "12",
+        "description": ""
+      },
+      {
+        "element": "trde_tp",
+        "name_kr": "매매구분",
+        "type": "String",
+        "required": "Y",
+        "length": "2",
+        "description": "0:보통 , 3:시장가 , 5:조건부지정가 , 81:장마감후시간외 , 61:장시작전시간외, 62:시간외단일가 , 6:최유리지정가 , 7:최우선지정가 , 10:보통(IOC) , 13:시장가(IOC) , 16:최유리(IOC) , 20:보통(FOK) , 23:시장가(FOK) , 26:최유리(FOK) , 28:스톱지정가,29:중간가,30:중간가(IOC),31:중간가(FOK)"
+      },
+      {
+        "element": "cond_uv",
+        "name_kr": "조건단가",
+        "type": "String",
+        "required": "N",
+        "length": "12",
+        "description": ""
+      }
+    ],
+    "response_header": [
+      {
+        "element": "api-id",
+        "name_kr": "TR명",
+        "type": "String",
+        "required": "Y",
+        "length": "10",
+        "description": ""
+      },
+      {
+        "element": "cont-yn",
+        "name_kr": "연속조회여부",
+        "type": "String",
+        "required": "N",
+        "length": "1",
+        "description": "다음 데이터가 있을시 Y값 전달"
+      },
+      {
+        "element": "next-key",
+        "name_kr": "연속조회키",
+        "type": "String",
+        "required": "N",
+        "length": "50",
+        "description": "다음 데이터가 있을시 다음 키값 전달"
+      }
+    ],
+    "response_body": [
+      {
+        "element": "ord_no",
+        "name_kr": "주문번호",
+        "type": "String",
+        "required": "N",
+        "length": "7",
+        "description": ""
+      },
+      {
+        "element": "dmst_stex_tp",
+        "name_kr": "국내거래소구분",
+        "type": "String",
+        "required": "N",
+        "length": "6",
+        "description": ""
+      }
+    ],
+    "request_example": "{\n    \"dmst_stex_tp\": \"KRX\",\n    \"stk_cd\": \"005930\",\n    \"ord_qty\": \"1\",\n    \"ord_uv\": \"\",\n    \"trde_tp\": \"3\",\n    \"cond_uv\": \"\"\n}",
+    "response_example": "{\n    \"ord_no\": \"0000138\",\n    \"dmst_stex_tp\": \"KRX\",\n    \"return_code\": 0,\n    \"return_msg\": \"매도주문이 완료되었습니다.\"\n}"
+  },
+  "주식 정정주문(kt10002)": {
+    "sheet_name": "주식 정정주문(kt10002)",
+    "basic_info": {
+      "api_name": "주식 정정주문",
+      "api_id": "kt10002",
+      "method": "POST",
+      "prod_domain": "https://api.kiwoom.com",
+      "mock_domain": "https://mockapi.kiwoom.com(KRX만 지원가능)",
+      "url": "/api/dostk/ordr"
+    },
+    "request_header": [
+      {
+        "element": "api-id",
+        "name_kr": "TR명",
+        "type": "String",
+        "required": "Y",
+        "length": "10",
+        "description": ""
+      },
+      {
+        "element": "authorization",
+        "name_kr": "접근토큰",
+        "type": "String",
+        "required": "Y",
+        "length": "1000",
+        "description": "토큰 지정시 토큰타입(\"Bearer\") 붙혀서 호출 \n 예) Bearer Egicyx..."
+      },
+      {
+        "element": "cont-yn",
+        "name_kr": "연속조회여부",
+        "type": "String",
+        "required": "N",
+        "length": "1",
+        "description": "응답 Header의 연속조회여부값이 Y일 경우 다음데이터 요청시 응답 Header의 cont-yn값 세팅"
+      },
+      {
+        "element": "next-key",
+        "name_kr": "연속조회키",
+        "type": "String",
+        "required": "N",
+        "length": "50",
+        "description": "응답 Header의 연속조회여부값이 Y일 경우 다음데이터 요청시 응답 Header의 next-key값 세팅"
+      }
+    ],
+    "request_body": [
+      {
+        "element": "dmst_stex_tp",
+        "name_kr": "국내거래소구분",
+        "type": "String",
+        "required": "Y",
+        "length": "3",
+        "description": "KRX,NXT,SOR"
+      },
+      {
+        "element": "orig_ord_no",
+        "name_kr": "원주문번호",
+        "type": "String",
+        "required": "Y",
+        "length": "7",
+        "description": ""
+      },
+      {
+        "element": "stk_cd",
+        "name_kr": "종목코드",
+        "type": "String",
+        "required": "Y",
+        "length": "12",
+        "description": ""
+      },
+      {
+        "element": "mdfy_qty",
+        "name_kr": "정정수량",
+        "type": "String",
+        "required": "Y",
+        "length": "12",
+        "description": ""
+      },
+      {
+        "element": "mdfy_uv",
+        "name_kr": "정정단가",
+        "type": "String",
+        "required": "Y",
+        "length": "12",
+        "description": ""
+      },
+      {
+        "element": "mdfy_cond_uv",
+        "name_kr": "정정조건단가",
+        "type": "String",
+        "required": "N",
+        "length": "12",
+        "description": ""
+      }
+    ],
+    "response_header": [
+      {
+        "element": "api-id",
+        "name_kr": "TR명",
+        "type": "String",
+        "required": "Y",
+        "length": "10",
+        "description": ""
+      },
+      {
+        "element": "cont-yn",
+        "name_kr": "연속조회여부",
+        "type": "String",
+        "required": "N",
+        "length": "1",
+        "description": "다음 데이터가 있을시 Y값 전달"
+      },
+      {
+        "element": "next-key",
+        "name_kr": "연속조회키",
+        "type": "String",
+        "required": "N",
+        "length": "50",
+        "description": "다음 데이터가 있을시 다음 키값 전달"
+      }
+    ],
+    "response_body": [
+      {
+        "element": "ord_no",
+        "name_kr": "주문번호",
+        "type": "String",
+        "required": "N",
+        "length": "7",
+        "description": ""
+      },
+      {
+        "element": "base_orig_ord_no",
+        "name_kr": "모주문번호",
+        "type": "String",
+        "required": "N",
+        "length": "7",
+        "description": ""
+      },
+      {
+        "element": "mdfy_qty",
+        "name_kr": "정정수량",
+        "type": "String",
+        "required": "N",
+        "length": "12",
+        "description": ""
+      },
+      {
+        "element": "dmst_stex_tp",
+        "name_kr": "국내거래소구분",
+        "type": "String",
+        "required": "N",
+        "length": "6",
+        "description": ""
+      }
+    ],
+    "request_example": "{\n    \"dmst_stex_tp\": \"KRX\",\n    \"orig_ord_no\": \"0000139\",\n    \"stk_cd\": \"005930\",\n    \"mdfy_qty\": \"1\",\n    \"mdfy_uv\": \"199700\",\n    \"mdfy_cond_uv\": \"\"\n}",
+    "response_example": "{\n    \"ord_no\": \"0000140\",\n    \"base_orig_ord_no\": \"0000139\",\n    \"mdfy_qty\": \"000000000001\",\n    \"dmst_stex_tp\": \"KRX\",\n    \"return_code\": 0,\n    \"return_msg\": \"매수정정 주문입력이 완료되었습니다\"\n}"
+  },
+  "주식 취소주문(kt10003)": {
+    "sheet_name": "주식 취소주문(kt10003)",
+    "basic_info": {
+      "api_name": "주식 취소주문",
+      "api_id": "kt10003",
+      "method": "POST",
+      "prod_domain": "https://api.kiwoom.com",
+      "mock_domain": "https://mockapi.kiwoom.com(KRX만 지원가능)",
+      "url": "/api/dostk/ordr"
+    },
+    "request_header": [
+      {
+        "element": "api-id",
+        "name_kr": "TR명",
+        "type": "String",
+        "required": "Y",
+        "length": "10",
+        "description": ""
+      },
+      {
+        "element": "authorization",
+        "name_kr": "접근토큰",
+        "type": "String",
+        "required": "Y",
+        "length": "1000",
+        "description": "토큰 지정시 토큰타입(\"Bearer\") 붙혀서 호출 \n 예) Bearer Egicyx..."
+      },
+      {
+        "element": "cont-yn",
+        "name_kr": "연속조회여부",
+        "type": "String",
+        "required": "N",
+        "length": "1",
+        "description": "응답 Header의 연속조회여부값이 Y일 경우 다음데이터 요청시 응답 Header의 cont-yn값 세팅"
+      },
+      {
+        "element": "next-key",
+        "name_kr": "연속조회키",
+        "type": "String",
+        "required": "N",
+        "length": "50",
+        "description": "응답 Header의 연속조회여부값이 Y일 경우 다음데이터 요청시 응답 Header의 next-key값 세팅"
+      }
+    ],
+    "request_body": [
+      {
+        "element": "dmst_stex_tp",
+        "name_kr": "국내거래소구분",
+        "type": "String",
+        "required": "Y",
+        "length": "3",
+        "description": "KRX,NXT,SOR"
+      },
+      {
+        "element": "orig_ord_no",
+        "name_kr": "원주문번호",
+        "type": "String",
+        "required": "Y",
+        "length": "7",
+        "description": ""
+      },
+      {
+        "element": "stk_cd",
+        "name_kr": "종목코드",
+        "type": "String",
+        "required": "Y",
+        "length": "12",
+        "description": ""
+      },
+      {
+        "element": "cncl_qty",
+        "name_kr": "취소수량",
+        "type": "String",
+        "required": "Y",
+        "length": "12",
+        "description": "'0' 입력시 잔량 전부 취소"
+      }
+    ],
+    "response_header": [
+      {
+        "element": "api-id",
+        "name_kr": "TR명",
+        "type": "String",
+        "required": "Y",
+        "length": "10",
+        "description": ""
+      },
+      {
+        "element": "cont-yn",
+        "name_kr": "연속조회여부",
+        "type": "String",
+        "required": "N",
+        "length": "1",
+        "description": "다음 데이터가 있을시 Y값 전달"
+      },
+      {
+        "element": "next-key",
+        "name_kr": "연속조회키",
+        "type": "String",
+        "required": "N",
+        "length": "50",
+        "description": "다음 데이터가 있을시 다음 키값 전달"
+      }
+    ],
+    "response_body": [
+      {
+        "element": "ord_no",
+        "name_kr": "주문번호",
+        "type": "String",
+        "required": "N",
+        "length": "7",
+        "description": ""
+      },
+      {
+        "element": "base_orig_ord_no",
+        "name_kr": "모주문번호",
+        "type": "String",
+        "required": "N",
+        "length": "7",
+        "description": ""
+      },
+      {
+        "element": "cncl_qty",
+        "name_kr": "취소수량",
+        "type": "String",
+        "required": "N",
+        "length": "12",
+        "description": ""
+      }
+    ],
+    "request_example": "{\n    \"dmst_stex_tp\": \"KRX\",\n    \"orig_ord_no\": \"0000140\",\n    \"stk_cd\": \"005930\",\n    \"cncl_qty\": \"1\"\n}",
+    "response_example": "{\n    \"ord_no\": \"0000141\",\n    \"base_orig_ord_no\": \"0000139\",\n    \"cncl_qty\": \"000000000001\",\n    \"return_code\": 0,\n    \"return_msg\": \"매수취소 주문입력이 완료되었습니다\"\n}"
+  },
+  "조건검색 목록조회(ka10171)": {
+    "sheet_name": "조건검색 목록조회(ka10171)",
+    "basic_info": {
+      "api_name": "조건검색 목록조회",
+      "api_id": "ka10171",
+      "method": "POST",
+      "prod_domain": "wss://api.kiwoom.com:10000",
+      "mock_domain": "wss://mockapi.kiwoom.com:10000(KRX만 지원가능)",
+      "url": "/api/dostk/websocket"
+    },
+    "request_header": [
+      {
+        "element": "api-id",
+        "name_kr": "TR명",
+        "type": "String",
+        "required": "Y",
+        "length": "10",
+        "description": ""
+      },
+      {
+        "element": "authorization",
+        "name_kr": "접근토큰",
+        "type": "String",
+        "required": "Y",
+        "length": "1000",
+        "description": "토큰 지정시 토큰타입(\"Bearer\") 붙혀서 호출 \n 예) Bearer Egicyx..."
+      },
+      {
+        "element": "cont-yn",
+        "name_kr": "연속조회여부",
+        "type": "String",
+        "required": "N",
+        "length": "1",
+        "description": "응답 Header의 연속조회여부값이 Y일 경우 다음데이터 요청시 응답 Header의 cont-yn값 세팅"
+      },
+      {
+        "element": "next-key",
+        "name_kr": "연속조회키",
+        "type": "String",
+        "required": "N",
+        "length": "50",
+        "description": "응답 Header의 연속조회여부값이 Y일 경우 다음데이터 요청시 응답 Header의 next-key값 세팅"
+      }
+    ],
+    "request_body": [
+      {
+        "element": "trnm",
+        "name_kr": "TR명",
+        "type": "String",
+        "required": "Y",
+        "length": "7",
+        "description": "CNSRLST고정값"
+      }
+    ],
+    "response_header": [
+      {
+        "element": "api-id",
+        "name_kr": "TR명",
+        "type": "String",
+        "required": "Y",
+        "length": "10",
+        "description": ""
+      },
+      {
+        "element": "cont-yn",
+        "name_kr": "연속조회여부",
+        "type": "String",
+        "required": "N",
+        "length": "1",
+        "description": "다음 데이터가 있을시 Y값 전달"
+      },
+      {
+        "element": "next-key",
+        "name_kr": "연속조회키",
+        "type": "String",
+        "required": "N",
+        "length": "50",
+        "description": "다음 데이터가 있을시 다음 키값 전달"
+      }
+    ],
+    "response_body": [
+      {
+        "element": "return_code",
+        "name_kr": "결과코드",
+        "type": "String",
+        "required": "N",
+        "length": "",
+        "description": "정상 : 0"
+      },
+      {
+        "element": "return_msg",
+        "name_kr": "결과메시지",
+        "type": "String",
+        "required": "N",
+        "length": "",
+        "description": "정상인 경우는 메시지 없음"
+      },
+      {
+        "element": "trnm",
+        "name_kr": "서비스명",
+        "type": "String",
+        "required": "N",
+        "length": "7",
+        "description": "CNSRLST 고정값"
+      },
+      {
+        "element": "data",
+        "name_kr": "조건검색식 목록",
+        "type": "LIST",
+        "required": "N",
+        "length": "",
+        "description": ""
+      },
+      {
+        "element": "- seq",
+        "name_kr": "조건검색식 일련번호",
+        "type": "String",
+        "required": "N",
+        "length": "",
+        "description": ""
+      },
+      {
+        "element": "- name",
+        "name_kr": "조건검색식 명",
+        "type": "String",
+        "required": "N",
+        "length": "",
+        "description": ""
+      }
+    ],
+    "request_example": "{\n    \"trnm\": \"CNSRLST\"\n}",
+    "response_example": "{\n    'trnm': 'CNSRLST',\n    'return_code': 0,\n    'return_msg': '',\n    'data': [\n        ['0','조건1'],\n        ['1','조건2'],\n        ['2','조건3'],\n        ['3','조건4'],\n        ['4','조건5']\n    ]\n}"
+  },
+  "조건검색 요청 일반(ka10172)": {
+    "sheet_name": "조건검색 요청 일반(ka10172)",
+    "basic_info": {
+      "api_name": "조건검색 요청 일반",
+      "api_id": "ka10172",
+      "method": "POST",
+      "prod_domain": "wss://api.kiwoom.com:10000",
+      "mock_domain": "wss://mockapi.kiwoom.com:10000(KRX만 지원가능)",
+      "url": "/api/dostk/websocket"
+    },
+    "request_header": [
+      {
+        "element": "api-id",
+        "name_kr": "TR명",
+        "type": "String",
+        "required": "Y",
+        "length": "10",
+        "description": ""
+      },
+      {
+        "element": "authorization",
+        "name_kr": "접근토큰",
+        "type": "String",
+        "required": "Y",
+        "length": "1000",
+        "description": "토큰 지정시 토큰타입(\"Bearer\") 붙혀서 호출 \n 예) Bearer Egicyx..."
+      },
+      {
+        "element": "cont-yn",
+        "name_kr": "연속조회여부",
+        "type": "String",
+        "required": "N",
+        "length": "1",
+        "description": "응답 Header의 연속조회여부값이 Y일 경우 다음데이터 요청시 응답 Header의 cont-yn값 세팅"
+      },
+      {
+        "element": "next-key",
+        "name_kr": "연속조회키",
+        "type": "String",
+        "required": "N",
+        "length": "50",
+        "description": "응답 Header의 연속조회여부값이 Y일 경우 다음데이터 요청시 응답 Header의 next-key값 세팅"
+      }
+    ],
+    "request_body": [
+      {
+        "element": "trnm",
+        "name_kr": "서비스명",
+        "type": "String",
+        "required": "Y",
+        "length": "7",
+        "description": "CNSRREQ 고정값"
+      },
+      {
+        "element": "seq",
+        "name_kr": "조건검색식 일련번호",
+        "type": "String",
+        "required": "Y",
+        "length": "3",
+        "description": ""
+      },
+      {
+        "element": "search_type",
+        "name_kr": "조회타입",
+        "type": "String",
+        "required": "Y",
+        "length": "",
+        "description": "0:조건검색"
+      },
+      {
+        "element": "stex_tp",
+        "name_kr": "거래소구분",
+        "type": "String",
+        "required": "Y",
+        "length": "1",
+        "description": "K:KRX"
+      },
+      {
+        "element": "cont_yn",
+        "name_kr": "연속조회여부",
+        "type": "String",
+        "required": "N",
+        "length": "1",
+        "description": "Y:연속조회요청,N:연속조회미요청"
+      },
+      {
+        "element": "next_key",
+        "name_kr": "연속조회키",
+        "type": "String",
+        "required": "N",
+        "length": "20",
+        "description": ""
+      }
+    ],
+    "response_header": [
+      {
+        "element": "api-id",
+        "name_kr": "TR명",
+        "type": "String",
+        "required": "Y",
+        "length": "10",
+        "description": ""
+      },
+      {
+        "element": "cont-yn",
+        "name_kr": "연속조회여부",
+        "type": "String",
+        "required": "N",
+        "length": "1",
+        "description": "다음 데이터가 있을시 Y값 전달"
+      },
+      {
+        "element": "next-key",
+        "name_kr": "연속조회키",
+        "type": "String",
+        "required": "N",
+        "length": "50",
+        "description": "다음 데이터가 있을시 다음 키값 전달"
+      }
+    ],
+    "response_body": [
+      {
+        "element": "return_code",
+        "name_kr": "결과코드",
+        "type": "String",
+        "required": "N",
+        "length": "",
+        "description": "정상:0 나머지:에러"
+      },
+      {
+        "element": "return_msg",
+        "name_kr": "결과메시지",
+        "type": "String",
+        "required": "N",
+        "length": "",
+        "description": "정상인 경우는 메시지 없음"
+      },
+      {
+        "element": "trnm",
+        "name_kr": "서비스명",
+        "type": "String",
+        "required": "N",
+        "length": "",
+        "description": "CNSRREQ"
+      },
+      {
+        "element": "seq",
+        "name_kr": "조건검색식 일련번호",
+        "type": "String",
+        "required": "N",
+        "length": "",
+        "description": ""
+      },
+      {
+        "element": "cont_yn",
+        "name_kr": "연속조회여부",
+        "type": "String",
+        "required": "N",
+        "length": "",
+        "description": "연속 데이터가 존재하는경우 Y, 없으면 N"
+      },
+      {
+        "element": "next_key",
+        "name_kr": "연속조회키",
+        "type": "String",
+        "required": "N",
+        "length": "",
+        "description": "연속조회여부가Y일경우 다음 조회시 필요한 조회값"
+      },
+      {
+        "element": "data",
+        "name_kr": "검색결과데이터",
+        "type": "LIST",
+        "required": "N",
+        "length": "",
+        "description": ""
+      },
+      {
+        "element": "- 9001",
+        "name_kr": "종목코드",
+        "type": "String",
+        "required": "N",
+        "length": "",
+        "description": ""
+      },
+      {
+        "element": "- 302",
+        "name_kr": "종목명",
+        "type": "String",
+        "required": "N",
+        "length": "",
+        "description": ""
+      },
+      {
+        "element": "- 10",
+        "name_kr": "현재가",
+        "type": "String",
+        "required": "N",
+        "length": "",
+        "description": ""
+      },
+      {
+        "element": "- 25",
+        "name_kr": "전일대비기호",
+        "type": "String",
+        "required": "N",
+        "length": "",
+        "description": ""
+      },
+      {
+        "element": "- 11",
+        "name_kr": "전일대비",
+        "type": "String",
+        "required": "N",
+        "length": "",
+        "description": ""
+      },
+      {
+        "element": "- 12",
+        "name_kr": "등락율",
+        "type": "String",
+        "required": "N",
+        "length": "",
+        "description": ""
+      },
+      {
+        "element": "- 13",
+        "name_kr": "누적거래량",
+        "type": "String",
+        "required": "N",
+        "length": "",
+        "description": ""
+      },
+      {
+        "element": "- 16",
+        "name_kr": "시가",
+        "type": "String",
+        "required": "N",
+        "length": "",
+        "description": ""
+      },
+      {
+        "element": "- 17",
+        "name_kr": "고가",
+        "type": "String",
+        "required": "N",
+        "length": "",
+        "description": ""
+      },
+      {
+        "element": "- 18",
+        "name_kr": "저가",
+        "type": "String",
+        "required": "N",
+        "length": "",
+        "description": ""
+      }
+    ],
+    "request_example": "{\n    \"trnm\": \"CNSRREQ\",\n    \"seq\": \"4\",\n    \"search_type\": \"0\",\n    \"stex_tp\": \"K\",\n    \"cont_yn\": \"N\",\n    \"next_key\": \"\"\n}",
+    "response_example": "{\n    'trnm': 'CNSRREQ',\n    'seq': '2  ',\n    'cont_yn': 'N',\n    'next_key': '',\n    'return_code': 0,\n    'data': [\n        {\n            '9001': 'A005930',\n            '302': '삼성전자',\n            '10': '000021850',\n            '25': '3',\n            '11': '000000000',\n            '12': '000000000',\n            '13': '000000000',\n            '16': '000000000',\n            '17': '000000000',\n            '18': '000000000'\n        },\n        {\n            '9001': 'A005930',\n            '302': '삼성전자',\n            '10': '000044350',\n            '25': '3',\n            '11': '000000000',\n            '12': '000000000',\n            '13': '000000000',\n            '16': '000000000',\n            '17': '000000000',\n            '18': '000000000'\n        },\n        {\n            '9001': 'A005930',\n            '302': '삼성전자',\n            '10': '000003855',\n            '25': '3',\n            '11': '000000000',\n            '12': '000000000',\n            '13': '000000000',\n            '16': '000000000',\n            '17': '000000000',\n            '18': '000000000'\n        },\n        {\n            '9001': 'A005930',\n            '302': '삼성전자',\n            '10': '000075000',\n            '25': '5',\n            '11': '-00000100',\n            '12': '-00000130',\n            '13': '010386116',\n            '16': '000075100',\n            '17': '000075600',\n            '18': '000074700'\n        },\n        {\n            '9001': 'A005930',\n            '302': '삼성전자',\n            '10': '000002900',\n            '25': '3',\n            '11': '000000000',\n            '12': '000000000',\n            '13': '000000000',\n            '16': '000000000',\n            '17': '000000000',\n            '18': '000000000'\n        }\n    ]\n}"
+  },
+  "조건검색 요청 실시간(ka10173)": {
+    "sheet_name": "조건검색 요청 실시간(ka10173)",
+    "basic_info": {
+      "api_name": "조건검색 요청 실시간",
+      "api_id": "ka10173",
+      "method": "POST",
+      "prod_domain": "wss://api.kiwoom.com:10000",
+      "mock_domain": "wss://mockapi.kiwoom.com:10000(KRX만 지원가능)",
+      "url": "/api/dostk/websocket"
+    },
+    "request_header": [
+      {
+        "element": "api-id",
+        "name_kr": "TR명",
+        "type": "String",
+        "required": "Y",
+        "length": "10",
+        "description": ""
+      },
+      {
+        "element": "authorization",
+        "name_kr": "접근토큰",
+        "type": "String",
+        "required": "Y",
+        "length": "1000",
+        "description": "토큰 지정시 토큰타입(\"Bearer\") 붙혀서 호출 \n 예) Bearer Egicyx..."
+      },
+      {
+        "element": "cont-yn",
+        "name_kr": "연속조회여부",
+        "type": "String",
+        "required": "N",
+        "length": "1",
+        "description": "응답 Header의 연속조회여부값이 Y일 경우 다음데이터 요청시 응답 Header의 cont-yn값 세팅"
+      },
+      {
+        "element": "next-key",
+        "name_kr": "연속조회키",
+        "type": "String",
+        "required": "N",
+        "length": "50",
+        "description": "응답 Header의 연속조회여부값이 Y일 경우 다음데이터 요청시 응답 Header의 next-key값 세팅"
+      }
+    ],
+    "request_body": [
+      {
+        "element": "trnm",
+        "name_kr": "서비스명",
+        "type": "String",
+        "required": "Y",
+        "length": "7",
+        "description": "CNSRREQ 고정값"
+      },
+      {
+        "element": "seq",
+        "name_kr": "조건검색식 일련번호",
+        "type": "String",
+        "required": "Y",
+        "length": "3",
+        "description": ""
+      },
+      {
+        "element": "search_type",
+        "name_kr": "조회타입",
+        "type": "String",
+        "required": "Y",
+        "length": "1",
+        "description": "1: 조건검색+실시간조건검색"
+      },
+      {
+        "element": "stex_tp",
+        "name_kr": "거래소구분",
+        "type": "String",
+        "required": "Y",
+        "length": "1",
+        "description": "K:KRX"
+      }
+    ],
+    "response_header": [
+      {
+        "element": "api-id",
+        "name_kr": "TR명",
+        "type": "String",
+        "required": "Y",
+        "length": "10",
+        "description": ""
+      },
+      {
+        "element": "cont-yn",
+        "name_kr": "연속조회여부",
+        "type": "String",
+        "required": "N",
+        "length": "1",
+        "description": "다음 데이터가 있을시 Y값 전달"
+      },
+      {
+        "element": "next-key",
+        "name_kr": "연속조회키",
+        "type": "String",
+        "required": "N",
+        "length": "50",
+        "description": "다음 데이터가 있을시 다음 키값 전달"
+      }
+    ],
+    "response_body": [
+      {
+        "element": "조회 데이터",
+        "name_kr": "",
+        "type": "",
+        "required": "",
+        "length": "",
+        "description": ""
+      },
+      {
+        "element": "return_code",
+        "name_kr": "결과코드",
+        "type": "String",
+        "required": "N",
+        "length": "",
+        "description": "정상:0 나머지:에러"
+      },
+      {
+        "element": "return_msg",
+        "name_kr": "결과메시지",
+        "type": "String",
+        "required": "N",
+        "length": "",
+        "description": "정상인 경우는 메시지 없음"
+      },
+      {
+        "element": "trnm",
+        "name_kr": "서비스명",
+        "type": "String",
+        "required": "N",
+        "length": "",
+        "description": "CNSRREQ"
+      },
+      {
+        "element": "seq",
+        "name_kr": "조건검색식 일련번호",
+        "type": "String",
+        "required": "N",
+        "length": "",
+        "description": ""
+      },
+      {
+        "element": "data",
+        "name_kr": "검색결과데이터",
+        "type": "LIST",
+        "required": "N",
+        "length": "",
+        "description": ""
+      },
+      {
+        "element": "- jmcode",
+        "name_kr": "종목코드",
+        "type": "String",
+        "required": "N",
+        "length": "",
+        "description": ""
+      },
+      {
+        "element": "실시간 데이터",
+        "name_kr": "",
+        "type": "",
+        "required": "",
+        "length": "",
+        "description": ""
+      },
+      {
+        "element": "data",
+        "name_kr": "검색결과데이터",
+        "type": "LIST",
+        "required": "Y",
+        "length": "",
+        "description": ""
+      },
+      {
+        "element": "trnm",
+        "name_kr": "서비스명",
+        "type": "String",
+        "required": "Y",
+        "length": "",
+        "description": "REAL"
+      },
+      {
+        "element": "- type",
+        "name_kr": "실시간 항목",
+        "type": "String",
+        "required": "Y",
+        "length": "2",
+        "description": "TR 명(0A,0B....)"
+      },
+      {
+        "element": "- name",
+        "name_kr": "실시간 항목명",
+        "type": "String",
+        "required": "Y",
+        "length": "",
+        "description": "종목코드"
+      },
+      {
+        "element": "- values",
+        "name_kr": "실시간 수신 값",
+        "type": "Object",
+        "required": "Y",
+        "length": "",
+        "description": ""
+      },
+      {
+        "element": "- - 841",
+        "name_kr": "일련번호",
+        "type": "String",
+        "required": "Y",
+        "length": "",
+        "description": ""
+      },
+      {
+        "element": "- - 9001",
+        "name_kr": "종목코드",
+        "type": "String",
+        "required": "Y",
+        "length": "",
+        "description": ""
+      },
+      {
+        "element": "- - 843",
+        "name_kr": "삽입삭제 구분",
+        "type": "String",
+        "required": "Y",
+        "length": "",
+        "description": "I: 삽입, D: 삭제"
+      },
+      {
+        "element": "- - 20",
+        "name_kr": "체결시간",
+        "type": "String",
+        "required": "Y",
+        "length": "",
+        "description": ""
+      },
+      {
+        "element": "- - 907",
+        "name_kr": "매도/수 구분",
+        "type": "String",
+        "required": "Y",
+        "length": "",
+        "description": ""
+      }
+    ],
+    "request_example": "{\n    \"trnm\": \"CNSRREQ\",\n    \"seq\": \"4\",\n    \"search_type\": \"1\",\n    \"stex_tp\": \"K\"\n}",
+    "response_example": "#조회데이터\n{\n    'trnm': 'CNSRREQ',\n    'seq': '4',\n    'return_code': 0,\n    'data': [\n        {'jmcode': 'A005930'},\n        {'jmcode': 'A005930'},\n        {'jmcode': 'A005930'},\n        {'jmcode': 'A005930'},\n        {'jmcode': 'A005930'},\n        {'jmcode': 'A005930'},\n        {'jmcode': 'A005930'},\n        {'jmcode': 'A005930'},\n        {'jmcode': 'A005930'},\n        {'jmcode': 'A005930'},\n        {'jmcode': 'A005930'},\n        {'jmcode': 'A005930'},\n        {'jmcode': 'A005930'},\n        {'jmcode': 'A005930'},\n        {'jmcode': 'A005930'},\n        {'jmcode': 'A005930'},\n        {'jmcode': 'A005930'},\n        {'jmcode': 'A005930'},\n        {'jmcode': 'A005930'},\n        {'jmcode': 'A005930'},\n        {'jmcode': 'A005930'},\n        {'jmcode': 'A005930'},\n        {'jmcode': 'A005930'},\n        {'jmcode': 'A005930'},\n        {'jmcode': 'A005930'},\n        {'jmcode': 'A005930'},\n        {'jmcode': 'A005930'},\n        {'jmcode': 'A005930'},\n        {'jmcode': 'A005930'},\n        {'jmcode': 'A005930'},\n        {'jmcode': 'A005930'}\n    ]\n}\n\n#실시간데이터\n{\n    'data': [\n        {\n            'values': {\n                '841': '4',\n                '9001': '005930',\n                '843': 'I',\n                '20': '152028',\n                '907': '2'\n            },\n            'type': '02',\n            'name': '조건검색',\n            'item': '005930'\n        }\n    ],\n    'trnm': 'REAL'\n}"
+  },
+  "조건검색 실시간 해제(ka10174)": {
+    "sheet_name": "조건검색 실시간 해제(ka10174)",
+    "basic_info": {
+      "api_name": "조건검색 실시간 해제",
+      "api_id": "ka10174",
+      "method": "POST",
+      "prod_domain": "wss://api.kiwoom.com:10000",
+      "mock_domain": "wss://mockapi.kiwoom.com:10000(KRX만 지원가능)",
+      "url": "/api/dostk/websocket"
+    },
+    "request_header": [
+      {
+        "element": "api-id",
+        "name_kr": "TR명",
+        "type": "String",
+        "required": "Y",
+        "length": "10",
+        "description": ""
+      },
+      {
+        "element": "authorization",
+        "name_kr": "접근토큰",
+        "type": "String",
+        "required": "Y",
+        "length": "1000",
+        "description": "토큰 지정시 토큰타입(\"Bearer\") 붙혀서 호출 \n 예) Bearer Egicyx..."
+      },
+      {
+        "element": "cont-yn",
+        "name_kr": "연속조회여부",
+        "type": "String",
+        "required": "N",
+        "length": "1",
+        "description": "응답 Header의 연속조회여부값이 Y일 경우 다음데이터 요청시 응답 Header의 cont-yn값 세팅"
+      },
+      {
+        "element": "next-key",
+        "name_kr": "연속조회키",
+        "type": "String",
+        "required": "N",
+        "length": "50",
+        "description": "응답 Header의 연속조회여부값이 Y일 경우 다음데이터 요청시 응답 Header의 next-key값 세팅"
+      }
+    ],
+    "request_body": [
+      {
+        "element": "trnm",
+        "name_kr": "서비스명",
+        "type": "String",
+        "required": "Y",
+        "length": "7",
+        "description": "CNSRCLR 고정값"
+      },
+      {
+        "element": "seq",
+        "name_kr": "조건검색식 일련번호",
+        "type": "String",
+        "required": "Y",
+        "length": "",
+        "description": ""
+      }
+    ],
+    "response_header": [
+      {
+        "element": "api-id",
+        "name_kr": "TR명",
+        "type": "String",
+        "required": "Y",
+        "length": "10",
+        "description": ""
+      },
+      {
+        "element": "cont-yn",
+        "name_kr": "연속조회여부",
+        "type": "String",
+        "required": "N",
+        "length": "1",
+        "description": "다음 데이터가 있을시 Y값 전달"
+      },
+      {
+        "element": "next-key",
+        "name_kr": "연속조회키",
+        "type": "String",
+        "required": "N",
+        "length": "50",
+        "description": "다음 데이터가 있을시 다음 키값 전달"
+      }
+    ],
+    "response_body": [
+      {
+        "element": "return_code",
+        "name_kr": "결과코드",
+        "type": "String",
+        "required": "Y",
+        "length": "",
+        "description": "정상:0 나머지:에러"
+      },
+      {
+        "element": "return_msg",
+        "name_kr": "결과메시지",
+        "type": "String",
+        "required": "Y",
+        "length": "",
+        "description": "정상인 경우는 메시지 없음"
+      },
+      {
+        "element": "trnm",
+        "name_kr": "서비스명",
+        "type": "String",
+        "required": "Y",
+        "length": "",
+        "description": "CNSRCLR 고정값"
+      },
+      {
+        "element": "seq",
+        "name_kr": "조건검색식 일련번호",
+        "type": "String",
+        "required": "Y",
+        "length": "",
+        "description": ""
+      }
+    ],
+    "request_example": "{\n    \"trnm\": \"CNSRCLR\",\n    \"seq\": \"1\"\n}",
+    "response_example": "{\n    'trnm': 'CNSRCLR',\n    'seq' : '1',\n    'return_code': 0,\n    'return_msg': ''\n}"
+  },
+  "계좌평가현황요청(kt00004)": {
+    "sheet_name": "계좌평가현황요청(kt00004)",
+    "basic_info": {
+      "api_name": "계좌평가현황요청",
+      "api_id": "kt00004",
+      "method": "POST",
+      "prod_domain": "https://api.kiwoom.com",
+      "mock_domain": "https://mockapi.kiwoom.com(KRX만 지원가능)",
+      "url": "/api/dostk/acnt"
+    },
+    "request_header": [
+      {
+        "element": "api-id",
+        "name_kr": "TR명",
+        "type": "String",
+        "required": "Y",
+        "length": "10",
+        "description": ""
+      },
+      {
+        "element": "authorization",
+        "name_kr": "접근토큰",
+        "type": "String",
+        "required": "Y",
+        "length": "1000",
+        "description": "토큰 지정시 토큰타입(\"Bearer\") 붙혀서 호출 \n 예) Bearer Egicyx..."
+      },
+      {
+        "element": "cont-yn",
+        "name_kr": "연속조회여부",
+        "type": "String",
+        "required": "N",
+        "length": "1",
+        "description": "응답 Header의 연속조회여부값이 Y일 경우 다음데이터 요청시 응답 Header의 cont-yn값 세팅"
+      },
+      {
+        "element": "next-key",
+        "name_kr": "연속조회키",
+        "type": "String",
+        "required": "N",
+        "length": "50",
+        "description": "응답 Header의 연속조회여부값이 Y일 경우 다음데이터 요청시 응답 Header의 next-key값 세팅"
+      }
+    ],
+    "request_body": [
+      {
+        "element": "qry_tp",
+        "name_kr": "상장폐지조회구분",
+        "type": "String",
+        "required": "Y",
+        "length": "1",
+        "description": "0:전체, 1:상장폐지종목제외"
+      },
+      {
+        "element": "dmst_stex_tp",
+        "name_kr": "국내거래소구분",
+        "type": "String",
+        "required": "Y",
+        "length": "6",
+        "description": "KRX:한국거래소,NXT:넥스트트레이드"
+      }
+    ],
+    "response_header": [
+      {
+        "element": "api-id",
+        "name_kr": "TR명",
+        "type": "String",
+        "required": "Y",
+        "length": "10",
+        "description": ""
+      },
+      {
+        "element": "cont-yn",
+        "name_kr": "연속조회여부",
+        "type": "String",
+        "required": "N",
+        "length": "1",
+        "description": "다음 데이터가 있을시 Y값 전달"
+      },
+      {
+        "element": "next-key",
+        "name_kr": "연속조회키",
+        "type": "String",
+        "required": "N",
+        "length": "50",
+        "description": "다음 데이터가 있을시 다음 키값 전달"
+      }
+    ],
+    "response_body": [
+      {
+        "element": "acnt_nm",
+        "name_kr": "계좌명",
+        "type": "String",
+        "required": "N",
+        "length": "30",
+        "description": ""
+      },
+      {
+        "element": "brch_nm",
+        "name_kr": "지점명",
+        "type": "String",
+        "required": "N",
+        "length": "30",
+        "description": ""
+      },
+      {
+        "element": "entr",
+        "name_kr": "예수금",
+        "type": "String",
+        "required": "N",
+        "length": "12",
+        "description": ""
+      },
+      {
+        "element": "d2_entra",
+        "name_kr": "D+2추정예수금",
+        "type": "String",
+        "required": "N",
+        "length": "12",
+        "description": ""
+      },
+      {
+        "element": "tot_est_amt",
+        "name_kr": "유가잔고평가액",
+        "type": "String",
+        "required": "N",
+        "length": "12",
+        "description": ""
+      },
+      {
+        "element": "aset_evlt_amt",
+        "name_kr": "예탁자산평가액",
+        "type": "String",
+        "required": "N",
+        "length": "12",
+        "description": ""
+      },
+      {
+        "element": "tot_pur_amt",
+        "name_kr": "총매입금액",
+        "type": "String",
+        "required": "N",
+        "length": "12",
+        "description": ""
+      },
+      {
+        "element": "prsm_dpst_aset_amt",
+        "name_kr": "추정예탁자산",
+        "type": "String",
+        "required": "N",
+        "length": "12",
+        "description": ""
+      },
+      {
+        "element": "tot_grnt_sella",
+        "name_kr": "매도담보대출금",
+        "type": "String",
+        "required": "N",
+        "length": "12",
+        "description": ""
+      },
+      {
+        "element": "tdy_lspft_amt",
+        "name_kr": "당일투자원금",
+        "type": "String",
+        "required": "N",
+        "length": "12",
+        "description": ""
+      },
+      {
+        "element": "invt_bsamt",
+        "name_kr": "당월투자원금",
+        "type": "String",
+        "required": "N",
+        "length": "12",
+        "description": ""
+      },
+      {
+        "element": "lspft_amt",
+        "name_kr": "누적투자원금",
+        "type": "String",
+        "required": "N",
+        "length": "12",
+        "description": ""
+      },
+      {
+        "element": "tdy_lspft",
+        "name_kr": "당일투자손익",
+        "type": "String",
+        "required": "N",
+        "length": "12",
+        "description": ""
+      },
+      {
+        "element": "lspft2",
+        "name_kr": "당월투자손익",
+        "type": "String",
+        "required": "N",
+        "length": "12",
+        "description": ""
+      },
+      {
+        "element": "lspft",
+        "name_kr": "누적투자손익",
+        "type": "String",
+        "required": "N",
+        "length": "12",
+        "description": ""
+      },
+      {
+        "element": "tdy_lspft_rt",
+        "name_kr": "당일손익율",
+        "type": "String",
+        "required": "N",
+        "length": "12",
+        "description": ""
+      },
+      {
+        "element": "lspft_ratio",
+        "name_kr": "당월손익율",
+        "type": "String",
+        "required": "N",
+        "length": "12",
+        "description": ""
+      },
+      {
+        "element": "lspft_rt",
+        "name_kr": "누적손익율",
+        "type": "String",
+        "required": "N",
+        "length": "12",
+        "description": ""
+      },
+      {
+        "element": "stk_acnt_evlt_prst",
+        "name_kr": "종목별계좌평가현황",
+        "type": "LIST",
+        "required": "N",
+        "length": "",
+        "description": ""
+      },
+      {
+        "element": "- stk_cd",
+        "name_kr": "종목코드",
+        "type": "String",
+        "required": "N",
+        "length": "12",
+        "description": ""
+      },
+      {
+        "element": "- stk_nm",
+        "name_kr": "종목명",
+        "type": "String",
+        "required": "N",
+        "length": "30",
+        "description": ""
+      },
+      {
+        "element": "- rmnd_qty",
+        "name_kr": "보유수량",
+        "type": "String",
+        "required": "N",
+        "length": "12",
+        "description": ""
+      },
+      {
+        "element": "- avg_prc",
+        "name_kr": "평균단가",
+        "type": "String",
+        "required": "N",
+        "length": "12",
+        "description": ""
+      },
+      {
+        "element": "- cur_prc",
+        "name_kr": "현재가",
+        "type": "String",
+        "required": "N",
+        "length": "12",
+        "description": ""
+      },
+      {
+        "element": "- evlt_amt",
+        "name_kr": "평가금액",
+        "type": "String",
+        "required": "N",
+        "length": "12",
+        "description": ""
+      },
+      {
+        "element": "- pl_amt",
+        "name_kr": "손익금액",
+        "type": "String",
+        "required": "N",
+        "length": "12",
+        "description": ""
+      },
+      {
+        "element": "- pl_rt",
+        "name_kr": "손익율",
+        "type": "String",
+        "required": "N",
+        "length": "12",
+        "description": ""
+      },
+      {
+        "element": "- loan_dt",
+        "name_kr": "대출일",
+        "type": "String",
+        "required": "N",
+        "length": "10",
+        "description": ""
+      },
+      {
+        "element": "- pur_amt",
+        "name_kr": "매입금액",
+        "type": "String",
+        "required": "N",
+        "length": "12",
+        "description": ""
+      },
+      {
+        "element": "- setl_remn",
+        "name_kr": "결제잔고",
+        "type": "String",
+        "required": "N",
+        "length": "12",
+        "description": ""
+      },
+      {
+        "element": "- pred_buyq",
+        "name_kr": "전일매수수량",
+        "type": "String",
+        "required": "N",
+        "length": "12",
+        "description": ""
+      },
+      {
+        "element": "- pred_sellq",
+        "name_kr": "전일매도수량",
+        "type": "String",
+        "required": "N",
+        "length": "12",
+        "description": ""
+      },
+      {
+        "element": "- tdy_buyq",
+        "name_kr": "금일매수수량",
+        "type": "String",
+        "required": "N",
+        "length": "12",
+        "description": ""
+      },
+      {
+        "element": "- tdy_sellq",
+        "name_kr": "금일매도수량",
+        "type": "String",
+        "required": "N",
+        "length": "12",
+        "description": ""
+      }
+    ],
+    "request_example": "{\n    \"qry_tp\": \"0\",\n    \"dmst_stex_tp\": \"KRX\"\n}",
+    "response_example": "{\n    \"acnt_nm\": \"김키움\",\n    \"brch_nm\": \"키움은행\",\n    \"entr\": \"000000017534\",\n    \"d2_entra\": \"000000012550\",\n    \"tot_est_amt\": \"000000000342\",\n    \"aset_evlt_amt\": \"000000761950\",\n    \"tot_pur_amt\": \"000000002786\",\n    \"prsm_dpst_aset_amt\": \"000000749792\",\n    \"tot_grnt_sella\": \"000000000000\",\n    \"tdy_lspft_amt\": \"000000000000\",\n    \"invt_bsamt\": \"000000000000\",\n    \"lspft_amt\": \"000000000000\",\n    \"tdy_lspft\": \"000000000000\",\n    \"lspft2\": \"000000000000\",\n    \"lspft\": \"000000000000\",\n    \"tdy_lspft_rt\": \"0.00\",\n    \"lspft_ratio\": \"0.00\",\n    \"lspft_rt\": \"0.00\",\n    \"stk_acnt_evlt_prst\": [\n        {\n            \"stk_cd\": \"A005930\",\n            \"stk_nm\": \"삼성전자\",\n            \"rmnd_qty\": \"000000000003\",\n            \"avg_prc\": \"000000124500\",\n            \"cur_prc\": \"000000070000\",\n            \"evlt_amt\": \"000000209542\",\n            \"pl_amt\": \"-00000163958\",\n            \"pl_rt\": \"-43.8977\",\n            \"loan_dt\": \"\",\n            \"pur_amt\": \"000000373500\",\n            \"setl_remn\": \"000000000003\",\n            \"pred_buyq\": \"000000000000\",\n            \"pred_sellq\": \"000000000000\",\n            \"tdy_buyq\": \"000000000000\",\n            \"tdy_sellq\": \"000000000000\"\n        }\n    ],\n    \"return_code\": 0,\n    \"return_msg\": \"조회가 완료되었습니다.\"\n}"
+  },
+  "체결잔고요청(kt00005)": {
+    "sheet_name": "체결잔고요청(kt00005)",
+    "basic_info": {
+      "api_name": "체결잔고요청",
+      "api_id": "kt00005",
+      "method": "POST",
+      "prod_domain": "https://api.kiwoom.com",
+      "mock_domain": "https://mockapi.kiwoom.com(KRX만 지원가능)",
+      "url": "/api/dostk/acnt"
+    },
+    "request_header": [
+      {
+        "element": "api-id",
+        "name_kr": "TR명",
+        "type": "String",
+        "required": "Y",
+        "length": "10",
+        "description": ""
+      },
+      {
+        "element": "authorization",
+        "name_kr": "접근토큰",
+        "type": "String",
+        "required": "Y",
+        "length": "1000",
+        "description": "토큰 지정시 토큰타입(\"Bearer\") 붙혀서 호출 \n 예) Bearer Egicyx..."
+      },
+      {
+        "element": "cont-yn",
+        "name_kr": "연속조회여부",
+        "type": "String",
+        "required": "N",
+        "length": "1",
+        "description": "응답 Header의 연속조회여부값이 Y일 경우 다음데이터 요청시 응답 Header의 cont-yn값 세팅"
+      },
+      {
+        "element": "next-key",
+        "name_kr": "연속조회키",
+        "type": "String",
+        "required": "N",
+        "length": "50",
+        "description": "응답 Header의 연속조회여부값이 Y일 경우 다음데이터 요청시 응답 Header의 next-key값 세팅"
+      }
+    ],
+    "request_body": [
+      {
+        "element": "dmst_stex_tp",
+        "name_kr": "국내거래소구분",
+        "type": "String",
+        "required": "Y",
+        "length": "6",
+        "description": "KRX:한국거래소,NXT:넥스트트레이드"
+      }
+    ],
+    "response_header": [
+      {
+        "element": "api-id",
+        "name_kr": "TR명",
+        "type": "String",
+        "required": "Y",
+        "length": "10",
+        "description": ""
+      },
+      {
+        "element": "cont-yn",
+        "name_kr": "연속조회여부",
+        "type": "String",
+        "required": "N",
+        "length": "1",
+        "description": "다음 데이터가 있을시 Y값 전달"
+      },
+      {
+        "element": "next-key",
+        "name_kr": "연속조회키",
+        "type": "String",
+        "required": "N",
+        "length": "50",
+        "description": "다음 데이터가 있을시 다음 키값 전달"
+      }
+    ],
+    "response_body": [
+      {
+        "element": "entr",
+        "name_kr": "예수금",
+        "type": "String",
+        "required": "N",
+        "length": "12",
+        "description": ""
+      },
+      {
+        "element": "entr_d1",
+        "name_kr": "예수금D+1",
+        "type": "String",
+        "required": "N",
+        "length": "12",
+        "description": ""
+      },
+      {
+        "element": "entr_d2",
+        "name_kr": "예수금D+2",
+        "type": "String",
+        "required": "N",
+        "length": "12",
+        "description": ""
+      },
+      {
+        "element": "pymn_alow_amt",
+        "name_kr": "출금가능금액",
+        "type": "String",
+        "required": "N",
+        "length": "12",
+        "description": ""
+      },
+      {
+        "element": "uncl_stk_amt",
+        "name_kr": "미수확보금",
+        "type": "String",
+        "required": "N",
+        "length": "12",
+        "description": ""
+      },
+      {
+        "element": "repl_amt",
+        "name_kr": "대용금",
+        "type": "String",
+        "required": "N",
+        "length": "12",
+        "description": ""
+      },
+      {
+        "element": "rght_repl_amt",
+        "name_kr": "권리대용금",
+        "type": "String",
+        "required": "N",
+        "length": "12",
+        "description": ""
+      },
+      {
+        "element": "ord_alowa",
+        "name_kr": "주문가능현금",
+        "type": "String",
+        "required": "N",
+        "length": "12",
+        "description": ""
+      },
+      {
+        "element": "ch_uncla",
+        "name_kr": "현금미수금",
+        "type": "String",
+        "required": "N",
+        "length": "12",
+        "description": ""
+      },
+      {
+        "element": "crd_int_npay_gold",
+        "name_kr": "신용이자미납금",
+        "type": "String",
+        "required": "N",
+        "length": "12",
+        "description": ""
+      },
+      {
+        "element": "etc_loana",
+        "name_kr": "기타대여금",
+        "type": "String",
+        "required": "N",
+        "length": "12",
+        "description": ""
+      },
+      {
+        "element": "nrpy_loan",
+        "name_kr": "미상환융자금",
+        "type": "String",
+        "required": "N",
+        "length": "12",
+        "description": ""
+      },
+      {
+        "element": "profa_ch",
+        "name_kr": "증거금현금",
+        "type": "String",
+        "required": "N",
+        "length": "12",
+        "description": ""
+      },
+      {
+        "element": "repl_profa",
+        "name_kr": "증거금대용",
+        "type": "String",
+        "required": "N",
+        "length": "12",
+        "description": ""
+      },
+      {
+        "element": "stk_buy_tot_amt",
+        "name_kr": "주식매수총액",
+        "type": "String",
+        "required": "N",
+        "length": "12",
+        "description": ""
+      },
+      {
+        "element": "evlt_amt_tot",
+        "name_kr": "평가금액합계",
+        "type": "String",
+        "required": "N",
+        "length": "12",
+        "description": ""
+      },
+      {
+        "element": "tot_pl_tot",
+        "name_kr": "총손익합계",
+        "type": "String",
+        "required": "N",
+        "length": "12",
+        "description": ""
+      },
+      {
+        "element": "tot_pl_rt",
+        "name_kr": "총손익률",
+        "type": "String",
+        "required": "N",
+        "length": "12",
+        "description": ""
+      },
+      {
+        "element": "tot_re_buy_alowa",
+        "name_kr": "총재매수가능금액",
+        "type": "String",
+        "required": "N",
+        "length": "12",
+        "description": ""
+      },
+      {
+        "element": "20ord_alow_amt",
+        "name_kr": "20%주문가능금액",
+        "type": "String",
+        "required": "N",
+        "length": "12",
+        "description": ""
+      },
+      {
+        "element": "30ord_alow_amt",
+        "name_kr": "30%주문가능금액",
+        "type": "String",
+        "required": "N",
+        "length": "12",
+        "description": ""
+      },
+      {
+        "element": "40ord_alow_amt",
+        "name_kr": "40%주문가능금액",
+        "type": "String",
+        "required": "N",
+        "length": "12",
+        "description": ""
+      },
+      {
+        "element": "50ord_alow_amt",
+        "name_kr": "50%주문가능금액",
+        "type": "String",
+        "required": "N",
+        "length": "12",
+        "description": ""
+      },
+      {
+        "element": "60ord_alow_amt",
+        "name_kr": "60%주문가능금액",
+        "type": "String",
+        "required": "N",
+        "length": "12",
+        "description": ""
+      },
+      {
+        "element": "100ord_alow_amt",
+        "name_kr": "100%주문가능금액",
+        "type": "String",
+        "required": "N",
+        "length": "12",
+        "description": ""
+      },
+      {
+        "element": "crd_loan_tot",
+        "name_kr": "신용융자합계",
+        "type": "String",
+        "required": "N",
+        "length": "12",
+        "description": ""
+      },
+      {
+        "element": "crd_loan_ls_tot",
+        "name_kr": "신용융자대주합계",
+        "type": "String",
+        "required": "N",
+        "length": "12",
+        "description": ""
+      },
+      {
+        "element": "crd_grnt_rt",
+        "name_kr": "신용담보비율",
+        "type": "String",
+        "required": "N",
+        "length": "12",
+        "description": ""
+      },
+      {
+        "element": "dpst_grnt_use_amt_amt",
+        "name_kr": "예탁담보대출금액",
+        "type": "String",
+        "required": "N",
+        "length": "12",
+        "description": ""
+      },
+      {
+        "element": "grnt_loan_amt",
+        "name_kr": "매도담보대출금액",
+        "type": "String",
+        "required": "N",
+        "length": "12",
+        "description": ""
+      },
+      {
+        "element": "stk_cntr_remn",
+        "name_kr": "종목별체결잔고",
+        "type": "LIST",
+        "required": "N",
+        "length": "",
+        "description": ""
+      },
+      {
+        "element": "- crd_tp",
+        "name_kr": "신용구분",
+        "type": "String",
+        "required": "N",
+        "length": "2",
+        "description": ""
+      },
+      {
+        "element": "- loan_dt",
+        "name_kr": "대출일",
+        "type": "String",
+        "required": "N",
+        "length": "8",
+        "description": ""
+      },
+      {
+        "element": "- expr_dt",
+        "name_kr": "만기일",
+        "type": "String",
+        "required": "N",
+        "length": "8",
+        "description": ""
+      },
+      {
+        "element": "- stk_cd",
+        "name_kr": "종목번호",
+        "type": "String",
+        "required": "N",
+        "length": "12",
+        "description": ""
+      },
+      {
+        "element": "- stk_nm",
+        "name_kr": "종목명",
+        "type": "String",
+        "required": "N",
+        "length": "30",
+        "description": ""
+      },
+      {
+        "element": "- setl_remn",
+        "name_kr": "결제잔고",
+        "type": "String",
+        "required": "N",
+        "length": "12",
+        "description": ""
+      },
+      {
+        "element": "- cur_qty",
+        "name_kr": "현재잔고",
+        "type": "String",
+        "required": "N",
+        "length": "12",
+        "description": ""
+      },
+      {
+        "element": "- cur_prc",
+        "name_kr": "현재가",
+        "type": "String",
+        "required": "N",
+        "length": "12",
+        "description": ""
+      },
+      {
+        "element": "- buy_uv",
+        "name_kr": "매입단가",
+        "type": "String",
+        "required": "N",
+        "length": "12",
+        "description": ""
+      },
+      {
+        "element": "- pur_amt",
+        "name_kr": "매입금액",
+        "type": "String",
+        "required": "N",
+        "length": "12",
+        "description": ""
+      },
+      {
+        "element": "- evlt_amt",
+        "name_kr": "평가금액",
+        "type": "String",
+        "required": "N",
+        "length": "12",
+        "description": ""
+      },
+      {
+        "element": "- evltv_prft",
+        "name_kr": "평가손익",
+        "type": "String",
+        "required": "N",
+        "length": "12",
+        "description": ""
+      },
+      {
+        "element": "- pl_rt",
+        "name_kr": "손익률",
+        "type": "String",
+        "required": "N",
+        "length": "12",
+        "description": ""
+      }
+    ],
+    "request_example": "{\n    \"dmst_stex_tp\": \"KRX\"\n}",
+    "response_example": "{\n    \"entr\": \"000000017534\",\n    \"entr_d1\": \"000000017450\",\n    \"entr_d2\": \"000000012550\",\n    \"pymn_alow_amt\": \"000000085341\",\n    \"uncl_stk_amt\": \"000000000000\",\n    \"repl_amt\": \"000003915500\",\n    \"rght_repl_amt\": \"000000000000\",\n    \"ord_alowa\": \"000000085341\",\n    \"ch_uncla\": \"000000000000\",\n    \"crd_int_npay_gold\": \"000000000000\",\n    \"etc_loana\": \"000000000000\",\n    \"nrpy_loan\": \"000000000000\",\n    \"profa_ch\": \"000000032193\",\n    \"repl_profa\": \"000000000000\",\n    \"stk_buy_tot_amt\": \"000006122786\",\n    \"evlt_amt_tot\": \"000006236342\",\n    \"tot_pl_tot\": \"000000113556\",\n    \"tot_pl_rt\": \"1.8546\",\n    \"tot_re_buy_alowa\": \"000000135970\",\n    \"20ord_alow_amt\": \"000000012550\",\n    \"30ord_alow_amt\": \"000000012550\",\n    \"40ord_alow_amt\": \"000000012550\",\n    \"50ord_alow_amt\": \"000000012550\",\n    \"60ord_alow_amt\": \"000000012550\",\n    \"100ord_alow_amt\": \"000000012550\",\n    \"crd_loan_tot\": \"000000000000\",\n    \"crd_loan_ls_tot\": \"000000000000\",\n    \"crd_grnt_rt\": \"0.00\",\n    \"dpst_grnt_use_amt_amt\": \"000000000000\",\n    \"grnt_loan_amt\": \"000000000000\",\n    \"stk_cntr_remn\": [\n        {\n            \"crd_tp\": \"00\",\n            \"loan_dt\": \"\",\n            \"expr_dt\": \"\",\n            \"stk_cd\": \"A005930\",\n            \"stk_nm\": \"삼성전자\",\n            \"setl_remn\": \"000000000003\",\n            \"cur_qty\": \"000000000003\",\n            \"cur_prc\": \"000000070000\",\n            \"buy_uv\": \"000000124500\",\n            \"pur_amt\": \"000000373500\",\n            \"evlt_amt\": \"000000209542\",\n            \"evltv_prft\": \"-00000163958\",\n            \"pl_rt\": \"-43.8977\"\n        }\n    ],\n    \"return_code\": 0,\n    \"return_msg\": \"조회가 완료되었습니다.\"\n}"
+  },
+  "미체결요청(ka10075)": {
+    "sheet_name": "미체결요청(ka10075)",
+    "basic_info": {
+      "api_name": "미체결요청",
+      "api_id": "ka10075",
+      "method": "POST",
+      "prod_domain": "https://api.kiwoom.com",
+      "mock_domain": "https://mockapi.kiwoom.com(KRX만 지원가능)",
+      "url": "/api/dostk/acnt"
+    },
+    "request_header": [
+      {
+        "element": "api-id",
+        "name_kr": "TR명",
+        "type": "String",
+        "required": "Y",
+        "length": "10",
+        "description": ""
+      },
+      {
+        "element": "authorization",
+        "name_kr": "접근토큰",
+        "type": "String",
+        "required": "Y",
+        "length": "1000",
+        "description": "토큰 지정시 토큰타입(\"Bearer\") 붙혀서 호출 \n 예) Bearer Egicyx..."
+      },
+      {
+        "element": "cont-yn",
+        "name_kr": "연속조회여부",
+        "type": "String",
+        "required": "N",
+        "length": "1",
+        "description": "응답 Header의 연속조회여부값이 Y일 경우 다음데이터 요청시 응답 Header의 cont-yn값 세팅"
+      },
+      {
+        "element": "next-key",
+        "name_kr": "연속조회키",
+        "type": "String",
+        "required": "N",
+        "length": "50",
+        "description": "응답 Header의 연속조회여부값이 Y일 경우 다음데이터 요청시 응답 Header의 next-key값 세팅"
+      }
+    ],
+    "request_body": [
+      {
+        "element": "all_stk_tp",
+        "name_kr": "전체종목구분",
+        "type": "String",
+        "required": "Y",
+        "length": "1",
+        "description": "0:전체, 1:종목"
+      },
+      {
+        "element": "trde_tp",
+        "name_kr": "매매구분",
+        "type": "String",
+        "required": "Y",
+        "length": "1",
+        "description": "0:전체, 1:매도, 2:매수"
+      },
+      {
+        "element": "stk_cd",
+        "name_kr": "종목코드",
+        "type": "String",
+        "required": "N",
+        "length": "6",
+        "description": ""
+      },
+      {
+        "element": "stex_tp",
+        "name_kr": "거래소구분",
+        "type": "String",
+        "required": "Y",
+        "length": "1",
+        "description": "0 : 통합, 1 : KRX, 2 : NXT"
+      }
+    ],
+    "response_header": [
+      {
+        "element": "api-id",
+        "name_kr": "TR명",
+        "type": "String",
+        "required": "Y",
+        "length": "10",
+        "description": ""
+      },
+      {
+        "element": "cont-yn",
+        "name_kr": "연속조회여부",
+        "type": "String",
+        "required": "N",
+        "length": "1",
+        "description": "다음 데이터가 있을시 Y값 전달"
+      },
+      {
+        "element": "next-key",
+        "name_kr": "연속조회키",
+        "type": "String",
+        "required": "N",
+        "length": "50",
+        "description": "다음 데이터가 있을시 다음 키값 전달"
+      }
+    ],
+    "response_body": [
+      {
+        "element": "oso",
+        "name_kr": "미체결",
+        "type": "LIST",
+        "required": "N",
+        "length": "",
+        "description": ""
+      },
+      {
+        "element": "- acnt_no",
+        "name_kr": "계좌번호",
+        "type": "String",
+        "required": "N",
+        "length": "20",
+        "description": ""
+      },
+      {
+        "element": "- ord_no",
+        "name_kr": "주문번호",
+        "type": "String",
+        "required": "N",
+        "length": "20",
+        "description": ""
+      },
+      {
+        "element": "- mang_empno",
+        "name_kr": "관리사번",
+        "type": "String",
+        "required": "N",
+        "length": "20",
+        "description": ""
+      },
+      {
+        "element": "- stk_cd",
+        "name_kr": "종목코드",
+        "type": "String",
+        "required": "N",
+        "length": "20",
+        "description": ""
+      },
+      {
+        "element": "- tsk_tp",
+        "name_kr": "업무구분",
+        "type": "String",
+        "required": "N",
+        "length": "20",
+        "description": ""
+      },
+      {
+        "element": "- ord_stt",
+        "name_kr": "주문상태",
+        "type": "String",
+        "required": "N",
+        "length": "20",
+        "description": ""
+      },
+      {
+        "element": "- stk_nm",
+        "name_kr": "종목명",
+        "type": "String",
+        "required": "N",
+        "length": "20",
+        "description": ""
+      },
+      {
+        "element": "- ord_qty",
+        "name_kr": "주문수량",
+        "type": "String",
+        "required": "N",
+        "length": "20",
+        "description": ""
+      },
+      {
+        "element": "- ord_pric",
+        "name_kr": "주문가격",
+        "type": "String",
+        "required": "N",
+        "length": "20",
+        "description": ""
+      },
+      {
+        "element": "- oso_qty",
+        "name_kr": "미체결수량",
+        "type": "String",
+        "required": "N",
+        "length": "20",
+        "description": ""
+      },
+      {
+        "element": "- cntr_tot_amt",
+        "name_kr": "체결누계금액",
+        "type": "String",
+        "required": "N",
+        "length": "20",
+        "description": ""
+      },
+      {
+        "element": "- orig_ord_no",
+        "name_kr": "원주문번호",
+        "type": "String",
+        "required": "N",
+        "length": "20",
+        "description": ""
+      },
+      {
+        "element": "- io_tp_nm",
+        "name_kr": "주문구분",
+        "type": "String",
+        "required": "N",
+        "length": "20",
+        "description": ""
+      },
+      {
+        "element": "- trde_tp",
+        "name_kr": "매매구분",
+        "type": "String",
+        "required": "N",
+        "length": "20",
+        "description": ""
+      },
+      {
+        "element": "- tm",
+        "name_kr": "시간",
+        "type": "String",
+        "required": "N",
+        "length": "20",
+        "description": ""
+      },
+      {
+        "element": "- cntr_no",
+        "name_kr": "체결번호",
+        "type": "String",
+        "required": "N",
+        "length": "20",
+        "description": ""
+      },
+      {
+        "element": "- cntr_pric",
+        "name_kr": "체결가",
+        "type": "String",
+        "required": "N",
+        "length": "20",
+        "description": ""
+      },
+      {
+        "element": "- cntr_qty",
+        "name_kr": "체결량",
+        "type": "String",
+        "required": "N",
+        "length": "20",
+        "description": ""
+      },
+      {
+        "element": "- cur_prc",
+        "name_kr": "현재가",
+        "type": "String",
+        "required": "N",
+        "length": "20",
+        "description": ""
+      },
+      {
+        "element": "- sel_bid",
+        "name_kr": "매도호가",
+        "type": "String",
+        "required": "N",
+        "length": "20",
+        "description": ""
+      },
+      {
+        "element": "- buy_bid",
+        "name_kr": "매수호가",
+        "type": "String",
+        "required": "N",
+        "length": "20",
+        "description": ""
+      },
+      {
+        "element": "- unit_cntr_pric",
+        "name_kr": "단위체결가",
+        "type": "String",
+        "required": "N",
+        "length": "20",
+        "description": ""
+      },
+      {
+        "element": "- unit_cntr_qty",
+        "name_kr": "단위체결량",
+        "type": "String",
+        "required": "N",
+        "length": "20",
+        "description": ""
+      },
+      {
+        "element": "- tdy_trde_cmsn",
+        "name_kr": "당일매매수수료",
+        "type": "String",
+        "required": "N",
+        "length": "20",
+        "description": ""
+      },
+      {
+        "element": "- tdy_trde_tax",
+        "name_kr": "당일매매세금",
+        "type": "String",
+        "required": "N",
+        "length": "20",
+        "description": ""
+      },
+      {
+        "element": "- ind_invsr",
+        "name_kr": "개인투자자",
+        "type": "String",
+        "required": "N",
+        "length": "20",
+        "description": ""
+      },
+      {
+        "element": "- stex_tp",
+        "name_kr": "거래소구분",
+        "type": "String",
+        "required": "N",
+        "length": "20",
+        "description": "0 : 통합, 1 : KRX, 2 : NXT"
+      },
+      {
+        "element": "- stex_tp_txt",
+        "name_kr": "거래소구분텍스트",
+        "type": "String",
+        "required": "N",
+        "length": "20",
+        "description": "통합,KRX,NXT"
+      },
+      {
+        "element": "- sor_yn",
+        "name_kr": "SOR 여부값",
+        "type": "String",
+        "required": "N",
+        "length": "20",
+        "description": "Y,N"
+      },
+      {
+        "element": "- stop_pric",
+        "name_kr": "스톱가",
+        "type": "String",
+        "required": "N",
+        "length": "20",
+        "description": "스톱지정가주문 스톱가"
+      }
+    ],
+    "request_example": "{\n    \"all_stk_tp\": \"1\",\n    \"trde_tp\": \"0\",\n    \"stk_cd\": \"005930\",\n    \"stex_tp\": \"0\"\n}",
+    "response_example": "{\n    \"oso\": [\n        {\n            \"acnt_no\": \"1234567890\",\n            \"ord_no\": \"0000069\",\n            \"mang_empno\": \"\",\n            \"stk_cd\": \"005930\",\n            \"tsk_tp\": \"\",\n            \"ord_stt\": \"접수\",\n            \"stk_nm\": \"삼성전자\",\n            \"ord_qty\": \"1\",\n            \"ord_pric\": \"0\",\n            \"oso_qty\": \"1\",\n            \"cntr_tot_amt\": \"0\",\n            \"orig_ord_no\": \"0000000\",\n            \"io_tp_nm\": \"+매수\",\n            \"trde_tp\": \"시장가\",\n            \"tm\": \"154113\",\n            \"cntr_no\": \"\",\n            \"cntr_pric\": \"0\",\n            \"cntr_qty\": \"0\",\n            \"cur_prc\": \"+74100\",\n            \"sel_bid\": \"0\",\n            \"buy_bid\": \"+74100\",\n            \"unit_cntr_pric\": \"\",\n            \"unit_cntr_qty\": \"\",\n            \"tdy_trde_cmsn\": \"0\",\n            \"tdy_trde_tax\": \"0\",\n            \"ind_invsr\": \"\",\n            \"stex_tp\": \"1\",\n            \"stex_tp_txt\": \"KRX\",\n            \"sor_yn\": \"N\"\n        }\n    ],\n    \"return_code\": 0,\n    \"return_msg\": \" 조회가 완료되었습니다.\"\n}"
+  },
+  "체결요청(ka10076)": {
+    "sheet_name": "체결요청(ka10076)",
+    "basic_info": {
+      "api_name": "체결요청",
+      "api_id": "ka10076",
+      "method": "POST",
+      "prod_domain": "https://api.kiwoom.com",
+      "mock_domain": "https://mockapi.kiwoom.com(KRX만 지원가능)",
+      "url": "/api/dostk/acnt"
+    },
+    "request_header": [
+      {
+        "element": "api-id",
+        "name_kr": "TR명",
+        "type": "String",
+        "required": "Y",
+        "length": "10",
+        "description": ""
+      },
+      {
+        "element": "authorization",
+        "name_kr": "접근토큰",
+        "type": "String",
+        "required": "Y",
+        "length": "1000",
+        "description": "토큰 지정시 토큰타입(\"Bearer\") 붙혀서 호출 \n 예) Bearer Egicyx..."
+      },
+      {
+        "element": "cont-yn",
+        "name_kr": "연속조회여부",
+        "type": "String",
+        "required": "N",
+        "length": "1",
+        "description": "응답 Header의 연속조회여부값이 Y일 경우 다음데이터 요청시 응답 Header의 cont-yn값 세팅"
+      },
+      {
+        "element": "next-key",
+        "name_kr": "연속조회키",
+        "type": "String",
+        "required": "N",
+        "length": "50",
+        "description": "응답 Header의 연속조회여부값이 Y일 경우 다음데이터 요청시 응답 Header의 next-key값 세팅"
+      }
+    ],
+    "request_body": [
+      {
+        "element": "stk_cd",
+        "name_kr": "종목코드",
+        "type": "String",
+        "required": "N",
+        "length": "6",
+        "description": ""
+      },
+      {
+        "element": "qry_tp",
+        "name_kr": "조회구분",
+        "type": "String",
+        "required": "Y",
+        "length": "1",
+        "description": "0:전체, 1:종목"
+      },
+      {
+        "element": "sell_tp",
+        "name_kr": "매도수구분",
+        "type": "String",
+        "required": "Y",
+        "length": "1",
+        "description": "0:전체, 1:매도, 2:매수"
+      },
+      {
+        "element": "ord_no",
+        "name_kr": "주문번호",
+        "type": "String",
+        "required": "N",
+        "length": "10",
+        "description": "검색 기준 값으로 입력한 주문번호 보다 과거에 체결된 내역이 조회됩니다."
+      },
+      {
+        "element": "stex_tp",
+        "name_kr": "거래소구분",
+        "type": "String",
+        "required": "Y",
+        "length": "1",
+        "description": "0 : 통합, 1 : KRX, 2 : NXT"
+      }
+    ],
+    "response_header": [
+      {
+        "element": "api-id",
+        "name_kr": "TR명",
+        "type": "String",
+        "required": "Y",
+        "length": "10",
+        "description": ""
+      },
+      {
+        "element": "cont-yn",
+        "name_kr": "연속조회여부",
+        "type": "String",
+        "required": "N",
+        "length": "1",
+        "description": "다음 데이터가 있을시 Y값 전달"
+      },
+      {
+        "element": "next-key",
+        "name_kr": "연속조회키",
+        "type": "String",
+        "required": "N",
+        "length": "50",
+        "description": "다음 데이터가 있을시 다음 키값 전달"
+      }
+    ],
+    "response_body": [
+      {
+        "element": "cntr",
+        "name_kr": "체결",
+        "type": "LIST",
+        "required": "N",
+        "length": "",
+        "description": ""
+      },
+      {
+        "element": "- ord_no",
+        "name_kr": "주문번호",
+        "type": "String",
+        "required": "N",
+        "length": "20",
+        "description": ""
+      },
+      {
+        "element": "- stk_nm",
+        "name_kr": "종목명",
+        "type": "String",
+        "required": "N",
+        "length": "20",
+        "description": ""
+      },
+      {
+        "element": "- io_tp_nm",
+        "name_kr": "주문구분",
+        "type": "String",
+        "required": "N",
+        "length": "20",
+        "description": ""
+      },
+      {
+        "element": "- ord_pric",
+        "name_kr": "주문가격",
+        "type": "String",
+        "required": "N",
+        "length": "20",
+        "description": ""
+      },
+      {
+        "element": "- ord_qty",
+        "name_kr": "주문수량",
+        "type": "String",
+        "required": "N",
+        "length": "20",
+        "description": ""
+      },
+      {
+        "element": "- cntr_pric",
+        "name_kr": "체결가",
+        "type": "String",
+        "required": "N",
+        "length": "20",
+        "description": ""
+      },
+      {
+        "element": "- cntr_qty",
+        "name_kr": "체결량",
+        "type": "String",
+        "required": "N",
+        "length": "20",
+        "description": ""
+      },
+      {
+        "element": "- oso_qty",
+        "name_kr": "미체결수량",
+        "type": "String",
+        "required": "N",
+        "length": "20",
+        "description": ""
+      },
+      {
+        "element": "- tdy_trde_cmsn",
+        "name_kr": "당일매매수수료",
+        "type": "String",
+        "required": "N",
+        "length": "20",
+        "description": ""
+      },
+      {
+        "element": "- tdy_trde_tax",
+        "name_kr": "당일매매세금",
+        "type": "String",
+        "required": "N",
+        "length": "20",
+        "description": ""
+      },
+      {
+        "element": "- ord_stt",
+        "name_kr": "주문상태",
+        "type": "String",
+        "required": "N",
+        "length": "20",
+        "description": ""
+      },
+      {
+        "element": "- trde_tp",
+        "name_kr": "매매구분",
+        "type": "String",
+        "required": "N",
+        "length": "20",
+        "description": ""
+      },
+      {
+        "element": "- orig_ord_no",
+        "name_kr": "원주문번호",
+        "type": "String",
+        "required": "N",
+        "length": "20",
+        "description": ""
+      },
+      {
+        "element": "- ord_tm",
+        "name_kr": "주문시간",
+        "type": "String",
+        "required": "N",
+        "length": "20",
+        "description": ""
+      },
+      {
+        "element": "- stk_cd",
+        "name_kr": "종목코드",
+        "type": "String",
+        "required": "N",
+        "length": "20",
+        "description": ""
+      },
+      {
+        "element": "- stex_tp",
+        "name_kr": "거래소구분",
+        "type": "String",
+        "required": "N",
+        "length": "20",
+        "description": "0 : 통합, 1 : KRX, 2 : NXT"
+      },
+      {
+        "element": "- stex_tp_txt",
+        "name_kr": "거래소구분텍스트",
+        "type": "String",
+        "required": "N",
+        "length": "20",
+        "description": "통합,KRX,NXT"
+      },
+      {
+        "element": "- sor_yn",
+        "name_kr": "SOR 여부값",
+        "type": "String",
+        "required": "N",
+        "length": "20",
+        "description": "Y,N"
+      },
+      {
+        "element": "- stop_pric",
+        "name_kr": "스톱가",
+        "type": "String",
+        "required": "N",
+        "length": "20",
+        "description": "스톱지정가주문 스톱가"
+      }
+    ],
+    "request_example": "{\n    \"stk_cd\": \"005930\",\n    \"qry_tp\": \"1\",\n    \"sell_tp\": \"0\",\n    \"ord_no\": \"\",\n    \"stex_tp\": \"0\"\n}",
+    "response_example": "{\n    \"cntr\": [\n        {\n            \"ord_no\": \"0000037\",\n            \"stk_nm\": \"삼성전자\",\n            \"io_tp_nm\": \"-매도\",\n            \"ord_pric\": \"158200\",\n            \"ord_qty\": \"1\",\n            \"cntr_pric\": \"158200\",\n            \"cntr_qty\": \"1\",\n            \"oso_qty\": \"0\",\n            \"tdy_trde_cmsn\": \"310\",\n            \"tdy_trde_tax\": \"284\",\n            \"ord_stt\": \"체결\",\n            \"trde_tp\": \"보통\",\n            \"orig_ord_no\": \"0000000\",\n            \"ord_tm\": \"153815\",\n            \"stk_cd\": \"005930\",\n            \"stex_tp\": \"0\",\n            \"stex_tp_txt\": \"SOR\",\n            \"sor_yn\": \"Y\"\n        },\n        {\n            \"ord_no\": \"0000036\",\n            \"stk_nm\": \"삼성전자\",\n            \"io_tp_nm\": \"-매도\",\n            \"ord_pric\": \"158200\",\n            \"ord_qty\": \"1\",\n            \"cntr_pric\": \"158200\",\n            \"cntr_qty\": \"1\",\n            \"oso_qty\": \"0\",\n            \"tdy_trde_cmsn\": \"310\",\n            \"tdy_trde_tax\": \"284\",\n            \"ord_stt\": \"체결\",\n            \"trde_tp\": \"보통\",\n            \"orig_ord_no\": \"0000000\",\n            \"ord_tm\": \"153806\",\n            \"stk_cd\": \"005930\",\n            \"stex_tp\": \"0\",\n            \"stex_tp_txt\": \"SOR\",\n            \"sor_yn\": \"Y\"\n        }\n    ],\n    \"return_code\": 0,\n    \"return_msg\": \" 조회가 완료되었습니다.\"\n}"
+  },
+  "예수금상세현황요청(kt00001)": {
+    "sheet_name": "예수금상세현황요청(kt00001)",
+    "basic_info": {
+      "api_name": "예수금상세현황요청",
+      "api_id": "kt00001",
+      "method": "POST",
+      "prod_domain": "https://api.kiwoom.com",
+      "mock_domain": "https://mockapi.kiwoom.com(KRX만 지원가능)",
+      "url": "/api/dostk/acnt"
+    },
+    "request_header": [
+      {
+        "element": "api-id",
+        "name_kr": "TR명",
+        "type": "String",
+        "required": "Y",
+        "length": "10",
+        "description": ""
+      },
+      {
+        "element": "authorization",
+        "name_kr": "접근토큰",
+        "type": "String",
+        "required": "Y",
+        "length": "1000",
+        "description": "토큰 지정시 토큰타입(\"Bearer\") 붙혀서 호출 \n 예) Bearer Egicyx..."
+      },
+      {
+        "element": "cont-yn",
+        "name_kr": "연속조회여부",
+        "type": "String",
+        "required": "N",
+        "length": "1",
+        "description": "응답 Header의 연속조회여부값이 Y일 경우 다음데이터 요청시 응답 Header의 cont-yn값 세팅"
+      },
+      {
+        "element": "next-key",
+        "name_kr": "연속조회키",
+        "type": "String",
+        "required": "N",
+        "length": "50",
+        "description": "응답 Header의 연속조회여부값이 Y일 경우 다음데이터 요청시 응답 Header의 next-key값 세팅"
+      }
+    ],
+    "request_body": [
+      {
+        "element": "qry_tp",
+        "name_kr": "조회구분",
+        "type": "String",
+        "required": "Y",
+        "length": "1",
+        "description": "3:추정조회, 2:일반조회"
+      }
+    ],
+    "response_header": [
+      {
+        "element": "api-id",
+        "name_kr": "TR명",
+        "type": "String",
+        "required": "Y",
+        "length": "10",
+        "description": ""
+      },
+      {
+        "element": "cont-yn",
+        "name_kr": "연속조회여부",
+        "type": "String",
+        "required": "N",
+        "length": "1",
+        "description": "다음 데이터가 있을시 Y값 전달"
+      },
+      {
+        "element": "next-key",
+        "name_kr": "연속조회키",
+        "type": "String",
+        "required": "N",
+        "length": "50",
+        "description": "다음 데이터가 있을시 다음 키값 전달"
+      }
+    ],
+    "response_body": [
+      {
+        "element": "entr",
+        "name_kr": "예수금",
+        "type": "String",
+        "required": "N",
+        "length": "15",
+        "description": ""
+      },
+      {
+        "element": "profa_ch",
+        "name_kr": "주식증거금현금",
+        "type": "String",
+        "required": "N",
+        "length": "15",
+        "description": ""
+      },
+      {
+        "element": "bncr_profa_ch",
+        "name_kr": "수익증권증거금현금",
+        "type": "String",
+        "required": "N",
+        "length": "15",
+        "description": ""
+      },
+      {
+        "element": "nxdy_bncr_sell_exct",
+        "name_kr": "익일수익증권매도정산대금",
+        "type": "String",
+        "required": "N",
+        "length": "15",
+        "description": ""
+      },
+      {
+        "element": "fc_stk_krw_repl_set_amt",
+        "name_kr": "해외주식원화대용설정금",
+        "type": "String",
+        "required": "N",
+        "length": "15",
+        "description": ""
+      },
+      {
+        "element": "crd_grnta_ch",
+        "name_kr": "신용보증금현금",
+        "type": "String",
+        "required": "N",
+        "length": "15",
+        "description": ""
+      },
+      {
+        "element": "crd_grnt_ch",
+        "name_kr": "신용담보금현금",
+        "type": "String",
+        "required": "N",
+        "length": "15",
+        "description": ""
+      },
+      {
+        "element": "add_grnt_ch",
+        "name_kr": "추가담보금현금",
+        "type": "String",
+        "required": "N",
+        "length": "15",
+        "description": ""
+      },
+      {
+        "element": "etc_profa",
+        "name_kr": "기타증거금",
+        "type": "String",
+        "required": "N",
+        "length": "15",
+        "description": ""
+      },
+      {
+        "element": "uncl_stk_amt",
+        "name_kr": "미수확보금",
+        "type": "String",
+        "required": "N",
+        "length": "15",
+        "description": ""
+      },
+      {
+        "element": "shrts_prica",
+        "name_kr": "공매도대금",
+        "type": "String",
+        "required": "N",
+        "length": "15",
+        "description": ""
+      },
+      {
+        "element": "crd_set_grnta",
+        "name_kr": "신용설정평가금",
+        "type": "String",
+        "required": "N",
+        "length": "15",
+        "description": ""
+      },
+      {
+        "element": "chck_ina_amt",
+        "name_kr": "수표입금액",
+        "type": "String",
+        "required": "N",
+        "length": "15",
+        "description": ""
+      },
+      {
+        "element": "etc_chck_ina_amt",
+        "name_kr": "기타수표입금액",
+        "type": "String",
+        "required": "N",
+        "length": "15",
+        "description": ""
+      },
+      {
+        "element": "crd_grnt_ruse",
+        "name_kr": "신용담보재사용",
+        "type": "String",
+        "required": "N",
+        "length": "15",
+        "description": ""
+      },
+      {
+        "element": "knx_asset_evltv",
+        "name_kr": "코넥스기본예탁금",
+        "type": "String",
+        "required": "N",
+        "length": "15",
+        "description": ""
+      },
+      {
+        "element": "elwdpst_evlta",
+        "name_kr": "ELW예탁평가금",
+        "type": "String",
+        "required": "N",
+        "length": "15",
+        "description": ""
+      },
+      {
+        "element": "crd_ls_rght_frcs_amt",
+        "name_kr": "신용대주권리예정금액",
+        "type": "String",
+        "required": "N",
+        "length": "15",
+        "description": ""
+      },
+      {
+        "element": "lvlh_join_amt",
+        "name_kr": "생계형가입금액",
+        "type": "String",
+        "required": "N",
+        "length": "15",
+        "description": ""
+      },
+      {
+        "element": "lvlh_trns_alowa",
+        "name_kr": "생계형입금가능금액",
+        "type": "String",
+        "required": "N",
+        "length": "15",
+        "description": ""
+      },
+      {
+        "element": "repl_amt",
+        "name_kr": "대용금평가금액(합계)",
+        "type": "String",
+        "required": "N",
+        "length": "15",
+        "description": ""
+      },
+      {
+        "element": "remn_repl_evlta",
+        "name_kr": "잔고대용평가금액",
+        "type": "String",
+        "required": "N",
+        "length": "15",
+        "description": ""
+      },
+      {
+        "element": "trst_remn_repl_evlta",
+        "name_kr": "위탁대용잔고평가금액",
+        "type": "String",
+        "required": "N",
+        "length": "15",
+        "description": ""
+      },
+      {
+        "element": "bncr_remn_repl_evlta",
+        "name_kr": "수익증권대용평가금액",
+        "type": "String",
+        "required": "N",
+        "length": "15",
+        "description": ""
+      },
+      {
+        "element": "profa_repl",
+        "name_kr": "위탁증거금대용",
+        "type": "String",
+        "required": "N",
+        "length": "15",
+        "description": ""
+      },
+      {
+        "element": "crd_grnta_repl",
+        "name_kr": "신용보증금대용",
+        "type": "String",
+        "required": "N",
+        "length": "15",
+        "description": ""
+      },
+      {
+        "element": "crd_grnt_repl",
+        "name_kr": "신용담보금대용",
+        "type": "String",
+        "required": "N",
+        "length": "15",
+        "description": ""
+      },
+      {
+        "element": "add_grnt_repl",
+        "name_kr": "추가담보금대용",
+        "type": "String",
+        "required": "N",
+        "length": "15",
+        "description": ""
+      },
+      {
+        "element": "rght_repl_amt",
+        "name_kr": "권리대용금",
+        "type": "String",
+        "required": "N",
+        "length": "15",
+        "description": ""
+      },
+      {
+        "element": "pymn_alow_amt",
+        "name_kr": "출금가능금액",
+        "type": "String",
+        "required": "N",
+        "length": "15",
+        "description": ""
+      },
+      {
+        "element": "wrap_pymn_alow_amt",
+        "name_kr": "랩출금가능금액",
+        "type": "String",
+        "required": "N",
+        "length": "15",
+        "description": ""
+      },
+      {
+        "element": "ord_alow_amt",
+        "name_kr": "주문가능금액",
+        "type": "String",
+        "required": "N",
+        "length": "15",
+        "description": ""
+      },
+      {
+        "element": "bncr_buy_alowa",
+        "name_kr": "수익증권매수가능금액",
+        "type": "String",
+        "required": "N",
+        "length": "15",
+        "description": ""
+      },
+      {
+        "element": "20stk_ord_alow_amt",
+        "name_kr": "20%종목주문가능금액",
+        "type": "String",
+        "required": "N",
+        "length": "15",
+        "description": ""
+      },
+      {
+        "element": "30stk_ord_alow_amt",
+        "name_kr": "30%종목주문가능금액",
+        "type": "String",
+        "required": "N",
+        "length": "15",
+        "description": ""
+      },
+      {
+        "element": "40stk_ord_alow_amt",
+        "name_kr": "40%종목주문가능금액",
+        "type": "String",
+        "required": "N",
+        "length": "15",
+        "description": ""
+      },
+      {
+        "element": "100stk_ord_alow_amt",
+        "name_kr": "100%종목주문가능금액",
+        "type": "String",
+        "required": "N",
+        "length": "15",
+        "description": ""
+      },
+      {
+        "element": "ch_uncla",
+        "name_kr": "현금미수금",
+        "type": "String",
+        "required": "N",
+        "length": "15",
+        "description": ""
+      },
+      {
+        "element": "ch_uncla_dlfe",
+        "name_kr": "현금미수연체료",
+        "type": "String",
+        "required": "N",
+        "length": "15",
+        "description": ""
+      },
+      {
+        "element": "ch_uncla_tot",
+        "name_kr": "현금미수금합계",
+        "type": "String",
+        "required": "N",
+        "length": "15",
+        "description": ""
+      },
+      {
+        "element": "crd_int_npay",
+        "name_kr": "신용이자미납",
+        "type": "String",
+        "required": "N",
+        "length": "15",
+        "description": ""
+      },
+      {
+        "element": "int_npay_amt_dlfe",
+        "name_kr": "신용이자미납연체료",
+        "type": "String",
+        "required": "N",
+        "length": "15",
+        "description": ""
+      },
+      {
+        "element": "int_npay_amt_tot",
+        "name_kr": "신용이자미납합계",
+        "type": "String",
+        "required": "N",
+        "length": "15",
+        "description": ""
+      },
+      {
+        "element": "etc_loana",
+        "name_kr": "기타대여금",
+        "type": "String",
+        "required": "N",
+        "length": "15",
+        "description": ""
+      },
+      {
+        "element": "etc_loana_dlfe",
+        "name_kr": "기타대여금연체료",
+        "type": "String",
+        "required": "N",
+        "length": "15",
+        "description": ""
+      },
+      {
+        "element": "etc_loan_tot",
+        "name_kr": "기타대여금합계",
+        "type": "String",
+        "required": "N",
+        "length": "15",
+        "description": ""
+      },
+      {
+        "element": "nrpy_loan",
+        "name_kr": "미상환융자금",
+        "type": "String",
+        "required": "N",
+        "length": "15",
+        "description": ""
+      },
+      {
+        "element": "loan_sum",
+        "name_kr": "융자금합계",
+        "type": "String",
+        "required": "N",
+        "length": "15",
+        "description": ""
+      },
+      {
+        "element": "ls_sum",
+        "name_kr": "대주금합계",
+        "type": "String",
+        "required": "N",
+        "length": "15",
+        "description": ""
+      },
+      {
+        "element": "crd_grnt_rt",
+        "name_kr": "신용담보비율",
+        "type": "String",
+        "required": "N",
+        "length": "15",
+        "description": ""
+      },
+      {
+        "element": "mdstrm_usfe",
+        "name_kr": "중도이용료",
+        "type": "String",
+        "required": "N",
+        "length": "15",
+        "description": ""
+      },
+      {
+        "element": "min_ord_alow_yn",
+        "name_kr": "최소주문가능금액",
+        "type": "String",
+        "required": "N",
+        "length": "15",
+        "description": ""
+      },
+      {
+        "element": "loan_remn_evlt_amt",
+        "name_kr": "대출총평가금액",
+        "type": "String",
+        "required": "N",
+        "length": "15",
+        "description": ""
+      },
+      {
+        "element": "dpst_grntl_remn",
+        "name_kr": "예탁담보대출잔고",
+        "type": "String",
+        "required": "N",
+        "length": "15",
+        "description": ""
+      },
+      {
+        "element": "sell_grntl_remn",
+        "name_kr": "매도담보대출잔고",
+        "type": "String",
+        "required": "N",
+        "length": "15",
+        "description": ""
+      },
+      {
+        "element": "d1_entra",
+        "name_kr": "d+1추정예수금",
+        "type": "String",
+        "required": "N",
+        "length": "15",
+        "description": ""
+      },
+      {
+        "element": "d1_slby_exct_amt",
+        "name_kr": "d+1매도매수정산금",
+        "type": "String",
+        "required": "N",
+        "length": "15",
+        "description": ""
+      },
+      {
+        "element": "d1_buy_exct_amt",
+        "name_kr": "d+1매수정산금",
+        "type": "String",
+        "required": "N",
+        "length": "15",
+        "description": ""
+      },
+      {
+        "element": "d1_out_rep_mor",
+        "name_kr": "d+1미수변제소요금",
+        "type": "String",
+        "required": "N",
+        "length": "15",
+        "description": ""
+      },
+      {
+        "element": "d1_sel_exct_amt",
+        "name_kr": "d+1매도정산금",
+        "type": "String",
+        "required": "N",
+        "length": "15",
+        "description": ""
+      },
+      {
+        "element": "d1_pymn_alow_amt",
+        "name_kr": "d+1출금가능금액",
+        "type": "String",
+        "required": "N",
+        "length": "15",
+        "description": ""
+      },
+      {
+        "element": "d2_entra",
+        "name_kr": "d+2추정예수금",
+        "type": "String",
+        "required": "N",
+        "length": "15",
+        "description": ""
+      },
+      {
+        "element": "d2_slby_exct_amt",
+        "name_kr": "d+2매도매수정산금",
+        "type": "String",
+        "required": "N",
+        "length": "15",
+        "description": ""
+      },
+      {
+        "element": "d2_buy_exct_amt",
+        "name_kr": "d+2매수정산금",
+        "type": "String",
+        "required": "N",
+        "length": "15",
+        "description": ""
+      },
+      {
+        "element": "d2_out_rep_mor",
+        "name_kr": "d+2미수변제소요금",
+        "type": "String",
+        "required": "N",
+        "length": "15",
+        "description": ""
+      },
+      {
+        "element": "d2_sel_exct_amt",
+        "name_kr": "d+2매도정산금",
+        "type": "String",
+        "required": "N",
+        "length": "15",
+        "description": ""
+      },
+      {
+        "element": "d2_pymn_alow_amt",
+        "name_kr": "d+2출금가능금액",
+        "type": "String",
+        "required": "N",
+        "length": "15",
+        "description": ""
+      },
+      {
+        "element": "50stk_ord_alow_amt",
+        "name_kr": "50%종목주문가능금액",
+        "type": "String",
+        "required": "N",
+        "length": "15",
+        "description": ""
+      },
+      {
+        "element": "60stk_ord_alow_amt",
+        "name_kr": "60%종목주문가능금액",
+        "type": "String",
+        "required": "N",
+        "length": "15",
+        "description": ""
+      },
+      {
+        "element": "stk_entr_prst",
+        "name_kr": "종목별예수금",
+        "type": "LIST",
+        "required": "N",
+        "length": "",
+        "description": ""
+      },
+      {
+        "element": "- crnc_cd",
+        "name_kr": "통화코드",
+        "type": "String",
+        "required": "N",
+        "length": "3",
+        "description": ""
+      },
+      {
+        "element": "- fx_entr",
+        "name_kr": "외화예수금",
+        "type": "String",
+        "required": "N",
+        "length": "15",
+        "description": ""
+      },
+      {
+        "element": "- fc_krw_repl_evlta",
+        "name_kr": "원화대용평가금",
+        "type": "String",
+        "required": "N",
+        "length": "15",
+        "description": ""
+      },
+      {
+        "element": "- fc_trst_profa",
+        "name_kr": "해외주식증거금",
+        "type": "String",
+        "required": "N",
+        "length": "15",
+        "description": ""
+      },
+      {
+        "element": "- pymn_alow_amt",
+        "name_kr": "출금가능금액",
+        "type": "String",
+        "required": "N",
+        "length": "15",
+        "description": ""
+      },
+      {
+        "element": "- pymn_alow_amt_entr",
+        "name_kr": "출금가능금액(예수금)",
+        "type": "String",
+        "required": "N",
+        "length": "15",
+        "description": ""
+      },
+      {
+        "element": "- ord_alow_amt_entr",
+        "name_kr": "주문가능금액(예수금)",
+        "type": "String",
+        "required": "N",
+        "length": "15",
+        "description": ""
+      },
+      {
+        "element": "- fc_uncla",
+        "name_kr": "외화미수(합계)",
+        "type": "String",
+        "required": "N",
+        "length": "15",
+        "description": ""
+      },
+      {
+        "element": "- fc_ch_uncla",
+        "name_kr": "외화현금미수금",
+        "type": "String",
+        "required": "N",
+        "length": "15",
+        "description": ""
+      },
+      {
+        "element": "- dly_amt",
+        "name_kr": "연체료",
+        "type": "String",
+        "required": "N",
+        "length": "15",
+        "description": ""
+      },
+      {
+        "element": "- d1_fx_entr",
+        "name_kr": "d+1외화예수금",
+        "type": "String",
+        "required": "N",
+        "length": "15",
+        "description": ""
+      },
+      {
+        "element": "- d2_fx_entr",
+        "name_kr": "d+2외화예수금",
+        "type": "String",
+        "required": "N",
+        "length": "15",
+        "description": ""
+      },
+      {
+        "element": "- d3_fx_entr",
+        "name_kr": "d+3외화예수금",
+        "type": "String",
+        "required": "N",
+        "length": "15",
+        "description": ""
+      },
+      {
+        "element": "- d4_fx_entr",
+        "name_kr": "d+4외화예수금",
+        "type": "String",
+        "required": "N",
+        "length": "15",
+        "description": ""
+      }
+    ],
+    "request_example": "{\n    \"qry_tp\": \"3\"\n}",
+    "response_example": "{\n    \"entr\": \"000000000017534\",\n    \"profa_ch\": \"000000000032193\",\n    \"bncr_profa_ch\": \"000000000000000\",\n    \"nxdy_bncr_sell_exct\": \"000000000000000\",\n    \"fc_stk_krw_repl_set_amt\": \"000000000000000\",\n    \"crd_grnta_ch\": \"000000000000000\",\n    \"crd_grnt_ch\": \"000000000000000\",\n    \"add_grnt_ch\": \"000000000000000\",\n    \"etc_profa\": \"000000000000000\",\n    \"uncl_stk_amt\": \"000000000000000\",\n    \"shrts_prica\": \"000000000000000\",\n    \"crd_set_grnta\": \"000000000000000\",\n    \"chck_ina_amt\": \"000000000000000\",\n    \"etc_chck_ina_amt\": \"000000000000000\",\n    \"crd_grnt_ruse\": \"000000000000000\",\n    \"knx_asset_evltv\": \"000000000000000\",\n    \"elwdpst_evlta\": \"000000000031269\",\n    \"crd_ls_rght_frcs_amt\": \"000000000000000\",\n    \"lvlh_join_amt\": \"000000000000000\",\n    \"lvlh_trns_alowa\": \"000000000000000\",\n    \"repl_amt\": \"000000003915500\",\n    \"remn_repl_evlta\": \"000000003915500\",\n    \"trst_remn_repl_evlta\": \"000000000000000\",\n    \"bncr_remn_repl_evlta\": \"000000000000000\",\n    \"profa_repl\": \"000000000000000\",\n    \"crd_grnta_repl\": \"000000000000000\",\n    \"crd_grnt_repl\": \"000000000000000\",\n    \"add_grnt_repl\": \"000000000000000\",\n    \"rght_repl_amt\": \"000000000000000\",\n    \"pymn_alow_amt\": \"000000000085341\",\n    \"wrap_pymn_alow_amt\": \"000000000000000\",\n    \"ord_alow_amt\": \"000000000085341\",\n    \"bncr_buy_alowa\": \"000000000085341\",\n    \"20stk_ord_alow_amt\": \"000000000012550\",\n    \"30stk_ord_alow_amt\": \"000000000012550\",\n    \"40stk_ord_alow_amt\": \"000000000012550\",\n    \"100stk_ord_alow_amt\": \"000000000012550\",\n    \"ch_uncla\": \"000000000000000\",\n    \"ch_uncla_dlfe\": \"000000000000000\",\n    \"ch_uncla_tot\": \"000000000000000\",\n    \"crd_int_npay\": \"000000000000000\",\n    \"int_npay_amt_dlfe\": \"000000000000000\",\n    \"int_npay_amt_tot\": \"000000000000000\",\n    \"etc_loana\": \"000000000000000\",\n    \"etc_loana_dlfe\": \"000000000000000\",\n    \"etc_loan_tot\": \"000000000000000\",\n    \"nrpy_loan\": \"000000000000000\",\n    \"loan_sum\": \"000000000000000\",\n    \"ls_sum\": \"000000000000000\",\n    \"crd_grnt_rt\": \"0.00\",\n    \"mdstrm_usfe\": \"000000000388388\",\n    \"min_ord_alow_yn\": \"000000000000000\",\n    \"loan_remn_evlt_amt\": \"000000000000000\",\n    \"dpst_grntl_remn\": \"000000000000000\",\n    \"sell_grntl_remn\": \"000000000000000\",\n    \"d1_entra\": \"000000000017450\",\n    \"d1_slby_exct_amt\": \"-00000000000084\",\n    \"d1_buy_exct_amt\": \"000000000048240\",\n    \"d1_out_rep_mor\": \"000000000000000\",\n    \"d1_sel_exct_amt\": \"000000000048156\",\n    \"d1_pymn_alow_amt\": \"000000000012550\",\n    \"d2_entra\": \"000000000012550\",\n    \"d2_slby_exct_amt\": \"-00000000004900\",\n    \"d2_buy_exct_amt\": \"000000000004900\",\n    \"d2_out_rep_mor\": \"000000000000000\",\n    \"d2_sel_exct_amt\": \"000000000000000\",\n    \"d2_pymn_alow_amt\": \"000000000012550\",\n    \"50stk_ord_alow_amt\": \"000000000012550\",\n    \"60stk_ord_alow_amt\": \"000000000012550\",\n    \"stk_entr_prst\": [],\n    \"return_code\": 0,\n    \"return_msg\": \"조회가 완료되었습니다.\"\n}"
+  }
+}
