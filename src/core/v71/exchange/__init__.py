@@ -21,6 +21,14 @@ Constitutional rules (헌법, 01_PRD_MAIN.md §1):
     secrets from .env and feeding them in.
 """
 
+from .kiwoom_client import (
+    V71KiwoomBusinessError,
+    V71KiwoomClient,
+    V71KiwoomError,
+    V71KiwoomResponse,
+    V71KiwoomTradeType,
+    V71KiwoomTransportError,
+)
 from .rate_limiter import V71RateLimiter, V71RateLimiterStats
 from .token_manager import (
     V71TokenAuthError,
@@ -31,6 +39,12 @@ from .token_manager import (
 )
 
 __all__ = [
+    "V71KiwoomBusinessError",
+    "V71KiwoomClient",
+    "V71KiwoomError",
+    "V71KiwoomResponse",
+    "V71KiwoomTradeType",
+    "V71KiwoomTransportError",
     "V71RateLimiter",
     "V71RateLimiterStats",
     "V71TokenAuthError",

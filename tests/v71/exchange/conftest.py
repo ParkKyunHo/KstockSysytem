@@ -159,3 +159,107 @@ async def http_client(make_transport):
     async with httpx.AsyncClient(transport=transport) as client:
         client._test_transport = transport  # type: ignore[attr-defined]
         yield client
+
+
+# ---------------------------------------------------------------------------
+# Kiwoom client fixtures (P5-Kiwoom-2)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def make_kiwoom_response() -> Callable[..., dict]:
+    """Build a Kiwoom REST response spec for ``CallCountingTransport``."""
+
+    def _build(
+        *,
+        return_code: int = 0,
+        return_msg: str = "OK",
+        data: dict | None = None,
+        cont_yn: str = "N",
+        next_key: str = "",
+        status: int = 200,
+    ) -> dict[str, Any]:
+        body: dict[str, Any] = {"return_code": return_code, "return_msg": return_msg}
+        if data:
+            body.update(data)
+        return {
+            "status": status,
+            "json": body,
+            "headers": {"cont-yn": cont_yn, "next-key": next_key},
+        }
+
+    return _build
+
+
+class _RecordingTransport(httpx.MockTransport):
+    """``MockTransport`` that records each request + applies optional headers."""
+
+    def __init__(self, specs: list[dict[str, Any]]) -> None:
+        self.specs = specs
+        self.calls: int = 0
+        self.requests: list[httpx.Request] = []
+        super().__init__(self._handle)
+
+    def _handle(self, request: httpx.Request) -> httpx.Response:
+        self.requests.append(request)
+        idx = min(self.calls, len(self.specs) - 1)
+        self.calls += 1
+        spec = self.specs[idx]
+        if "raise" in spec and spec["raise"] is not None:
+            raise spec["raise"]
+        status = spec.get("status", 200)
+        body = spec.get("json", {})
+        headers = spec.get("headers", {})
+        return httpx.Response(status_code=status, json=body, headers=headers)
+
+
+@pytest.fixture
+def make_kiwoom_transport():
+    """Build a recording ``MockTransport`` from a list of Kiwoom response specs."""
+
+    def _build(specs: list[dict[str, Any]]) -> _RecordingTransport:
+        return _RecordingTransport(specs)
+
+    return _build
+
+
+@pytest.fixture
+def fake_token_manager():
+    """AsyncMock-backed V71TokenManager stand-in returning a fixed token."""
+
+    from unittest.mock import AsyncMock
+
+    manager = AsyncMock()
+    manager.get_token = AsyncMock(return_value="TKN_FIXTURE_TOKEN_1234ABCD")
+    return manager
+
+
+@pytest.fixture
+def fake_rate_limiter():
+    """AsyncMock-backed V71RateLimiter stand-in (acquire returns 0.0)."""
+
+    from unittest.mock import AsyncMock
+
+    limiter = AsyncMock()
+    limiter.acquire = AsyncMock(return_value=0.0)
+    return limiter
+
+
+@pytest.fixture
+def make_kiwoom_client(make_kiwoom_transport, fake_token_manager, fake_rate_limiter):
+    """Wire a ``V71KiwoomClient`` against a recording transport."""
+
+    from src.core.v71.exchange.kiwoom_client import V71KiwoomClient
+
+    def _build(specs=None, *, base_url="https://api.kiwoom.com"):
+        transport = make_kiwoom_transport(specs or [{"status": 200, "json": {"return_code": 0, "return_msg": "OK"}, "headers": {"cont-yn": "N", "next-key": ""}}])
+        http = httpx.AsyncClient(transport=transport, base_url=base_url)
+        client = V71KiwoomClient(
+            token_manager=fake_token_manager,
+            rate_limiter=fake_rate_limiter,
+            http_client=http,
+            base_url=base_url,
+        )
+        return client, transport, fake_token_manager, fake_rate_limiter
+
+    return _build
