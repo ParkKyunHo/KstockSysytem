@@ -2957,6 +2957,58 @@ uvicorn.run('src.web.v71.main:app', host='127.0.0.1', port=8001, log_level='info
 
 ---
 
+### Phase 5 후속 P5-Kiwoom-2: V71KiwoomClient (2026-04-28)
+
+**Commit `64ccf36`**: `feat(v71): exchange P5-Kiwoom-2 — V71KiwoomClient (5 핵심 API REST transport)`
+**규모**: 4 files +1320 / -0
+
+#### 워크플로우 데모 (`/v71-add-module` 12단계 적용)
+
+`/v71-add-module src/core/v71/exchange/kiwoom_client.py "..."` 호출 → 표준 12단계 자동:
+1. PRD 컨텍스트 로드 (KIWOOM_API_ANALYSIS / 04_ARCHITECTURE §7.1 / 07_SKILLS_SPEC §1)
+2. **v71-architect** → P0 2 + P1 2 + P2 2 권고 → 모두 반영
+3. 구현 (V71KiwoomClient + V71KiwoomResponse + V71KiwoomTradeType + 3 errors)
+4. **security-reviewer + test-strategy** 병렬 → M1 + L1 + 38 테스트 케이스
+5. 보안 패치 (lazy-init asyncio.Lock + retry 경고 docstring)
+6. 테스트 작성 (42 케이스, 그룹 A~F)
+7. 실행: 42/42 PASS in 0.71s
+8. 6 harness: 1/2/3/4/6 PASS, 5 WARN
+9. ruff --fix → 0 errors
+10. V7.1 회귀: 693/693 PASS (이전 651 + 42)
+11. Commit (no push 시점)
+12. WORK_LOG / memory 갱신 (이 섹션)
+
+이번에 처음으로 워크플로우 표준이 skill로 자동 호출되어 12단계가 실행됨.
+
+#### 신규 모듈 핵심
+
+**V71KiwoomClient (kiwoom_client.py, ~660 LOC 도큐먼테이션 포함)**:
+- Single `request()` 시임 + 8 도메인 메서드 (5 API의 8 동작)
+- DI: token_manager + rate_limiter + http_client
+- 보안: HTTPS 강제, trust_env=False, lazy-init lock, 응답 본문 token scrub, repr 안전
+- 에러: V71KiwoomTransportError (HTTP/JSON/network) + V71KiwoomBusinessError (return_code != 0, error_mapper 의존성 인스턴스 속성)
+- 5 API: ka10080 분봉 / ka10081 일봉 / kt10000~10003 주문 / ka10075 미체결 / kt00018 잔고
+- TradeType: LIMIT/MARKET only (BEST_LIMIT/PRIORITY 보류, kiwoom_api_skill V71OrderType과 충돌 회피)
+
+#### 보안 회귀 케이스 (Group D, ★)
+
+- `test_token_plaintext_never_appears_in_transport_error`: 4xx 응답 본문에 토큰 echo back → raise 메시지에 마스킹
+- `test_logs_never_contain_plaintext_token`: caplog로 모든 로그 라인 검증
+- `test_repr_does_not_leak_secrets`: V71KiwoomClient.__repr__에 token/secret 미포함
+
+#### 다음 단위 (P5-Kiwoom-3+)
+
+순서:
+1. **P5-Kiwoom-3**: `error_mapper.py` — `V71KiwoomBusinessError.return_code` → 타입 분기 (1700 RateLimit / 8005 TokenAuth / 8010 IPMismatch / 8030/8031 EnvMismatch / 1902 StockNotFound)
+   + 1700 지수 백오프 + 8005 force-refresh-and-retry. **security-reviewer 호출 필수**
+2. **P5-Kiwoom-4**: `kiwoom_websocket.py` — 0B/0D/00/04/1h 5 채널
+3. **P5-Kiwoom-5**: `order_manager.py` — kt10000~10003 + v71_orders INSERT. **trading-logic-verifier 필수**
+4. **P5-Kiwoom-6**: `reconciler.py` — kt00018 ↔ DB. **migration-strategy + security-reviewer 필수**
+
+각 단위마다 `/v71-add-module <path> "<purpose>"` 호출 → 12단계 자동.
+
+---
+
 ### `.claude/skills/` 인프라 정립 (2026-04-27 심야 후속)
 
 **배경**: 사용자 첫 설계 의도 = 클로드에게 **에이전트 + 스킬** 모두 부여 → 그것으로 제대로 된 작업.
