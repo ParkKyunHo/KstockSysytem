@@ -2957,6 +2957,60 @@ uvicorn.run('src.web.v71.main:app', host='127.0.0.1', port=8001, log_level='info
 
 ---
 
+### Phase 5 후속 P5-Kiwoom-4: V71KiwoomWebSocket (2026-04-28)
+
+**Commit `1744f6b`**: `feat(v71): exchange P5-Kiwoom-4 — V71KiwoomWebSocket (5 채널 + Phase 1/2 재연결)`
+**규모**: 5 files +1322 / -0
+
+#### 신규 모듈
+
+**V71KiwoomWebSocket** (~480 LOC):
+- 5 채널 (0B 시세 / 0D 호가 / 00 주문체결 / 04 잔고 / 1h VI)
+- Bearer 헤더 인증 (매 connect 시 토큰 새로 받음, 자동 갱신)
+- subscribe/unsubscribe (REG/REMOVE) + 활성 set으로 dedup + 재연결 시 자동 복원 (grp_no별 batch)
+- handler 등록 (channel별 multi-handler, registration order 보존, 격리)
+- 자동 재연결 PRD §8.2: Phase 1 지수 (1/2/4/8/16s, 5회) + Phase 2 (300s 무한)
+- DI 슬롯: token_manager / connect_factory / sleep / clock / on_state_change
+
+#### 워크플로우 (12단계)
+
+| 에이전트 | 발견 | 반영 |
+|---------|-----|-----|
+| v71-architect | 명명 + scope + state machine + handler 격리 + WSS 강제 | 모두 반영 |
+| security-reviewer | M1/M2/M3 + L1/L2/L4 | M1~M3 즉시 + L1/L4 trivial |
+| test-strategy | 31+ 케이스 + FakeKiwoomWebSocket | 28 케이스 작성 |
+
+#### 보안 패치
+
+- **M1** logger.exception → logger.error(exc_info=False) (handler/state-change PII 누출 차단)
+- **M2** Auth 별도 카운터 + 3회 후 abort (Kiwoom OAuth 1700 quota 보호)
+- **M3** max_size=64KB / ping_interval=20s / close_timeout=10s
+- **L1** Authorization Title-Case
+- **L4** wait_for + contextlib.suppress
+
+#### 검증
+
+- 단위 테스트: 28/28 PASS in 0.10s
+- exchange 누적: 208/208 PASS (66 + 42 + 72 + 28)
+- V7.1 회귀: 793/793 PASS (이전 765 + 28)
+- 6 harness: 1/2/3/4/6 PASS, 5 WARN
+- ruff: 0 errors
+
+#### 함정 / 학습
+
+- **AsyncMock side_effect with sync lambda**: lambda는 sync 함수. AsyncMock가 await할 coroutine 반환을 위해 async function (`_yielding_sleep`)을 side_effect로. lambda는 yield 안 됨.
+- **production code의 except 모순**: `getattr(websockets, "InvalidStatusCode", Exception)`이 fallback Exception이면 두 번째 `except Exception`은 unreachable. websockets 11.x에는 InvalidStatusCode 있어서 specific class만 잡고 다른 Exception은 두 번째에 떨어짐. 통합: 단일 `except Exception` + duck-type status_code 검사로 변경.
+- **stop_on_normal_close 추가**: 테스트가 socket 빈 큐로 자연 종료 시 무한 reconnect loop 방지. production default False (Kiwoom 정상 close 없음).
+- **Phase 2 transition timing**: 5번째 fail까지 Phase 1, 6번째에서 Phase 2 첫 sleep (300s). attempt counter 1-indexed.
+
+#### 다음 단위
+
+- **P5-Kiwoom-5**: order_manager (kt10000~10003 + v71_orders INSERT + 멱등성). **trading-logic-verifier 필수**
+- **P5-Kiwoom-6**: reconciler (kt00018 ↔ DB). **security-reviewer + migration-strategy 필수**
+- **P5-Kiwoom-Notify**: notify_error + notification_skill EventType 5개
+
+---
+
 ### Phase 5 후속 P5-Kiwoom-3: error_mapper (2026-04-28)
 
 **Commit `365b9b5`**: `feat(v71): exchange P5-Kiwoom-3 — error_mapper (Kiwoom 코드 → typed exception + 정책)`
