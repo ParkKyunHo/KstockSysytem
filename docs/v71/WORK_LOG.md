@@ -2957,6 +2957,51 @@ uvicorn.run('src.web.v71.main:app', host='127.0.0.1', port=8001, log_level='info
 
 ---
 
+### `.claude/skills/` 인프라 정립 (2026-04-27 심야 후속)
+
+**배경**: 사용자 첫 설계 의도 = 클로드에게 **에이전트 + 스킬** 모두 부여 → 그것으로 제대로 된 작업.
+- 에이전트 (`.claude/agents/`): 5개 모두 활용 중 (PRD §6, gitignored)
+- 스킬 (`.claude/skills/`): **빈 폴더 → 이번에 채움**
+- 단, gitignored 정상 (사용자 로컬 개발 도구, .claude/agents/와 동일 정책)
+
+#### Skill 구성 (총 9개, PRD §7 + 운영 워크플로우)
+
+**PRD §7 표준 스킬 8개** (코드 모듈 `src/core/v71/skills/*.py` 사용 가이드):
+
+| Skill | PRD 매핑 | 강제 사항 |
+|------|---------|----------|
+| `v71-kiwoom-api` | §7.1 | raw httpx 금지, Harness 3 차단 |
+| `v71-box-entry` | §7.2 | PULLBACK/BREAKOUT × PATH_A/B 진입 판정 |
+| `v71-exit-calc` | §7.3 | 손절선/TS 직접 계산 금지 |
+| `v71-avg-price` | §7.4 | 평단가 직접 변경 금지 + 추가 매수 이벤트 리셋 강제 |
+| `v71-vi` | §7.5 | VI 상태 머신 직접 구현 금지 |
+| `v71-notification` | §7.6 | raw telegram + parse_mode 금지 (CLAUDE.md Part 1.1) |
+| `v71-reconciliation` | §7.7 | 시나리오 A/B/C/D/E 분기 + 이중 경로 비례 차감 |
+| `v71-test-template` | §7.8 | Given-When-Then + fixture + 엣지 체크리스트 + 보안 회귀 |
+
+**운영 워크플로우 스킬 1개**:
+
+| Skill | 용도 |
+|------|-----|
+| `v71-add-module` | V7.1 신규 모듈 추가 12단계 워크플로우 (architect → 구현 → security + test 병렬 → 테스트 → harness → commit) |
+
+#### 검증
+
+`Skill` tool에서 user-invocable list에 9개 모두 노출 확인 (description 포함). 빌트인 + 프로젝트 commands + plugin 통합 인식.
+
+#### 다음 P5-Kiwoom 단위부터 적용
+
+P5-Kiwoom-2 (`kiwoom_client.py`)부터:
+1. `/v71-add-module src/core/v71/exchange/kiwoom_client.py "키움 REST 5 API"` 호출 → 12단계 자동 실행
+2. 코드 작성 시 `/v71-kiwoom-api` 가이드 참조 (raw httpx 금지)
+3. 거래 룰 영향 시 `/v71-exit-calc` / `/v71-avg-price` / `/v71-box-entry` 호출
+4. 테스트 작성 시 `/v71-test-template` 패턴 적용
+5. 알림 추가 시 `/v71-notification`
+
+`.claude/agents/` 5개 (v71-architect / trading-logic-verifier / migration-strategy / security-reviewer / test-strategy) + `.claude/skills/` 9개 = 회사처럼 검증·실행 인프라 완성.
+
+---
+
 ### Phase 5 후속 P5-Kiwoom-1: exchange 패키지 첫 단위 (2026-04-27 야간)
 
 **Commit `aef8a23`**: `feat(v71): exchange 패키지 첫 단위 — V71TokenManager + V71RateLimiter (Phase 5 후속)`
