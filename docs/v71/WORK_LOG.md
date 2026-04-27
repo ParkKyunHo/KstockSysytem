@@ -2957,6 +2957,61 @@ uvicorn.run('src.web.v71.main:app', host='127.0.0.1', port=8001, log_level='info
 
 ---
 
+### Phase 5 후속 P5-Kiwoom-3: error_mapper (2026-04-28)
+
+**Commit `365b9b5`**: `feat(v71): exchange P5-Kiwoom-3 — error_mapper (Kiwoom 코드 → typed exception + 정책)`
+**규모**: 3 files +609 / -0
+
+#### 신규 모듈 핵심
+
+**error_mapper.py (~280 LOC)** — 순수 분류기 + 정책 hints:
+- 11 typed exception (V71KiwoomMappedError 계열)
+- 6 순수 함수 (map_business_error, severity_for, is_fatal, should_force_token_refresh, should_retry_with_backoff, compute_backoff_seconds)
+- 매핑 dict 2개 (ERROR_CODE_TO_TYPE, ERROR_CODE_TO_SEVERITY) — `MappingProxyType`으로 read-only
+
+설계 결정 (architect 권고 반영):
+- **scope**: 순수 분류기 + hints만. orchestrator (sleep/retry/refresh)는 caller 책임. notify는 별도 단위. 헌법 5 (단순함).
+- 명명: `V71RateLimitExceeded` → `V71KiwoomRateLimitError` (web의 `V71RateLimitError`와 충돌 회피, V71Kiwoom prefix 일관)
+- `V71KiwoomServerError` (1999) docstring에 "200 OK + return_code=1999, transport 5xx 다름" 명시
+
+#### 워크플로우 (12단계 자동)
+
+| 에이전트 | 발견 | 반영 |
+|---------|-----|-----|
+| v71-architect | 명명 + scope 분리 + Severity Literal + RateLimitError 충돌 | 모두 반영 |
+| security-reviewer | PASS w/ L1 (dict mutability) | MappingProxyType 즉시 반영 |
+| test-strategy | 28+ 케이스 (parametrize 위주) | 72 케이스 (Group A 매핑 / B 속성 / C backoff / D 무결성 / E monotonic) |
+
+#### 검증
+
+- 단위: 72/72 PASS in 0.06s
+- exchange 전체: 180/180 PASS (P5-Kiwoom-1 66 + P5-Kiwoom-2 42 + P5-Kiwoom-3 72)
+- V7.1 회귀: 765/765 PASS (이전 693 + 72)
+- harness: 1/2/3/4/6 PASS, 5 WARN
+- ruff: 0 errors
+
+#### 매핑 표 (11 코드)
+
+| 코드 | 타입 | severity | fatal | backoff | force_refresh |
+|------|-----|---------|-------|---------|---------------|
+| 1517 | InvalidInput | LOW | F | F | F |
+| 1687 | RecursionError | LOW | F | F | F |
+| 1700 | RateLimit | HIGH | F | **T** | F |
+| 1901 | MarketNotFound | LOW | F | F | F |
+| 1902 | StockNotFound | MEDIUM | F | F | F |
+| 1999 | ServerError | HIGH | F | F | F |
+| 8005 | TokenInvalid | MEDIUM | F | F | **T** |
+| 8010 | IPMismatch | CRITICAL | **T** | F | F |
+| 8030 | EnvMismatch | CRITICAL | **T** | F | F |
+| 8031 | EnvMismatch | CRITICAL | **T** | F | F |
+| unknown | Unknown | HIGH | F | F | F |
+
+#### 다음 단위
+
+P5-Kiwoom-4 kiwoom_websocket / P5-Kiwoom-5 order_manager / P5-Kiwoom-6 reconciler / P5-Kiwoom-Notify (notify_error + notification_skill EventType 5개).
+
+---
+
 ### Phase 5 후속 P5-Kiwoom-2: V71KiwoomClient (2026-04-28)
 
 **Commit `64ccf36`**: `feat(v71): exchange P5-Kiwoom-2 — V71KiwoomClient (5 핵심 API REST transport)`
