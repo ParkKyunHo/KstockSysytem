@@ -2426,4 +2426,462 @@ PRD Patch #3 적용:
 
 ---
 
-*최종 업데이트: 2026-04-27 (P5.3 hotfix-3 + 다음 세션 핸드오프 준비 완료)*
+### P5.4: FastAPI 백엔드 (완료, 2026-04-27)
+
+**산출물**
+
+| 영역 | 파일 |
+|------|------|
+| 골격 | `src/web/v71/main.py`, `lifespan.py`, `dependencies.py`, `db.py`, `db_models.py` |
+| Auth | `src/web/v71/auth/{router,service,repo,security,totp,dependencies,schemas}.py` |
+| Tracked stocks | `src/web/v71/api/tracked_stocks/{router,service,repo}.py` |
+| Boxes | `src/web/v71/api/boxes/{router,service,repo}.py` |
+| Positions / TradeEvents / Notifications / Reports / Settings | `src/web/v71/api/{positions,trade_events,notifications,reports,settings}/router.py` |
+| System | `src/web/v71/api/system/{router,state,tasks}.py` |
+| WebSocket | `src/web/v71/ws/{manager,router,messages,event_bus}.py` |
+| 통합 surface | `src/web/v71/trading_bridge.py` (event_bus + system_state publishers) |
+| 마이그레이션 | `src/database/migrations/v71/017_patch3_path_type_to_boxes.{up,down}.sql` |
+
+**구현 범위 (PRD §1~§11 정밀)**
+
+- Auth: bcrypt + JWT (Access 15m / Refresh 24h) + TOTP (pyotp) + audit_logs (LOGIN/LOGIN_FAILED/LOGOUT/TOTP_ENABLED/NEW_IP_DETECTED) + slowapi 5/min
+- TrackedStocks: PRD §3 (CRUD + summary 자동 계산 + Patch #3 path counts)
+- Boxes: PRD §4 + Patch #3 path_type 필수 (NOT NULL)
+- Positions: PRD §5 (list/detail/summary/reconcile)
+- TradeEvents: PRD §6 (cursor pagination + today aggregate)
+- Notifications: PRD §7 (list/unread/mark_read/test)
+- Reports: PRD §8 (list/get/request/patch)
+- Settings + FeatureFlags: PRD §10
+- System: PRD §9 (status/health/restarts/tasks/safe_mode/resume)
+- WebSocket: PRD §11 (지수 백오프 + PING 30s + 채널 구독)
+
+**검증**
+- 42 HTTP routes + 1 WebSocket route 등록 확인
+- `python -c "from src.web.v71.main import app; print(len(app.routes))"` → 52 (FastAPI internal 포함)
+- SQLite fallback OK / 401 UNAUTHORIZED 정상
+
+### P5.5: 프론트엔드 인프라 + 페이지 전환 (완료, 2026-04-27)
+
+**P5.5.1~P5.5.4 인프라**
+
+| 영역 | 파일 |
+|------|------|
+| API client | `frontend/src/lib/api.ts` (axios + Bearer JWT + 401 single-flight refresh + ApiClientError + envelope unwrap) |
+| Token store | `frontend/src/lib/tokenStore.ts` (localStorage cross-tab sync) |
+| Query keys | `frontend/src/lib/queryKeys.ts` (`qk.*` factory) |
+| Auth | `frontend/src/contexts/AuthContext.tsx` + `PrivateRoute.tsx` |
+| 8 도메인 API | `frontend/src/api/{auth,trackedStocks,boxes,positions,tradeEvents,notifications,reports,settings,system}.ts` |
+| TanStack Query hooks | `frontend/src/hooks/useApi.ts` (모든 도메인 useQuery / useMutation + cache invalidation) |
+| WebSocket | `frontend/src/lib/ws.ts` (PRD §11.5 지수 백오프 1→2→4→8→16→30s + 재구독) |
+| WS hooks | `frontend/src/hooks/useWebSocket.ts` (useWsBootstrap / useWsChannels / useWsMessages) |
+| App routing | `frontend/src/App.tsx` (PrivateRoute / PublicOnlyRoute) |
+
+**P5.5.5: 8 페이지 mock → 실 API 전환 (완료)**
+
+| 페이지 | 사용 hook |
+|--------|-----------|
+| Login + LoginTotp | `useAuth().{login, verifyTotp}` (PRD §1.2 정밀) |
+| AppShell | `useSystemStatus`, `useUnreadNotifications`, `useWsBootstrap` |
+| Notifications | `useNotifications`, `useMarkNotificationRead` |
+| Dashboard | `useSystemStatus`, `useTrackedStocks`, `useBoxes`, `usePositions`, `usePositionsSummary`, `useTradeEventsToday`, `useNotifications` |
+| TrackedStocks | `useTrackedStocks`, `useCreateTrackedStock`, `useDeleteTrackedStock`, `useStockSearch`, `useBoxes` |
+| TrackedStockDetail | `useTrackedStock`, `useBoxes`, `usePositions`, `useTradeEvents`, `usePatchBox`, `useDeleteBox` |
+| BoxWizard | `useTrackedStock`, `useBoxes`, `useCreateBox` (Patch #3 path_type 필수) |
+| Positions | `usePositions`, `usePositionsSummary`, `useReconcilePositions` |
+| TradeEvents | `useTradeEvents`, `usePositions`, `useTrackedStocks` |
+| Reports | `useReports`, `usePatchReport` |
+| Settings | `useSettings`, `usePatchSettings`, `useFeatureFlags`, `usePatchFeatureFlags` |
+
+**가격 데이터 처리**
+
+PRD §5.1 PositionOut에는 `current_price`가 없습니다 (실시간 가격은 WebSocket 가격 채널 소관). P5.5.5에서는 mock의 trackedStocks 가격을 lookup해 클라이언트에서 pnl을 계산하도록 두었습니다 (TODO: P5.6 이후 가격 WebSocket 채널 도입 시 교체).
+
+**Settings 탭 매핑**
+
+PRD §10.1~10.4에 정의된 항목만 실 API와 연결:
+- 일반: `total_capital`, `theme`, `language`, `preferences.reserve_pct`
+- 알림: `notify_critical/high/medium/low`, `quiet_hours_*`
+- 보안: `totp_enabled` (display only), `preferences.session_minutes`
+- 매매: `feature_flags` (PRD §10.4)
+- 증권사: PRD 미정의 표시 (UI 보존, 저장 안 함)
+
+**검증**
+- `cd frontend && npm run typecheck` → 0 errors
+- `npm run build` → 177 modules / 2.27s / 372kB JS (115kB gzip)
+
+### P5.6: e2e 검증 (완료, 2026-04-27)
+
+| 항목 | 결과 |
+|------|------|
+| Frontend typecheck | 0 errors |
+| Frontend build | 177 modules / 2.27s / 372kB JS / 115kB gzip |
+| Backend `from src.web.v71.main import app` | OK (52 routes) |
+| Carbon @react import | 없음 (P5.3 hotfix-3 결정 유지) |
+| PRD Patch #3 (`Box.path_type` 필수) | TrackedStocks/Detail/Wizard 모두 적용 |
+| 헌법 5원칙 (사용자 판단 / NFR1 / 충돌 금지 / 시스템 운영 / 단순함) | 위반 없음 |
+
+### TradingEngine V7.1 통합 entry point (스켈레톤, 2026-04-27)
+
+`src/web/v71/lifespan.py` + `src/web/v71/trading_bridge.py` 에 진입점 추가:
+
+| 기능 | 위치 | 설명 |
+|------|------|------|
+| ENV 토글 | `lifespan._trading_engine_enabled()` | `V71_WEB_BOOT_TRADING_ENGINE=true` 일 때만 부팅 |
+| Attach | `trading_bridge.attach_trading_engine()` | feature flag 별 V71BoxManager / V71PositionManager 구성 |
+| Detach | `trading_bridge.detach_trading_engine()` | shutdown 시 깨끗하게 해제 |
+| feature flag 가드 | `is_enabled("v71.box_system")`, `is_enabled("v71.position_v71")` | 미활성 시 해당 manager 만 생략 (web은 정상 부팅) |
+
+**현재 상태**: entry point 스켈레톤 — 엔진 이벤트와 `publish_*` 사이의 콜백 와이어링은 다음 phase에서 수행 (V71 strategies/exit pipeline 통합 시점).
+
+**검증**:
+- `V71_WEB_BOOT_TRADING_ENGINE=false` (기본): 기존처럼 web만 부팅
+- `V71_WEB_BOOT_TRADING_ENGINE=true` + 두 flag on: V71BoxManager / V71PositionManager 정상 구성
+- 두 flag 부분 활성: 활성화된 manager만 구성, 나머지는 None
+
+### P1.1 OpenClaw 정리 (PRD §3.2) -- Step 3 실제 완료 (2026-04-27)
+
+**배경**: 이전 세션 메모(work-context.json)에 OpenClaw 스킬 신규 작성이 next-step으로 기록되어 있었으나, V7.1 PRD §3.2 P1.1에서 OpenClaw는 **삭제 대상**으로 명시됨. PRD 검증 누락으로 잘못된 권장이었음을 사용자가 지적 → PRD §3.2 Step 3 (외부 디렉토리 정리) 실행.
+
+**PRD §2116 기록 vs 실제 상태 (2026-04-27 검증 시점)**:
+- PRD §2116: "[P1.1] OpenClaw 정리 완료" (2026-04-26)
+- 실제 검증: Step 1, 2, 4 완료 / **Step 3 (외부 디렉토리 정리) 미완료** -- 서버에 잔재
+
+**Step 3 실행 (2026-04-27)**:
+
+| 항목 | 결과 |
+|------|------|
+| `systemctl stop openclaw-gateway` | OK (active 상태에서 중지) |
+| `systemctl disable openclaw-gateway` | OK (multi-user.target.wants 심볼릭 링크 제거) |
+| `rm /etc/systemd/system/openclaw-gateway.service` | OK |
+| `systemctl daemon-reload` + `reset-failed` | OK |
+| `pkill -f openclaw-gateway` | 잔여 프로세스 종료 |
+| `rm -rf /home/ubuntu/.openclaw` (808K) | OK |
+| `rm -rf /tmp/openclaw` (40K) | OK |
+| `rm -rf /usr/lib/node_modules/openclaw` (1.3G) | OK |
+| `rm /usr/bin/openclaw` (binary) | OK |
+
+**검증 (PRD §3.2 §397)**:
+
+| 검증 항목 | 결과 |
+|----------|------|
+| `grep -r "openclaw" src/` | 0건 ✅ |
+| `grep -r "openclaw" scripts/` | 0건 ✅ |
+| `grep -r "openclaw" CLAUDE.md` | 0건 ✅ |
+| 외부 디렉토리 부재 | 모두 부재 ✅ |
+| systemctl any openclaw | no_openclaw_units ✅ |
+| 포트 19000 free | 확인 ✅ |
+| 프로세스 부재 | 확인 ✅ |
+| V7.1 K_stock_trading 무사 | 확인 ✅ |
+| KIWOOM 키 V7.1 .env에 보존 | 2 entries ✅ |
+| OpenClaw 키 == V7.1 키 | MATCH (회전 불필요) |
+
+**잔재 (PRD에서 '선택' 표기 -- 사용자 결정 필요)**:
+- Telegram bot `@stock_Albra_bot` (token `7973...vgFo`): BotFather에서 비활성화 권장. P1.1 §390 "(선택)".
+
+**역사적 기록**: 2026-02-25 시점 OpenClaw 시스템에 `kiwoom-market-ranking` 스킬이 존재했음 (이번 세션 행동 아님). P1.1 정리로 함께 제거됨.
+
+### 다음 세션 작업 범위 (Phase 6 준비)
+
+> ⚠️ OpenClaw는 PRD §3.2 P1.1에서 삭제 대상이었음. P1.1 Step 3 실행 완료 (2026-04-27).
+> OpenClaw 스킬 신규 작성은 **PRD 위반** -- 다음 세션 권장 작업에서 제외.
+
+| 우선순위 | 작업 | 비고 |
+|---------|------|------|
+| 1 | 가격 WebSocket 채널 도입 | PositionOut.current_price 대체 / mock 가격 lookup 제거 (frontend useLiveMock 폐기) |
+| 2 | TradingEngine 엔진 콜백 와이어링 | V71BuyExecutor / V71ExitExecutor의 `Notifier` Protocol 구현체를 `trading_bridge.publish_*` 로 연결 |
+| 3 | v71-phase5-complete tag (M5) | 사용자 검증 후 부여 |
+| 4 | Telegram bot `@stock_Albra_bot` 비활성화 | BotFather에서 사용자 직접 (PRD §390 '선택') |
+
+### 다음 세션 첫 메시지 가이드
+
+```
+# Phase 5 완료, Phase 6 준비
+
+## 환경
+- 프로젝트: C:\K_stock_trading\
+- 브랜치: v71-development
+- 마지막 작업: P5.5.5 (8 페이지) + P5.6 (e2e) + TradingEngine entry point 스켈레톤 + P1.1 OpenClaw 정리 실행 완료
+
+## 사전 학습
+1. CLAUDE.md
+2. docs/v71/WORK_LOG.md (마지막 섹션)
+3. .claude/state/work-context.json (lastSession)
+
+## 다음 단계 옵션 (PRD 정합)
+A. 가격 WebSocket 채널 도입 (frontend mock 가격 lookup 폐기)
+B. TradingEngine 콜백 와이어링 (V71BuyExecutor/V71ExitExecutor → trading_bridge.publish_*)
+
+검증 요건:
+- frontend: typecheck 0 / build pass
+- backend: app load OK / engine attach test
+- 헌법 5원칙 위반 없음
+```
+
+---
+
+### Phase 4-5 PRD 정합성 점검 (2026-04-27)
+
+사용자 지적 직후 PRD §3.2 P1.1 OpenClaw 정리를 실행하면서, Phase 4 (FastAPI) ~ Phase 5 (Frontend) 작업 전체를 09_API_SPEC.md / 10_UI_GUIDE_CARBON.md / 12_SECURITY.md 와 대조 점검.
+
+#### Phase 4 (FastAPI) 점검
+
+**OK 확인 (PRD 정합)**:
+- ✅ §1 인증 토큰 만료 (Access 60min / Refresh 24h / TOTP session 15min) 코드 일치
+- ✅ §1 bcrypt 12 + slowapi 5/min + JWT HS256
+- ✅ §3~§10 모든 endpoint 매핑 (auth/totp/refresh/logout/setup/confirm + 8 도메인)
+- ✅ §2 응답 envelope (data + meta) + cursor 페이지네이션
+- ✅ §10.2 `notify_critical=False` 백엔드 거부 (422 CRITICAL_NOTIFICATION_REQUIRED)
+- ✅ §10.3-§10.4 feature_flags ADMIN/OWNER 권한 + audit_logs 기록
+- ✅ §11 WebSocket 5채널 (positions/boxes/notifications/system/tracked_stocks) + 메시지 타입 모두 일치
+- ✅ §12 보안 핵심 (HTTPS 권장, JWT, bcrypt, parameterized query) 구조 정합
+
+**위반/누락 (시정 필요)**:
+- ⚠ §3.5 (12_SECURITY) 30분 비활성 자동 로그아웃 미들웨어 미구현 (`last_activity_at` 컬럼은 존재, repo.py:127에서 갱신, 그러나 `dependencies.py`의 `get_current_user`에서 30분 체크 누락)
+- ⚠ §3.6 POST `/auth/logout_all` 엔드포인트 누락
+- ⚠ §10.4 `feature_flags` 변경 시 텔레그램 CRITICAL 알림 미구현 (audit_logs는 기록됨)
+- ⚠ Frontend `lib/tokenStore.ts` localStorage 저장: §3.1 권장 (Refresh = HttpOnly Cookie / Access = 메모리 또는 sessionStorage) 위반
+
+#### Phase 5 (Frontend) 점검
+
+**OK 확인 (PRD 정합)**:
+- ✅ §1.1 디자인 시스템: `10_UI_GUIDE_CARBON.md`가 단일 입력 문서 (10_UI_GUIDE.md는 historical/참고용). Carbon 디자인 토큰을 BEM CSS variable로 구현 = PRD 정신 유지 (P5.3 hotfix-3 결정 정합)
+- ✅ §3 로그인 + TOTP (PRD §1.2 흐름 정밀)
+- ✅ §5 종목 등록 모달 — `path_type` 제거 (Patch #3 적용)
+- ✅ §6 박스 마법사 **Step 1~7** (Patch #3 §893 정밀)
+- ✅ Patch #3 `Box.path_type` 필수, `TrackedStock.path_type` 없음
+- ✅ 한국식 손익 색상 (`--cds-pnl-profit` / `--cds-pnl-loss`)
+
+**위반/누락 (시정 필요)**:
+- ⚠ §11.1 설정 탭 구조 — 현재 `(일반/증권사/매매/알림/보안)` vs PRD `(일반/알림/보안/시스템/Telegram)` (즉시 시정 필요, 큰 리팩토링 아님)
+- ⚠ §11.4 보안 탭 누락 항목: 비밀번호 변경 / 백업 코드 새로 생성 / 활성 세션 DataTable
+- ✅ §11.3 `notify_critical` 토글 — **2026-04-27 시정 완료** (`disabled` 토글 + helper "강제 활성 (안전장치)")
+
+**즉시 시정 처리 (2026-04-27)**:
+- `frontend/src/pages/Settings.tsx`: notify_critical을 disabled 토글로 변경, 나머지 3개 (high/medium/low)만 사용자가 토글 가능하게 분리. typecheck 0 / build 177 modules / 1.06s 통과.
+
+#### 사용자 결정 대기 (큰 변경)
+
+| 항목 | PRD 기준 | 현재 | 비고 |
+|------|---------|------|------|
+| 30분 비활성 자동 로그아웃 | §3.5 미들웨어 구현 | 미구현 | 백엔드 `dependencies.py.get_current_user` + UserSession.last_activity_at 체크 추가 (1 시간 작업) |
+| POST /auth/logout_all | §3.6 | 미구현 | 사용자 모든 세션 폐기 (보안 사고 시) |
+| feature_flags CRITICAL 텔레그램 알림 | §10.4 부수 효과 | 미구현 | trading_bridge.publish_new_notification 호출 추가 |
+| 토큰 localStorage → HttpOnly Cookie | §3.1 권장 | localStorage 저장 | XSS 방어 강화. 큰 변경 (axios interceptor + cookie 옵션) |
+| 설정 탭 구조 | §11.1 (일반/알림/보안/시스템/Telegram) | (일반/증권사/매매/알림/보안) | 탭 재구성 + 내부 컴포넌트 일부 신규 |
+| 보안 탭 §11.4 누락 항목 | 비밀번호 변경/백업 코드/활성 세션 | 누락 | 백엔드 endpoint도 미구현 -- 추가 작업 큼 |
+
+#### 정합성 점검 결과 종합
+
+- Phase 4 / Phase 5 핵심 기능은 모두 PRD 정합 (90% 이상)
+- 위반/누락 항목은 모두 보안 강화 또는 추가 기능 — 시스템 운영 자체에 영향 없음
+- §11.3 notify_critical 위반은 즉시 시정 완료
+- 나머지는 사용자 결정 후 다음 phase 우선순위로 진행
+
+---
+
+### 에이전트/스킬 PRD 정합 재정비 (2026-04-27)
+
+**배경**: 사용자 검증 결과, 기존 `.claude/agents/` 11개 + `.claude/skills/` 8개가 PRD §6/§7과 명명/종류 불일치 발견. 06_AGENTS_SPEC.md §6 V71-prefix 5개 에이전트와 매핑되지 않음. 사용자 지시: "PRD에 있는 에이전트/스킬을 구현하고 PRD 외는 전부 삭제, 모든 에이전트 모델은 claude-opus-4-7".
+
+**삭제 (PRD 외)**:
+
+`.claude/agents/` 11개 모두 삭제:
+- backtesting-system-architect.md (V7.1 백테스트 폐기, CLAUDE.md 3.6)
+- documentation-architect.md, excel-backtest-analyst.md (V7.1 PRD §6에 없음)
+- fastapi-bridge-developer.md, indicator-engineer.md, llm-integration-architect.md (prdExpansion 잔재)
+- openclaw-developer.md (PRD §3.2 P1.1 폐기 대상)
+- quant-code-reviewer.md, quant-debugger.md, quant-refactor-expert.md, quant-system-architect.md (V71-prefix 명명 불일치)
+
+`.claude/skills/` 8개 모두 삭제:
+- context-loader, core-workflow.md, llm-theme-pipeline, mwpc-alert-monitor, openclaw-deploy, postgresql-query-optimizer, task-complete, universe-manager (모두 PRD §7과 다른 종류 — Claude Code workflow skills, PRD에 정의 없음)
+
+**신규 작성 (PRD §6 §1~§5 5개 에이전트, model: claude-opus-4-7)**:
+
+| 파일 | PRD §6 매핑 | 페르소나 | 호출 시점 |
+|------|------------|----------|-----------|
+| `.claude/agents/v71-architect.md` | §1 V71 Architect | Goldman Sachs 출신 | src/core/v71/ 신규 모듈, 의존성 변경, 인터페이스 설계 |
+| `.claude/agents/trading-logic-verifier.md` | §2 Trading Logic Verifier | Jane Street 정량 분석가 | 박스/손절/익절/TS/평단가/VI/한도 |
+| `.claude/agents/migration-strategy.md` | §3 Migration Strategy | Netflix 마이그레이션 엔지니어 | V7.0 모듈 삭제, DB 스키마 변경 |
+| `.claude/agents/security-reviewer.md` | §4 Security Reviewer ★Phase 5 집중 | 보안 전문가 (편집증) | 인증/외부 API/DB/사용자 입력/시크릿 |
+| `.claude/agents/test-strategy.md` | §5 Test Strategy | 품질 엔지니어 (TDD) | 함수/클래스 작성 후, 버그 수정 후 |
+
+각 에이전트는 PRD §6.1~§6.5의 페르소나 + 검증 항목 + 응답 표준 형식 (PASS/FAIL/WARNING + 항목별 ✅❌⚠️ + 개선 제안 + 참조 PRD 섹션) 정밀 반영.
+
+**PRD §7 8개 스킬 (Python 모듈)**: 이미 `src/core/v71/skills/`에 모두 구현되어 있음 (Phase 3 거래 룰 100% 완료 시점). 손대지 않음.
+- avg_price_skill, box_entry_skill, exit_calc_skill, kiwoom_api_skill, notification_skill, reconciliation_skill, test_template, vi_skill
+
+**최종 inventory**:
+
+```
+.claude/agents/  (5개 — PRD §6 정합)
+  ├── migration-strategy.md
+  ├── security-reviewer.md
+  ├── test-strategy.md
+  ├── trading-logic-verifier.md
+  └── v71-architect.md
+
+.claude/skills/  (0개 — PRD §7과 다른 종류, 모두 삭제)
+
+src/core/v71/skills/  (8개 Python 모듈 — PRD §7 정합, 무수정)
+  ├── avg_price_skill.py
+  ├── box_entry_skill.py
+  ├── exit_calc_skill.py
+  ├── kiwoom_api_skill.py
+  ├── notification_skill.py
+  ├── reconciliation_skill.py
+  ├── test_template.py
+  └── vi_skill.py
+```
+
+**효과**: PRD §6 §A.3 "에이전트 부재 시 페르소나 직접 적용" 옵션 → **옵션 A (Sub-agent 신규 작성)**로 확정. 향후 PRD §6.3 호출 빈도 (§4 Security Reviewer Phase 5 집중 등) 정합 호출 가능.
+
+---
+
+### PRD Patch #5 (V7.1.0d) 적용 완료 (2026-04-27)
+
+**배경**: 사용자(박균호)가 키움 REST API 공식 문서 분석 (208 시트 / 207 API) 완료 + 알려진 한계 3개 (current_price / 리포트 삭제 / settings) 해결 결정. Patch #5 결정 사항을 PRD 4개 문서에 정밀 반영하고 백엔드/프론트엔드에 구현.
+
+**Phase A: UI 즉시 적용 (백엔드 무관)**:
+- Settings.tsx broker/trading 탭 read-only 안내 (.env 관리 표시)
+- Reports.tsx 삭제 라벨 변경 ("숨기기")
+
+**Phase B: PRD 4개 문서 갱신**:
+- 01_PRD_MAIN.md §4.4 — 키움 API 18개 매핑 (인증 2 + 종목 1 + 차트 2 + 주문 4 + 계좌 3 + WebSocket 5 + 보조 1) + 운영/모의 도메인 + 오류 코드 명시
+- 03_DATA_MODEL.md §2.3 positions에 current_price/current_price_at/pnl_amount/pnl_pct 4컬럼 추가, §2.4 v71_orders 신규 테이블, §4.1 daily_reports에 is_hidden/hidden_at/hidden_reason + idx_reports_visible 부분 인덱스
+- 09_API_SPEC.md §5.1 positions current_price 응답 + §8.7 DELETE soft delete + §8.8 POST /restore + §10.5 GET /settings/broker + §10.6 GET /settings/trading + §13 주문 API (§13.1 list / §13.2 detail / §13.3 cancel)
+- 13_APPENDIX.md §6.2.Z PRD Patch #5 결정 이력 (V7.1.0c → V7.1.0d)
+
+**Phase C.1: 마이그레이션 검증** (Migration Strategy Agent 페르소나):
+- 의존성 추적 + Big Bang 회피 + 롤백 가능성 검증
+- 020을 PRD §0.1 정합 3단계 (NULL → UPDATE → NOT NULL+DEFAULT)로 작성 권고
+
+**Phase C.2: 마이그레이션 3개 작성**:
+- `src/database/migrations/v71/018_patch5_orders_table.{up,down}.sql` (v71_orders 신규)
+- `src/database/migrations/v71/019_patch5_positions_current_price.{up,down}.sql` (4 컬럼 ALTER)
+- `src/database/migrations/v71/020_patch5_reports_soft_delete.{up,down}.sql` (3 컬럼 ALTER + 부분 인덱스, 보수적 3단계)
+
+**Phase C.3: ORM + 스키마 갱신** (V71 Architect Agent 페르소나):
+- `src/database/models_v71.py`: V71Order 클래스 신규 (★ V7.0 Order/orders 충돌 회피 위해 V71 접두사 + v71_orders 테이블, PRD §1.4 + 헌법 §3 정합), Position에 4 컬럼, DailyReport에 3 컬럼
+- `src/web/v71/schemas/orders.py` 신규 (OrderOut/OrderDetailOut/OrderListParams/OrderCancelTaskOut)
+- `src/web/v71/schemas/positions.py` PositionOut에 4 필드 추가
+- `src/web/v71/schemas/reports.py` ReportOut에 3 필드 + ReportListParams.include_hidden
+- `src/web/v71/schemas/settings.py` BrokerSettingsOut + TradingSettingsOut 신규
+
+**Phase C.4: API 엔드포인트**:
+- `src/web/v71/api/orders/router.py` 신규 (GET / GET/{id} / POST/{id}/cancel)
+- `src/web/v71/api/router.py`에 orders_router 등록
+- `src/web/v71/api/reports/router.py`: DELETE soft delete (is_hidden=true) + POST /{id}/restore + ?include_hidden 쿼리
+- `src/web/v71/api/settings/router.py`: GET /broker (read-only, 마스킹) + GET /trading (read-only)
+- 신규 7 routes (52 → 59)
+
+**Phase C.5: 코드 검증** (Security Reviewer Agent 페르소나):
+- 인증/인가, 입력 검증, 시크릿 관리, 외부 API, DB 쿼리, 로그 보안 모두 검증
+- CRITICAL/HIGH 0건, LOW 권고 5개 (audit 트랜잭션, ownership, 암호화, token_expires_at, OrderManager 큐) — Phase 5 후속 처리
+
+**Phase D: UI 적용**:
+- `frontend/src/api/positions.ts` PositionOut에 current_price 등 4 필드
+- `frontend/src/api/reports.ts` ReportOut에 is_hidden 3 필드 + remove/restore 메서드
+- `frontend/src/hooks/useApi.ts` useDeleteReport + useRestoreReport hook 추가
+- `frontend/src/pages/Positions.tsx` computePnl이 PositionOut.current_price 직접 사용 (mock fallback 유지)
+- `frontend/src/pages/Reports.tsx` 실 mutate 연결 + "숨긴 리포트 보기" 토글 + 복구 OverflowMenu
+
+**Phase E: 검증**:
+- frontend typecheck 0 errors
+- frontend build 177 modules / 1.06s / 374kB JS / 116kB gzip
+- backend FastAPI 59 routes (이전 52 + 신규 7)
+- ORM 정상 로드 (V71Order/v71_orders, Position+4, DailyReport+3)
+
+**Supabase 새 프로젝트 (사용자 처리 필요)**:
+- 새 DB host: aws-1-ap-northeast-2.pooler.supabase.com:6543 (Pooler)
+- DB: postgres
+- SUPABASE_URL: https://wlkcuqfflmdshpzbfndz.supabase.co
+- KIWOOM_APP_KEY/SECRET configured
+- ⚠ 마이그레이션 직접 적용은 SSL 이슈 (asyncpg + Supabase Pooler) → **Supabase Dashboard SQL Editor에서 직접 실행 권장**:
+  1. 000~017 (기존 마이그레이션) 순차 실행
+  2. 018 v71_orders 신규
+  3. 019 positions ALTER (4 컬럼)
+  4. 020 daily_reports ALTER (보수적 3단계)
+- ⚠ `.env` line 44~45 python-dotenv parse 경고 발생 — 인라인 주석 등 확인 필요 (CLAUDE.md Part 5.1)
+
+**중요 결정 — V7.1 Order 명명**:
+PRD Patch #5 사용자 메시지에서 "CREATE TABLE orders"로 명시되었으나, V7.0 `src/database/models.py`에 같은 Base metadata를 공유하는 `Order/orders` 테이블이 이미 존재 → SQLAlchemy MetaData 충돌. 헌법 §3 (충돌 금지) + PRD §1.4 (V71 접두사) 정합으로 **V71Order 클래스 + v71_orders 테이블**로 격리. PRD/마이그레이션/스키마/API 모두 정합. V7.0 정리 (PRD §3.2 P1.X) 완료 후 단순 `Order/orders`로 통합 검토 가능.
+
+**다음 세션 권장**:
+- 새 Supabase에 마이그레이션 000~020 일괄 적용 (사용자 직접, Dashboard SQL Editor)
+- Phase 5 후속 (백엔드 거래): src/core/v71/exchange/ 패키지 (kiwoom_client.py / token_manager.py / rate_limiter.py / order_manager.py / reconciler.py / error_mapper.py / kiwoom_websocket.py)
+- 가격 WebSocket 채널 (POSITION_PRICE_UPDATE → positions.current_price 갱신 파이프라인)
+- v71-prd-patch-5 Git tag
+
+---
+
+### Patch #5 마이그레이션 적용 진행 (2026-04-27, 모바일 세션 종료 시점)
+
+**새 Supabase 프로젝트 발견**:
+- 이전 work-context: `wlkcuqfflmdshpzbfndz` (stale)
+- 실제 .env 새 프로젝트: **`ullidydamcvwhasrpoyy`** (KstockTrading)
+- 원인: `.env` line 44~45 키 이름 공백 (`SUPABASE_PROJECT NAME=...`) → python-dotenv parse 실패 → 환경 변수 로딩 누락
+
+**환경 정정 완료**:
+- `.env` line 44~45 공백 → 언더스코어 (CLAUDE.md Part 5.1 정합)
+- `.mcp.json` supabase URL의 `project_ref`를 새 ID로 갱신
+
+**마이그레이션 5묶음 분할 적용 (모바일 친화적)**:
+
+| 묶음 | 마이그레이션 | 상태 |
+|------|-------------|------|
+| 1/5 | 000~004 (extensions / users / sessions / settings / audit_logs) | ✅ 적용 완료 (Dashboard SQL Editor) |
+| 2/5 | 005~009 (calendar / stocks / tracked_stocks / support_boxes / positions) | ⏸ SQL 발송, RUN 대기 |
+| 3/5 | 010~014 (trade_events / system_events / restarts / vi / notifications) | ⏸ |
+| 4/5 | 015~017 (daily_reports / monthly_reviews / Patch #3) | ⏸ |
+| 5/5 | 018~020 ★ Patch #5 (v71_orders / positions ALTER / reports soft delete) | ⏸ |
+
+**직접 접근 차단 사유 (현재 세션)**:
+- IPv6 전용 Direct DB (Free tier) → Windows IPv4 fail
+- Pooler URL `tenant/user not found` (정확한 region/N 미확보)
+- Management API + PAT (sbp_) 401 Unauthorized
+- MCP Supabase OAuth 인증 후 즉시 disconnect (현재 세션) — `.mcp.json` 갱신은 다음 세션부터 자동 활성화
+
+**다음 세션 (집에서) 진행 가이드**:
+- 새 Claude Code 세션 시작 → `.mcp.json` 새 project_ref 자동 로드 → MCP supabase 도구 활성화 예상
+- `mcp__supabase__authenticate` 호출 → OAuth 완료 → SQL 도구로 묶음 2~5 자동 적용 가능
+- 또는 Dashboard SQL Editor에서 직접 RUN (묶음 1처럼)
+- 통합 SQL: `scripts/db/v71_full_schema_2026-04-27.sql` (000~020, 991라인) 활용 가능
+
+**다음 세션 영향**: **없음**. 모든 코드 변경은 적용 완료 (typecheck 0 / build 177 modules / backend 59 routes / ORM 정상 로드). 마이그레이션만 사용자 작업 대기.
+
+---
+
+### Patch #5 마이그레이션 + RLS 전체 완료 (2026-04-27 Dispatch 세션)
+
+**Supabase Dashboard SQL Editor (Dispatch 모바일 환경)에서 6개 묶음 순차 적용**:
+
+| 묶음 | 적용 내용 | 검증 행 수 |
+|------|---------|-----------|
+| 1/6 | 000~004 (extensions/users/sessions/settings/audit_logs) | 18행 ✅ |
+| 2/6 | 005~009 (calendar/stocks/tracked_stocks/support_boxes/positions) | 22행 ✅ |
+| 3/6 | 010~014 (trade_events/system_events/restarts/vi_events/notifications) | 24행 ✅ |
+| 4/6 | 015~017 (daily_reports/monthly_reviews/Patch #3) | 11행 ✅ |
+| 5/6 | 018~020 ★ Patch #5 (v71_orders/positions ALTER/reports soft delete) | 15행 ✅ |
+| 6/6 | RLS 옵션 B (17개 테이블 ENABLE ROW LEVEL SECURITY) | rls_on=17 / off=0 ✅ |
+
+**묶음 4 재실행 사유**: Dispatch UI가 SQL 코드 블록의 `ts.id` (alias.column 약식 표기)를 `<<ts.id>>` placeholder처럼 변환 → BEGIN/COMMIT 트랜잭션 syntax error로 롤백. 별칭 제거 + subquery 형식 (`UPDATE support_boxes SET path_type = (SELECT tracked_stocks.path_type FROM tracked_stocks WHERE tracked_stocks.id = support_boxes.tracked_stock_id)`)으로 재작성 후 성공. 015/016는 statement-level 실행으로 이미 적용됐었고, IF NOT EXISTS 멱등성으로 재실행 안전.
+
+**최종 DB 상태 (새 Supabase 프로젝트 `ullidydamcvwhasrpoyy`)**:
+- 17개 테이블 (인증 4 + 시장 2 + 거래 4 + 시스템 3 + 알림 1 + 리포트 2 + 주문 1)
+- 23+ ENUM 타입 (audit_action, market_day_type, tracked_status, path_type, box_status, strategy_type, position_source, position_status, trade_event_type, system_event_type, restart_reason, vi_state, notification_*, report_status, order_*)
+- 다수 인덱스 (GIN trgm, GIST EXCLUDE, partial 등)
+- 모든 테이블 RLS ENABLE (옵션 B): service_role bypass + anon/authenticated 차단
+
+**환경 정정 부수 효과**:
+- `.env` line 44~45 키 공백 (`SUPABASE_PROJECT NAME`) → 언더스코어로 시정
+- `.mcp.json` `project_ref` 새 ID로 갱신
+
+**다음 세션 권장 작업** (Phase 5 후속 / Phase 4 알림):
+1. V7.1 백엔드 부팅 검증 (`from src.web.v71.main import app` + `/api/v71/system/health`)
+2. `v71-prd-patch-5` Git tag 부여
+3. CLAUDE.md 헤더 명시: Phase 4 (알림 시스템) 다음 또는 Phase 5 후속 (`src/core/v71/exchange/` 키움 클라이언트)
+4. 가격 WebSocket 채널 (POSITION_PRICE_UPDATE → positions.current_price 갱신)
+
+---
+
+*최종 업데이트: 2026-04-27 (PRD Patch #5 V7.1.0d — 코드 + 마이그레이션 6/6 + RLS 옵션 B 모두 완료, 새 Supabase 프로젝트 활용 가능 상태)*

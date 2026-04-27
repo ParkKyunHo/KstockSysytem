@@ -137,6 +137,9 @@ export interface TradeEvent {
     | 'PROFIT_TAKE_10'
     | 'STOP_LOSS'
     | 'TS_EXIT'
+    | 'TS_ACTIVATED'
+    | 'BUY_REJECTED'
+    | 'POSITION_CLOSED'
     | 'MANUAL_SELL';
   position_id: string;
   stock_code: string;

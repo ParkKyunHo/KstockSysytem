@@ -966,6 +966,277 @@ UI 의존:
   Git tag (예정): v71-prd-patch-1
 ```
 
+### 6.2.X PRD Patch #2: 디자인 시스템 전환 (Carbon)  
+**키워드**: design-system, carbon, ui-guide, deprecation
+
+```yaml
+발생:
+  초기 PRD: 10_UI_GUIDE.md는 shadcn/ui + Tailwind 기준
+  현실: 박균호님이 Figma에서 IBM Carbon Design System으로 이미 디자인 진행
+  Claude Code: Phase 4 작업 중 (UI 미작업)
+  시점: Phase 5 (웹 대시보드) 시작 전
+  
+이슈:
+  Figma 디자인 시스템 (Carbon) vs PRD 목표 (shadcn/ui) 불일치
+  이대로 진행 시 Phase 5에서 두 디자인 시스템 혼용
+  → 헌법 5 (단순함) + 3 (충돌 금지) 위반
+결정:
+  V7.1 웹 대시보드는 IBM Carbon Design System v11+으로 구현
+  
+이유:
+  1. Figma 디자인이 이미 Carbon 기준
+  2. 엔터프라이즈급 일관성 + 안정성
+  3. 한국 주식 트레이더 환경에 적합 (정보 밀도, 다크 모드)
+  4. Carbon 자체 디자인 토큰 시스템 (디자인 결정 부담 감소)
+  5. 접근성 기본 제공 (WCAG AA)
+
+영향 받는 문서 (갱신 완료):
+  - 10_UI_GUIDE.md: DEPRECATED 표시 추가 (참고용 보존)
+  - 10_UI_GUIDE_CARBON.md: 신규 작성 (Carbon 기준)
+  - 01_PRD_MAIN.md: 문서 표 업데이트
+  - 13_APPENDIX.md: 변경 이력 추가 (본 섹션)
+
+구현 변경 사항:
+  패키지:
+    기존: shadcn/ui, Tailwind CSS, lucide-react
+    변경: @carbon/react, @carbon/styles, @carbon/icons-react, @carbon/grid
+  
+  스타일링:
+    기존: Tailwind utility class
+    변경: SCSS + Carbon 디자인 토큰 (var(--cds-*))
+  
+  아이콘:
+    기존: Lucide React
+    변경: @carbon/icons-react (Icon16/20/24)
+  
+  테마:
+    기이: Tailwind dark: prefix
+    변경: <Theme theme="g100"> (다크 우선)
+  
+  한국식 손익 색상 (변경 없음, 적용 방식만 변경):
+    수익: var(--cds-support-error) (빨강)
+    손실: var(--cds-support-info) (파랑)
+  
+  잊용 도구:
+    기존: Tailwind 컴파일러
+    변경: SCSS (sass) 필요, Vite 또는 Next.js
+
+헌법 5원칙 준수:
+  1. 사용자 판단 불가침: ✓ (박균호 결정)
+  2. NFR1: ✓ (UI는 무관)
+  3. 충돌 금지: ✓ (Phase 5 시작 전 통일, 충돌 없음)
+  4. 시스템 계속 운영: ✓ (UI 독립, 거래 로직 영향 X)
+  5. 단순함: ✓ (두 디자인 시스템 혼용 회피)
+
+코드 영향:
+  Phase 0~4: 영향 없음 (단, package.json에 UI 라이브러리 설치 되었다면 제거 필요)
+  Phase 5+: Carbon 패키지 설치, 10_UI_GUIDE_CARBON.md 따름
+
+버전:
+  V7.1.0a (PRD patch #1) → V7.1.0b (PRD patch #2)
+  Git tag (예정): v71-prd-patch-2
+```
+
+### 6.2.Y PRD Patch #3: path_type을 박스 속성으로 이동
+
+**날짜**: 2026-04-25 (세션 27)  
+**키워드**: data-model, ui-flow, path-type, dual-path
+
+```yaml
+발생:
+  초기 PRD: tracked_stocks.path_type 필수 (종목 등록 시 경로 선택)
+  Figma 디자인: 종목 등록 모달에 경로 선택 RadioButtonGroup 있음
+  사용자 (박균호) 지적: "종목 등록 시 경로 선택 불필요. 박스의 속성으로 보는 게 자연스러움"
+  시점: Phase 4 (알림) 작업 중, Phase 5 (UI) 시작 전
+
+이슈:
+  경로는 종목 자체의 속성이 아닌, "박스 진입을 어떻게 판정할지"의 문제
+  현재 구조 부작용:
+    1. 같은 종목 이중 경로 시 tracked_stocks 2개 레코드 → 추적 목록에 종목 중복 표시
+    2. 종목 등록 시 경로 결정 강제 → 사용자에게 불필요한 부담
+    3. 한 종목에 다양한 경로 박스 설정 불가
+
+결정:
+  path_type을 tracked_stocks → support_boxes로 이동
+  종목 등록 시 경로 선택 제거
+  박스 설정 마법사 첫 단계에 경로 선택 추가
+
+이유:
+  1. UX가 자연스러움 (종목 등록 단순화)
+  2. 박스별 경로 유연성 (같은 종목 안에서 다양한 경로)
+  3. 추적 목록에 종목이 한 번만 표시
+  4. 경로는 "이 박스 진입을 어떨게 판정할지"의 문제라는 설계 철학과 일치
+  5. 거래 로직에 미치는 영향 적음 (매수 후 관리는 path 무관 동일 룰)
+
+영향 받는 문서 (6개 갱신 완료):
+  ✅ 02_TRADING_RULES.md §1 (이중 경로 설명 재정리)
+  ✅ 02_TRADING_RULES.md §3.2 (박스 입력 UI 흐름 갱신)
+  ✅ 02_TRADING_RULES.md §3.2.1 (설계 근거 추가)
+  ✅ 03_DATA_MODEL.md §2.1 (tracked_stocks.path_type 제거)
+  ✅ 03_DATA_MODEL.md §2.2 (support_boxes.path_type 추가)
+  ✅ 09_API_SPEC.md §3 (POST /tracked_stocks: path_type 파라미터 제거)
+  ✅ 09_API_SPEC.md §4 (POST /boxes: path_type 파라미터 추가)
+  ✅ 10_UI_GUIDE_CARBON.md §5 (종목 등록 모달: RadioButtonGroup 제거)
+  ✅ 10_UI_GUIDE_CARBON.md §6 (박스 설정 마법사: Step 1 경로 선택 추가, 7단계)
+  ✅ 13_APPENDIX.md §6.2.Y (본 섹션)
+
+데이터 모델 변경:
+  tracked_stocks:
+    제거: path_type 컴럼
+    변경: EXCLUDE 제약 (path_type 없이 stock_code만)
+    제거: idx_tracked_stocks_path 인덱스
+    변경: idx_tracked_stocks_active (path_type 없이)
+  
+  support_boxes:
+    추가: path_type ENUM NOT NULL
+    추가: idx_boxes_path 인덱스
+    변경: idx_boxes_active (path_type 포함)
+
+UI 흐름 변경:
+  이전:
+    종목 등록 모달 → [종목 검색 + 경로 선택 + 메모] → [추적 시작]
+    박스 설정 마법사 → [가격 → 전략 → 비중 → 손절 → 확인 → 저장] (6단계)
+  
+  현재:
+    종목 등록 모달 → [종목 검색 + 메모] → [추적 시작]
+    박스 설정 마법사 → [경로 → 전략 → 가격 → 비중 → 손절 → 확인 → 저장] (7단계)
+
+API 변경:
+  POST /api/v71/tracked_stocks
+    제거: path_type (Request Body)
+  
+  POST /api/v71/boxes
+    추가: path_type (Request Body, 필수)
+  
+  GET /api/v71/tracked_stocks
+    제거: path_type 필터
+    변경: summary에 path_a_box_count, path_b_box_count 추가
+  
+  GET /api/v71/tracked_stocks/{id}
+    변경: boxes 배열에 path_type 포함
+  
+  GET /api/v71/boxes
+    추가: path_type 필터
+  
+  POST /api/v71/boxes
+    추가: path_type 파라미터 (필수)
+
+헌법 5원칙 준수:
+  1. 사용자 판단 불가침: ✓ (박굠호 결정, 자동 추이 없음)
+  2. NFR1: ✓ (거래 로직 영향 없음)
+  3. 충돌 금지: ✓ (Phase 5 시작 전 통일)
+  4. 시스템 계속 운영: ✓ (UI/데이터 모델 변경, 런타임 영향 없음)
+  5. 단순함: ✓ (종목 레코드 중복 해소, UX 명확)
+
+코드 영향:
+  Phase 0~4: 영향 없음 (아직 V7.1 데이터 모델 구현 전)
+  Phase 5+: 갱신된 PRD대로 구현
+
+마이그레이션:
+  V7.1 PRD 자체 변경 단계 (코드 미구현 상태)
+  Phase 2 P2.2 (데이터 모델 마이그레이션) 시점에 갱신된 PRD 적용
+
+버전:
+  V7.1.0b (PRD patch #2) → V7.1.0c (PRD patch #3)
+  Git tag (예정): v71-prd-patch-3
+```
+
+### 6.2.Z PRD Patch #5 (V7.1.0d, 2026-04-27)
+
+```yaml
+배경:
+  박균호의 키움 REST API 공식 문서 분석 (208 시트 / 207 API) 완료.
+  V7.1.0c (Patch #4) 시점의 알려진 한계 3가지를 PRD에 통합.
+
+변경 사유:
+  1. 키움 API의 실제 스펙 확인 (client_order_id 필드 없음)
+  2. UI 동작에 필수적인 데이터 (current_price) 누락
+  3. 사용자 경험 개선 (리포트 영구 보존, 설정 안전 격리)
+
+결정 사항:
+
+1. orders 테이블 신규 추가:
+   - 키움 API에 client_order_id 필드 없음 → 자체 매핑 필수
+   - kiwoom_order_no UNIQUE 제약 (키움 ord_no)
+   - kiwoom_orig_order_no로 정정/취소 추적
+   - state ENUM (SUBMITTED → PARTIAL/FILLED → CANCELLED/REJECTED)
+   - direction ENUM (BUY/SELL)
+   - trade_type ENUM (LIMIT/MARKET/CONDITIONAL/AFTER_HOURS/BEST_LIMIT/PRIORITY_LIMIT)
+   - 부분 인덱스: state IN ('SUBMITTED', 'PARTIAL') (미체결만 빠르게 조회)
+   - JSONB 컬럼: kiwoom_raw_request, kiwoom_raw_response (감사용)
+
+2. positions 테이블에 current_price 컬럼 추가:
+   - 한계 1 (PositionOut.current_price 부재) 해결
+   - current_price NUMERIC(12, 0)
+   - current_price_at TIMESTAMPTZ (갱신 시각)
+   - pnl_amount NUMERIC(15, 0)
+   - pnl_pct NUMERIC(8, 6)
+   - 갱신 정책:
+       1순위: WebSocket 0B (실시간, < 1초)
+       2순위: kt00018 (5초 폴링, WebSocket 끊김 시)
+       3순위: ka10001 (재시작 직후)
+   - frontend mock 가격 lookup 폐기
+
+3. daily_reports 소프트 삭제:
+   - 한계 2 해결
+   - is_hidden BOOLEAN NOT NULL DEFAULT FALSE
+   - hidden_at TIMESTAMPTZ
+   - hidden_reason VARCHAR(50)
+   - 부분 인덱스: WHERE is_hidden = FALSE (정상 조회 빠르게)
+   - DELETE → soft delete (is_hidden=true)
+   - POST /reports/{id}/restore → 복구
+   - GET /reports?include_hidden=true → 숨긴 것 포함
+
+4. settings/broker/trading read-only:
+   - 한계 3 해결
+   - GET /api/v71/settings/broker (read-only):
+       kiwoom_account_no_masked, kiwoom_account_type, app_key/secret_configured,
+       token_expires_at, managed_by: ".env file"
+   - GET /api/v71/settings/trading (read-only):
+       auto_trading_enabled, safe_mode, max_position_pct_per_stock,
+       profit_5/10_take_pct, stop_loss_default_pct,
+       managed_by: ".env file + 02_TRADING_RULES.md constants"
+   - PATCH 없음
+   - safe_mode 변경은 POST /system/safe_mode 사용
+   - UI 입력 필드 모두 disabled
+
+5. 키움 18개 API 매핑 확정:
+   - 207 중 18개만 사용 (8.7%)
+   - 운영: api.kiwoom.com / 모의: mockapi.kiwoom.com (KRX 전용)
+   - WebSocket: wss://api.kiwoom.com:10000
+   - 분류: 인증 2 / 종목 1 / 차트 2 / 주문 4 / 계좌 3 / WebSocket 5 / 보조 1
+   - 상세: KIWOOM_API_ANALYSIS.md (1,366라인)
+
+영향:
+  03_DATA_MODEL.md: §2.3 positions ALTER, §2.5 orders 신규, §4.1 daily_reports ALTER
+  09_API_SPEC.md: §5.1 positions current_price, §X 주문 API, §8 reports soft delete,
+                  §10.5 settings/broker, §10.6 settings/trading
+  01_PRD_MAIN.md: 헤더 + §4.4 인프라 키움 18개 명시
+  13_APPENDIX.md: 본 §6.2.Z (결정 이력)
+  KIWOOM_API_ANALYSIS.md: 신규 (1,366라인)
+
+코드 영향:
+  Phase 5 (UI):
+    - Positions.tsx: PositionOut.current_price 직접 사용 (mock lookup 폐기)
+    - Reports.tsx: DELETE → soft delete + 숨긴 토글
+    - Settings.tsx: broker/trading 탭 read-only + InlineNotif (.env 안내)
+
+  Phase 5 후속 (백엔드 거래):
+    src/core/v71/exchange/ 신규 패키지:
+      - kiwoom_client.py, kiwoom_websocket.py, token_manager.py
+      - rate_limiter.py, order_manager.py, reconciler.py, error_mapper.py
+
+마이그레이션:
+  src/database/migrations/v71/018_patch5_orders_table.{up,down}.sql (예정)
+  src/database/migrations/v71/019_patch5_positions_current_price.{up,down}.sql (예정)
+  src/database/migrations/v71/020_patch5_reports_soft_delete.{up,down}.sql (예정)
+
+버전:
+  V7.1.0c (PRD patch #3) → V7.1.0d (PRD patch #5)
+  ※ Patch #4는 본 메시지 시점 이전에 결정된 알려진 한계 (current_price/리포트 삭제/settings) 자체.
+  Git tag (예정): v71-prd-patch-5
+```
+
 ### 6.3 향후 변경 관리
 
 ```yaml
@@ -977,7 +1248,7 @@ PRD 변경 절차:
   5. Git commit + tag
 
 버전 관리:
-  현재: V7.1.0a (initial + PRD patch #1)
+  현재: V7.1.0c (initial + PRD patch #1 + #2 + #3)
   향후:
     V7.1.1: 룰 미세 조정
     V7.1.2: ...

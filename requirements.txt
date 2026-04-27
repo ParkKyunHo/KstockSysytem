@@ -29,6 +29,18 @@ pandas>=2.0.0
 # 비동기 유틸리티
 tenacity>=8.2.0  # 재시도 로직
 
+# ========================
+# V7.1 Phase 5 — Web Backend (FastAPI)
+# ========================
+fastapi>=0.110.0
+uvicorn[standard]>=0.27.0
+python-jose[cryptography]>=3.3.0  # JWT
+passlib[bcrypt]>=1.7.4              # bcrypt password hash
+pyotp>=2.9.0                         # TOTP 2FA
+python-multipart>=0.0.9              # form data (FastAPI security)
+asyncpg>=0.29.0                      # PostgreSQL 비동기 (V7.1 prod)
+slowapi>=0.1.9                       # rate limit
+
 # 개발 도구
 mypy>=1.7.0
 ruff>=0.1.0

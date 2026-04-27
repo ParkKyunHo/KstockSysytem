@@ -364,6 +364,9 @@ cursor 인코딩:
 
 ## §3. 추적 종목 API
 
+> ⚠️ **PRD Patch #3 (2026-04-25)**: tracked_stocks에서 `path_type` 제거.
+> 경로는 box API (§4)에서 관리.
+
 ### 3.1 GET /api/v71/tracked_stocks
 
 ```yaml
@@ -371,12 +374,14 @@ cursor 인코딩:
 
 Query Parameters:
   status: TRACKING | BOX_SET | POSITION_OPEN | POSITION_PARTIAL | EXITED
-  path_type: PATH_A | PATH_B
   stock_code: 종목 코드 (정확 일치)
   q: 검색어 (종목명 like)
   limit: 1-100 (기본 20)
   cursor: 페이지네이션
   sort: -created_at | -last_status_changed_at | stock_name
+  
+  ⚠️ path_type 필터는 제거 (PRD Patch #3)
+  경로별 필터는 boxes API에서
 
 Response 200:
 {
@@ -386,7 +391,6 @@ Response 200:
       "stock_code": "005930",
       "stock_name": "삼성전자",
       "market": "KOSPI",
-      "path_type": "PATH_A",
       "status": "BOX_SET",
       "user_memo": "...",
       "source": "HTS",
@@ -395,12 +399,15 @@ Response 200:
       "created_at": "2026-04-25T01:00:00Z",
       "last_status_changed_at": "2026-04-25T03:30:00Z",
       
-      // 집계 정보
+      // 집계 정보 (PRD Patch #3: 경로별 분리)
       "summary": {
-        "active_box_count": 3,
+        "active_box_count": 3,           // 전체 박스 수
+        "path_a_box_count": 2,           // PATH_A 박스 수
+        "path_b_box_count": 1,           // PATH_B 박스 수
         "triggered_box_count": 0,
         "current_position_qty": 0,
-        "current_position_avg_price": null
+        "current_position_avg_price": null,
+        "total_position_pct": 0           // 종목당 30% 한도 확인용
       }
     }
   ],
@@ -413,17 +420,19 @@ Response 200:
 ```yaml
 설명: 새 종목 추적 등록
 
+⚠️ PRD Patch #3: path_type 파라미터 제거
+경로는 박스 생성 시에 지정
+
 Request:
 {
   "stock_code": "005930",       // 필수, 6자리
-  "path_type": "PATH_A",         // 필수
   "user_memo": "...",            // 선택
   "source": "HTS"                // 선택
 }
 
 검증:
   - stock_code 키움 API에 존재하는지
-  - 같은 stock_code + path_type + 활성 추적 중복 차단
+  - 같은 stock_code + 활성 추적 중복 차단
 
 Response 201:
 {
@@ -431,7 +440,7 @@ Response 201:
     "id": "uuid",
     "stock_code": "005930",
     "stock_name": "삼성전자",
-    "path_type": "PATH_A",
+    "market": "KOSPI",
     "status": "TRACKING",
     "created_at": "2026-04-25T05:30:00Z",
     ...
@@ -441,7 +450,7 @@ Response 201:
 Response 409:
 {
   "error_code": "DUPLICATE_TRACKING",
-  "message": "삼성전자(005930) PATH_A 이미 추적 중입니다",
+  "message": "삼성전자(005930) 이미 추적 중입니다",
   "details": {
     "existing_id": "uuid"
   }
@@ -460,20 +469,32 @@ Response 200:
     "stock_code": "005930",
     "stock_name": "삼성전자",
     "market": "KOSPI",
-    "path_type": "PATH_A",
     "status": "BOX_SET",
     "user_memo": "...",
     
-    // 박스 리스트 포함
+    // 박스 리스트 (PRD Patch #3: path_type 포함)
     "boxes": [
       {
         "id": "uuid",
+        "path_type": "PATH_A",         // ★ 박스마다
         "box_tier": 1,
         "upper_price": 74000,
         "lower_price": 73000,
         "position_size_pct": 10.0,
         "stop_loss_pct": -0.05,
         "strategy_type": "PULLBACK",
+        "status": "WAITING",
+        "created_at": "..."
+      },
+      {
+        "id": "uuid",
+        "path_type": "PATH_B",         // ★ 같은 종목, 다른 경로
+        "box_tier": 1,
+        "upper_price": 66000,
+        "lower_price": 65000,
+        "position_size_pct": 10.0,
+        "stop_loss_pct": -0.05,
+        "strategy_type": "BREAKOUT",
         "status": "WAITING",
         "created_at": "..."
       }
@@ -483,7 +504,8 @@ Response 200:
     "positions": [
       {
         "id": "uuid",
-        "source": "SYSTEM_A",
+        "source": "SYSTEM_A",        // 포지션에 path 구분
+        "path_type": "PATH_A",        // 매수 당시 박스의 path
         "weighted_avg_price": 73500,
         "total_quantity": 100,
         "status": "OPEN",
@@ -514,8 +536,10 @@ Request:
   
 수정 불가:
   - stock_code (생성 후 변경 불가)
-  - path_type (변경 불가)
   - status (시스템이 관리)
+  
+  ⚠️ path_type 필드는 tracked_stocks에 없음 (PRD Patch #3)
+  경로 변경은 관련 박스 삭제 후 재생성
 
 Response 200:
 {
@@ -529,10 +553,10 @@ Response 200:
 설명: 추적 종료 (수동)
 
 처리:
-  - 모든 미진입 박스 CANCELLED
+  - 모든 미진입 박스 CANCELLED (경로 무관)
   - 보유 포지션 있으면 거부 (먼저 청산 필요)
   - tracked_stocks.status = EXITED
-  - 시세 구독 해제
+  - 시세 구독 해제 (PATH_A + PATH_B 모두)
 
 Response 204: (no content)
 
@@ -588,6 +612,9 @@ Response 200:
 
 ## §4. 박스 API
 
+> ⚠️ **PRD Patch #3 (2026-04-25)**: 박스 생성 시 `path_type` 필수.
+> 경로가 tracked_stocks에서 support_boxes로 이동.
+
 ### 4.1 POST /api/v71/boxes
 
 ```yaml
@@ -596,6 +623,7 @@ Response 200:
 Request:
 {
   "tracked_stock_id": "uuid",
+  "path_type": "PATH_A",          // ★ 필수 (PRD Patch #3 신규)
   "upper_price": 74000,
   "lower_price": 73000,
   "position_size_pct": 10.0,
@@ -621,6 +649,7 @@ Response 201:
   "data": {
     "id": "uuid",
     "tracked_stock_id": "uuid",
+    "path_type": "PATH_A",          // ★ 응답에 포함 (PRD Patch #3)
     "box_tier": 1,
     "upper_price": 74000,
     "lower_price": 73000,
@@ -663,6 +692,7 @@ Response 422 (한도):
 
 Query:
   tracked_stock_id: 특정 종목의 박스
+  path_type: PATH_A | PATH_B  ★ (PRD Patch #3 신규)
   status: WAITING | TRIGGERED | INVALIDATED | CANCELLED
   strategy_type: PULLBACK | BREAKOUT
   limit, cursor, sort
@@ -827,12 +857,16 @@ Response 200:
       
       // 상태
       "status": "OPEN",
-      
-      // 실시간 (선택, WebSocket으로 받는 게 효율)
+
+      // ★ PRD Patch #5 (V7.1.0d, 2026-04-27): positions 테이블 직접 컬럼
+      //   갱신 1순위: WebSocket 0B (실시간, < 1초, NFR1)
+      //   갱신 2순위: kt00018 (5초 폴링, WebSocket 끊김 시)
+      //   갱신 3순위: ka10001 (재시작 직후 단발)
       "current_price": 74200,
+      "current_price_at": "2026-04-25T05:30:00Z",
       "pnl_amount": 70000,
       "pnl_pct": 0.0095,
-      
+
       // 청산 정보 (CLOSED 시)
       "closed_at": null,
       "final_pnl": null,
@@ -1209,19 +1243,36 @@ Response 200 (실패):
 ### 8.3 GET /api/v71/reports
 
 ```yaml
-설명: 리포트 리스트
+설명: 리포트 리스트 (기본: 숨긴 리포트 제외)
 
 Query:
   stock_code: 특정 종목 리포트
   status: PENDING | GENERATING | COMPLETED | FAILED
   from_date, to_date
+  include_hidden: false (기본) | true        # ★ PRD Patch #5
   limit, cursor
 
 Response 200:
 {
-  "data": [...],
+  "data": [
+    {
+      "id": "uuid",
+      ...
+      "is_hidden": false,            # ★ PRD Patch #5
+      "hidden_at": null,
+      "hidden_reason": null
+    }
+  ],
   "meta": {...}
 }
+
+기본 동작 (include_hidden=false):
+  WHERE is_hidden = FALSE
+  → idx_reports_visible 부분 인덱스 활용 (성능 최적화)
+
+include_hidden=true:
+  is_hidden 조건 없음 (전체 조회)
+  숨김 리포트 복구 화면용
 ```
 
 ### 8.4 GET /api/v71/reports/{id}/pdf
@@ -1260,6 +1311,70 @@ Response 200:
 {
   "data": {...}
 }
+```
+
+### 8.7 DELETE /api/v71/reports/{id} — ★ PRD Patch #5 (V7.1.0d)
+
+```yaml
+설명: 리포트 소프트 삭제 (영구 보존, 목록에서만 숨김)
+
+처리:
+  UPDATE daily_reports
+    SET is_hidden = TRUE,
+        hidden_at = NOW(),
+        hidden_reason = 'USER_REQUEST'
+    WHERE id = $1;
+
+Response 204: (No Content)
+
+배경:
+  PRD Patch #5: 리포트는 영구 보존 (감사 + 회고용)
+  실제 row 삭제 금지 → soft delete만 허용
+  복구 가능 (POST /reports/{id}/restore)
+
+UI 안내:
+  "리포트는 영구 보존되며 숨김 처리됩니다"
+
+Response 404:
+  {
+    "error_code": "REPORT_NOT_FOUND",
+    "message": "리포트를 찾을 수 없습니다"
+  }
+```
+
+### 8.8 POST /api/v71/reports/{id}/restore — ★ PRD Patch #5 (V7.1.0d)
+
+```yaml
+설명: 숨긴 리포트 복구
+
+처리:
+  UPDATE daily_reports
+    SET is_hidden = FALSE,
+        hidden_at = NULL,
+        hidden_reason = NULL
+    WHERE id = $1;
+
+Response 200:
+{
+  "data": {
+    "id": "uuid",
+    ...,
+    "is_hidden": false,
+    "hidden_at": null,
+    "hidden_reason": null
+  }
+}
+
+Response 404:
+  {
+    "error_code": "REPORT_NOT_FOUND"
+  }
+
+Response 422:
+  {
+    "error_code": "REPORT_NOT_HIDDEN",
+    "message": "이미 표시 중인 리포트는 복구할 필요 없습니다"
+  }
 ```
 
 ---
@@ -1558,6 +1673,68 @@ Response 200:
   - audit_logs 기록
   - 텔레그램 알림 (CRITICAL)
   - 시스템 즉시 반영
+```
+
+### 10.5 GET /api/v71/settings/broker — ★ PRD Patch #5 (V7.1.0d, read-only)
+
+```yaml
+설명: 증권사 연동 상태 (read-only -- .env 파일에서 관리)
+
+권한: 인증된 사용자
+
+Response 200:
+{
+  "data": {
+    "kiwoom_account_no_masked": "1234-56**-**",     // 마스킹 (12_SECURITY §6.3)
+    "kiwoom_account_type": "REAL",                   // REAL | MOCK
+    "app_key_configured": true,                      // .env에 KIWOOM_APP_KEY 설정 여부 (값 노출 X)
+    "app_secret_configured": true,
+    "token_expires_at": "2026-04-27T15:30:00Z",      // 현재 토큰 만료 시각
+    "managed_by": ".env file"                        // 안내 문구
+  }
+}
+
+PATCH 없음:
+  설정 변경은 .env 파일 수정 + 서비스 재시작 필요.
+  UI는 read-only 표시만 (모든 input disabled + InlineNotif 안내).
+
+배경 (PRD Patch #5):
+  - 한계 3 해결: KIWOOM API 키 등은 환경 변수 격리 (보안)
+  - 12_SECURITY §6 시크릿 관리 정책 정합
+```
+
+### 10.6 GET /api/v71/settings/trading — ★ PRD Patch #5 (V7.1.0d, read-only)
+
+```yaml
+설명: 매매 설정 상태 (read-only -- .env + 02_TRADING_RULES.md 상수)
+
+권한: 인증된 사용자
+
+Response 200:
+{
+  "data": {
+    "auto_trading_enabled": true,                    // .env: V71_AUTO_TRADING
+    "safe_mode": false,                              // 현재 안전 모드 상태
+    "is_paper_trading": false,                       // .env: IS_PAPER_TRADING (mockapi)
+
+    // 거래 룰 상수 (02_TRADING_RULES.md, 코드 상수로 잠금)
+    "max_position_pct_per_stock": 30,                // 종목당 30% 한도
+    "profit_5_take_pct": 30,                         // +5% 도달 시 30% 청산
+    "profit_10_take_pct": 30,                        // +10% 도달 시 30% 청산 (남은 70%의 30%)
+    "stop_loss_default_pct": -5,                     // 단계 1 손절 기본값
+
+    "managed_by": ".env file + 02_TRADING_RULES.md constants"
+  }
+}
+
+PATCH 없음:
+  - 거래 룰 상수는 02_TRADING_RULES.md에 의해 코드 상수로 잠금 (V71Constants)
+  - safe_mode 변경은 POST /api/v71/system/safe_mode + /resume 사용 (별도 API)
+  - 환경 변수는 .env 파일 수정 + 서비스 재시작 필요
+
+배경 (PRD Patch #5):
+  - 한계 3 해결: 거래 룰의 임의 변경 차단 (안전장치)
+  - 헌법 1 (사용자 판단 불가침) + 헌법 4 (시스템 계속 운영) 정합
 ```
 
 ---
@@ -1879,6 +2056,144 @@ SERVICE_UNAVAILABLE         # 503: 시스템 다운
     "retry_after_seconds": 30
   }
 }
+```
+
+---
+
+## §13. 주문 API (★ PRD Patch #5 신규, V7.1.0d, 2026-04-27)
+
+> **위치 결정**: 주문 발주는 OrderManager (`src/core/v71/exchange/order_manager.py`)가 내부적으로 수행.
+> 본 §은 사용자가 주문 이력을 조회하는 read-only API + 수동 취소만 정의.
+> 자동 매매(SYSTEM_A/B) 발주는 외부 노출 API 없음 (내부 호출만).
+>
+> **새 추가 사유**: 키움 API에 `client_order_id` 필드 없음 → V7.1 자체 매핑 (orders 테이블) 필요.
+
+### 13.1 GET /api/v71/orders
+
+```yaml
+설명: 주문 이력 조회 (cursor 페이지네이션)
+
+Query:
+  state: SUBMITTED | PARTIAL | FILLED | CANCELLED | REJECTED
+  position_id: 특정 포지션의 주문만
+  box_id: 특정 박스의 주문만
+  stock_code: 종목별
+  from_date, to_date
+  limit (1-100, 기본 20), cursor
+  sort: -submitted_at (기본) | submitted_at
+
+Response 200:
+{
+  "data": [
+    {
+      "id": "uuid",
+      "kiwoom_order_no": "0000123456",
+      "kiwoom_orig_order_no": null,
+      "position_id": "uuid",
+      "box_id": "uuid",
+      "tracked_stock_id": "uuid",
+
+      "stock_code": "005930",
+      "direction": "BUY",
+      "trade_type": "LIMIT",
+      "quantity": 100,
+      "price": 73500,
+      "exchange": "KRX",
+
+      "state": "FILLED",
+      "filled_quantity": 100,
+      "filled_avg_price": 73500.00,
+
+      "reject_reason": null,
+      "cancel_reason": null,
+      "retry_attempt": 1,
+
+      "submitted_at": "2026-04-25T01:30:00Z",
+      "filled_at": "2026-04-25T01:30:02Z",
+      "cancelled_at": null,
+      "rejected_at": null
+      // kiwoom_raw_request/response 미포함 (상세에서 제공)
+    }
+  ],
+  "meta": {
+    "total": 150,
+    "limit": 20,
+    "next_cursor": "..."
+  }
+}
+
+성능:
+  - state 필터 시 idx_orders_state_pending (부분 인덱스) 활용
+  - position_id / box_id 필터 시 별도 인덱스 활용
+```
+
+### 13.2 GET /api/v71/orders/{id}
+
+```yaml
+설명: 단일 주문 상세 (감사용 raw 페이로드 포함)
+
+Response 200:
+{
+  "data": {
+    "id": "uuid",
+    ... (위 §13.1 필드 전체),
+
+    // ★ PRD Patch #5: 감사 + 디버깅용
+    "kiwoom_raw_request": {
+      "api-id": "kt10000",
+      "dmst_stex_tp": "KRX",
+      "stk_cd": "005930",
+      "ord_qty": "100",
+      "ord_uv": "73500",
+      "trde_tp": "0"
+    },
+    "kiwoom_raw_response": {
+      "return_code": 0,
+      "ord_no": "0000123456",
+      ...
+    }
+  }
+}
+
+Response 404:
+  {
+    "error_code": "ORDER_NOT_FOUND"
+  }
+
+보안:
+  - kiwoom_raw_request에 토큰/API 키 없음 (헤더 미포함)
+  - 12_SECURITY §6 정책 정합
+```
+
+### 13.3 POST /api/v71/orders/{id}/cancel — 수동 취소 (선택)
+
+```yaml
+설명: 미체결 주문 수동 취소
+권한: OWNER/ADMIN
+
+처리 (OrderManager 내부):
+  1. 키움 kt10003 (취소주문) 호출
+  2. 새 row INSERT (kiwoom_orig_order_no = 원주문 ord_no, direction 동일, trade_type 동일)
+  3. 원주문 state = CANCELLED, cancelled_at = NOW(), cancel_reason = 'USER_REQUEST'
+
+Response 202:
+{
+  "data": {
+    "task_id": "uuid",
+    "estimated_seconds": 5
+  }
+}
+
+Response 422 (취소 불가):
+  {
+    "error_code": "ORDER_NOT_CANCELLABLE",
+    "message": "FILLED/CANCELLED/REJECTED 상태는 취소 불가",
+    "details": { "current_state": "FILLED" }
+  }
+
+부수 효과:
+  - audit_logs 기록 (USER_CANCEL_ORDER)
+  - WebSocket POSITION_CHANGED 발행 (해당 포지션 영향 시)
 ```
 
 ---

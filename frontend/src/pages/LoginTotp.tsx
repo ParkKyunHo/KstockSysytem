@@ -1,15 +1,30 @@
-// V7.1 TOTP -- direct port of frontend-prototype/src/pages/login.js TotpPage.
+// V7.1 TOTP -- wired to /api/v71/auth/totp/verify (PRD §1.2 step 2).
 
-import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useEffect, useRef, useState } from 'react';
+import { Navigate, useLocation, useNavigate } from 'react-router-dom';
 
 import { Btn, Field, InlineNotif, Input, ProgressBar } from '@/components/ui';
+import { useAuth } from '@/contexts/AuthContext';
+import { ApiClientError } from '@/lib/api';
+
+interface LoginTotpState {
+  sessionId: string;
+  from?: string;
+}
 
 export function LoginTotp() {
   const navigate = useNavigate();
+  const location = useLocation();
+  const { verifyTotp } = useAuth();
+
+  const state = (location.state as LoginTotpState | null) ?? null;
+  const sessionId = state?.sessionId;
+
   const [code, setCode] = useState('');
   const [error, setError] = useState<string | null>(null);
-  const [seconds, setSeconds] = useState(28);
+  const [seconds, setSeconds] = useState(30);
+  const [submitting, setSubmitting] = useState(false);
+  const submittedFor = useRef<string | null>(null);
 
   useEffect(() => {
     const id = window.setInterval(
@@ -20,15 +35,43 @@ export function LoginTotp() {
   }, []);
 
   useEffect(() => {
-    if (code.length === 6) {
-      if (code === '123456') {
-        navigate('/dashboard');
-      } else {
-        setError('잘못된 코드');
-        setCode('');
-      }
+    if (
+      code.length === 6 &&
+      !submitting &&
+      submittedFor.current !== code &&
+      sessionId
+    ) {
+      submittedFor.current = code;
+      void (async () => {
+        setSubmitting(true);
+        setError(null);
+        try {
+          await verifyTotp(sessionId, code);
+          navigate(state?.from ?? '/dashboard', { replace: true });
+        } catch (err) {
+          if (err instanceof ApiClientError) {
+            if (err.errorCode === 'INVALID_TOTP') {
+              setError('잘못된 코드입니다.');
+            } else if (err.errorCode === 'SESSION_EXPIRED') {
+              setError('세션이 만료되었습니다. 다시 로그인하세요.');
+            } else {
+              setError('인증 실패: ' + err.message);
+            }
+          } else {
+            setError('네트워크 오류');
+          }
+          setCode('');
+        } finally {
+          setSubmitting(false);
+        }
+      })();
     }
-  }, [code, navigate]);
+  }, [code, submitting, verifyTotp, sessionId, navigate, state]);
+
+  if (!sessionId) {
+    // Reload-after-totp scenario: kick the user back to /login.
+    return <Navigate to="/login" replace />;
+  }
 
   return (
     <div className="login-shell">
@@ -46,7 +89,7 @@ export function LoginTotp() {
         </div>
         <h1>TOTP 코드 입력</h1>
         <p className="sub">
-          Google Authenticator의 6자리 코드를 입력하세요. (테스트: 123456)
+          Google Authenticator의 6자리 코드를 입력하세요.
         </p>
         {error ? (
           <InlineNotif
@@ -64,6 +107,7 @@ export function LoginTotp() {
             lg
             mono
             autoFocus
+            disabled={submitting}
           />
         </Field>
         <div style={{ marginBottom: 16 }}>
@@ -73,8 +117,12 @@ export function LoginTotp() {
             helper={`다음 코드까지 ${seconds}초`}
           />
         </div>
-        <Btn kind="ghost" size="sm">
-          백업 코드 사용
+        <Btn
+          kind="ghost"
+          size="sm"
+          onClick={() => navigate('/login', { replace: true })}
+        >
+          로그인 화면으로
         </Btn>
       </div>
     </div>

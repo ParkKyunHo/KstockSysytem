@@ -96,8 +96,19 @@ def _tarjan_scc(graph: dict[str, set[str]]) -> list[list[str]]:
     return sccs
 
 
+# V7.1 land = core engine (src.core.v71.*) + web layer (src.web.v71.*).
+# Phase 5 added the FastAPI surface under src/web/v71 which is part of
+# the V7.1 stack and is allowed to call into V7.1 core (single direction
+# rule below). 단방향 룰: V7.0 -> V7.1 차단.
+_V71_PREFIXES = ("src.core.v71", "src.web.v71")
+
+
+def _is_v71(module: str) -> bool:
+    return any(module == p or module.startswith(p + ".") for p in _V71_PREFIXES)
+
+
 def _scc_touches_v71(scc: list[str]) -> bool:
-    return any("src.core.v71" in m for m in scc)
+    return any(_is_v71(m) for m in scc)
 
 
 def main() -> None:
@@ -119,10 +130,10 @@ def main() -> None:
 
     # 단방향 룰: v70 → v71 import 금지.
     for src_mod, targets in graph.items():
-        if "src.core.v71" in src_mod:
+        if _is_v71(src_mod):
             continue
         for tgt in targets:
-            if tgt.startswith("src.core.v71"):
+            if _is_v71(tgt):
                 blocking.violate(
                     f"V7.0 -> V7.1 dependency forbidden: {src_mod} imports {tgt}"
                 )

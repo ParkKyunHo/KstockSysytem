@@ -1,9 +1,22 @@
-// V7.1 Dashboard -- direct port of frontend-prototype/src/pages/dashboard.js.
-// Uses BEM classes from src/styles/legacy (page-hd, kpi-grid, tile-row,
-// section-hd, cds-data-table, cds-table, cds-slist, ...).
+// V7.1 Dashboard -- wired to real REST APIs (PRD §0~§9).
+//
+// Data sources:
+//   - useSystemStatus() / useUnreadNotifications()    (PRD §9, §7)
+//   - useTrackedStocks() / useBoxes()                 (PRD §3, §4)
+//   - usePositions() / usePositionsSummary()          (PRD §5)
+//   - useTradeEventsToday()                           (PRD §6.2)
+//   - useNotifications({ limit: 100 })                (PRD §7.1)
+//
+// PositionOut intentionally lacks ``current_price`` (PRD §5.1) -- the
+// price WebSocket bus owns the live tick. Until that channel is wired
+// to a hook, we look up the cached tick price by stock_code from mock
+// trackedStocks (kept on the AppShell outlet context). The dashboard
+// degrades gracefully when no price is known.
 
 import { useNavigate } from 'react-router-dom';
 
+import type { BoxOut } from '@/api/boxes';
+import type { PositionOut } from '@/api/positions';
 import { I } from '@/components/icons';
 import {
   Btn,
@@ -15,6 +28,15 @@ import {
   Tag,
 } from '@/components/ui';
 import { useAppShellContext } from '@/hooks/useAppShell';
+import {
+  useBoxes,
+  useNotifications,
+  usePositions,
+  usePositionsSummary,
+  useSystemStatus,
+  useTrackedStocks,
+  useTradeEventsToday,
+} from '@/hooks/useApi';
 import { eventLabel } from '@/lib/eventLabel';
 import {
   formatKrw,
@@ -25,28 +47,72 @@ import {
   formatUptime,
 } from '@/lib/formatters';
 
-const TOTAL_CAPITAL = 100_000_000;
+interface PnlComputed {
+  current_price: number | null;
+  pnl_amount: number | null;
+  pnl_pct: number | null;
+}
+
+function computePnl(
+  p: PositionOut,
+  priceByCode: Map<string, number>,
+): PnlComputed {
+  const live = priceByCode.get(p.stock_code);
+  if (live == null) {
+    return { current_price: null, pnl_amount: null, pnl_pct: null };
+  }
+  const amount = (live - p.weighted_avg_price) * p.total_quantity;
+  const pct =
+    p.weighted_avg_price > 0
+      ? ((live - p.weighted_avg_price) / p.weighted_avg_price) * 100
+      : 0;
+  return {
+    current_price: live,
+    pnl_amount: Math.round(amount),
+    pnl_pct: Number(pct.toFixed(2)),
+  };
+}
 
 export function Dashboard() {
-  const { mock } = useAppShellContext();
   const navigate = useNavigate();
-  const sys = mock.systemStatus;
+  const { mock } = useAppShellContext();
 
-  const trackedCount = mock.trackedStocks.filter(
+  // Real API.
+  const { data: systemStatus } = useSystemStatus();
+  const { data: trackedList } = useTrackedStocks({ limit: 200 });
+  const { data: boxList } = useBoxes({ limit: 200 });
+  const { data: positionList } = usePositions({ limit: 200 });
+  const { data: summary } = usePositionsSummary();
+  const { data: today } = useTradeEventsToday();
+  const { data: notifList } = useNotifications({ limit: 5 });
+
+  const sys = systemStatus ?? mock.systemStatus;
+  const trackedStocks = trackedList?.data ?? [];
+  const boxes = boxList?.data ?? [];
+  const positions = (positionList?.data ?? []).filter(
+    (p) => p.status !== 'CLOSED',
+  );
+
+  const trackedCount = trackedStocks.filter(
     (t) => t.status !== 'EXITED',
   ).length;
-  const boxWaiting = mock.boxes.filter((b) => b.status === 'WAITING').length;
-  const boxTriggered = mock.boxes.filter(
-    (b) => b.status === 'TRIGGERED',
-  ).length;
-  const positions = mock.positions.filter((p) => p.status !== 'CLOSED');
+  const boxWaiting = boxes.filter((b) => b.status === 'WAITING').length;
+  const boxTriggered = boxes.filter((b) => b.status === 'TRIGGERED').length;
   const partial = positions.filter((p) => p.status === 'PARTIAL_CLOSED').length;
-  const used = positions.reduce((s, p) => s + p.actual_capital_invested, 0);
-  const usedPct = (used / TOTAL_CAPITAL) * 100;
-  const todayPnl = positions.reduce((s, p) => s + p.pnl_amount, 0);
-  const todayPnlPct = (todayPnl / TOTAL_CAPITAL) * 100;
 
-  const upcoming = mock.boxes
+  const totalCapitalPct = summary?.total_capital_pct ?? 0;
+  const totalCapitalInvested = summary?.total_capital_invested ?? 0;
+  const totalPnl = today?.total_pnl ?? summary?.total_pnl_amount ?? 0;
+  const totalPnlPct = today?.total_pnl_pct ?? summary?.total_pnl_pct ?? null;
+
+  // Live-price lookup by stock_code -- tracked-stock mock prices
+  // until the WebSocket price channel is wired in.
+  const priceByCode = new Map<string, number>();
+  for (const m of mock.trackedStocks) {
+    priceByCode.set(m.stock_code, m.current_price);
+  }
+
+  const upcoming: BoxOut[] = boxes
     .filter(
       (b) =>
         b.status === 'WAITING' &&
@@ -60,16 +126,15 @@ export function Dashboard() {
     )
     .slice(0, 5);
 
-  const todaysTrades = mock.tradeEvents.filter(
-    (e) => Date.now() - new Date(e.occurred_at).getTime() < 86_400_000,
-  );
+  const todaysBuys = today?.buys ?? [];
+  const todaysSells = [
+    ...(today?.sells ?? []),
+    ...(today?.auto_exits ?? []),
+    ...(today?.manual_trades ?? []),
+  ];
+  const todaysCount = todaysBuys.length + todaysSells.length;
 
-  const recentNotifs = [...mock.notifications]
-    .sort(
-      (a, b) =>
-        new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
-    )
-    .slice(0, 5);
+  const recentNotifs = (notifList?.data ?? []).slice(0, 5);
 
   return (
     <div>
@@ -114,17 +179,15 @@ export function Dashboard() {
         />
         <KPITile
           label="자본 사용"
-          value={`${usedPct.toFixed(1)}%`}
-          sub={`가용 ${(100 - usedPct).toFixed(1)}% · ${formatKrw(
-            TOTAL_CAPITAL - used,
-          )}원`}
-          progress={usedPct}
+          value={`${totalCapitalPct.toFixed(1)}%`}
+          sub={`투입 ${formatKrw(totalCapitalInvested)}원`}
+          progress={totalCapitalPct}
         />
         <KPITile
           label="오늘 손익"
-          value={`${formatKrwSigned(todayPnl)}원`}
-          sub={formatPct(todayPnlPct)}
-          color={todayPnl >= 0 ? 'profit' : 'loss'}
+          value={`${formatKrwSigned(totalPnl)}원`}
+          sub={formatPct(totalPnlPct)}
+          color={totalPnl >= 0 ? 'profit' : 'loss'}
         />
       </div>
 
@@ -197,10 +260,8 @@ export function Dashboard() {
               </thead>
               <tbody>
                 {upcoming.map((b) => {
-                  const ts = mock.trackedStocks.find(
-                    (t) => t.id === b.tracked_stock_id,
-                  );
                   const proximity = b.entry_proximity_pct ?? 0;
+                  const livePrice = priceByCode.get(b.stock_code);
                   return (
                     <tr key={b.id}>
                       <td>
@@ -208,7 +269,7 @@ export function Dashboard() {
                         <span className="text-helper mono">{b.stock_code}</span>
                       </td>
                       <td className="price">
-                        {ts ? `${formatKrw(ts.current_price)}원` : '-'}
+                        {livePrice != null ? `${formatKrw(livePrice)}원` : '-'}
                       </td>
                       <td className="mono">
                         {formatKrw(b.lower_price)}~{formatKrw(b.upper_price)}
@@ -285,39 +346,47 @@ export function Dashboard() {
                 </tr>
               </thead>
               <tbody>
-                {positions.map((p) => (
-                  <tr
-                    key={p.id}
-                    style={{ cursor: 'pointer' }}
-                    onClick={() => navigate('/positions')}
-                  >
-                    <td>
-                      <strong>{p.stock_name}</strong>{' '}
-                      <span className="text-helper mono">{p.stock_code}</span>
-                    </td>
-                    <td>
-                      <PositionSourceTag source={p.source} />
-                    </td>
-                    <td className="price">{p.total_quantity}</td>
-                    <td className="price">{formatKrw(p.weighted_avg_price)}</td>
-                    <td className="price">{formatKrw(p.current_price)}</td>
-                    <td>
-                      <div style={{ textAlign: 'right' }}>
-                        <PnLCell amount={p.pnl_amount} pct={p.pnl_pct} />
-                      </div>
-                    </td>
-                    <td className="price">{formatKrw(p.fixed_stop_price)}</td>
-                    <td>
-                      {p.ts_activated ? (
-                        <Tag type="green" size="sm">
-                          TS 활성
-                        </Tag>
-                      ) : (
-                        <span className="text-helper">-</span>
-                      )}
-                    </td>
-                  </tr>
-                ))}
+                {positions.map((p) => {
+                  const computed = computePnl(p, priceByCode);
+                  return (
+                    <tr
+                      key={p.id}
+                      style={{ cursor: 'pointer' }}
+                      onClick={() => navigate('/positions')}
+                    >
+                      <td>
+                        <strong>{p.stock_name}</strong>{' '}
+                        <span className="text-helper mono">{p.stock_code}</span>
+                      </td>
+                      <td>
+                        <PositionSourceTag source={p.source} />
+                      </td>
+                      <td className="price">{p.total_quantity}</td>
+                      <td className="price">
+                        {formatKrw(p.weighted_avg_price)}
+                      </td>
+                      <td className="price">{formatKrw(computed.current_price)}</td>
+                      <td>
+                        <div style={{ textAlign: 'right' }}>
+                          <PnLCell
+                            amount={computed.pnl_amount ?? 0}
+                            pct={computed.pnl_pct ?? 0}
+                          />
+                        </div>
+                      </td>
+                      <td className="price">{formatKrw(p.fixed_stop_price)}</td>
+                      <td>
+                        {p.ts_activated ? (
+                          <Tag type="green" size="sm">
+                            TS 활성
+                          </Tag>
+                        ) : (
+                          <span className="text-helper">-</span>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -329,7 +398,7 @@ export function Dashboard() {
         <div>
           <div className="section-hd">
             <h2>오늘 거래</h2>
-            <span className="text-helper">{todaysTrades.length}건</span>
+            <span className="text-helper">{todaysCount}건</span>
           </div>
           <div className="cds-data-table">
             <table className="cds-table cds-table--compact">
@@ -343,7 +412,7 @@ export function Dashboard() {
                 </tr>
               </thead>
               <tbody>
-                {todaysTrades.length === 0 ? (
+                {todaysCount === 0 ? (
                   <tr>
                     <td
                       colSpan={5}
@@ -353,20 +422,26 @@ export function Dashboard() {
                     </td>
                   </tr>
                 ) : (
-                  todaysTrades.slice(0, 6).map((e) => {
-                    const pos = mock.positions.find(
-                      (p) => p.id === e.position_id,
-                    );
-                    return (
-                      <tr key={e.id}>
+                  <>
+                    {todaysBuys.slice(0, 6).map((e) => (
+                      <tr key={`buy-${e.stock_code}-${e.occurred_at}`}>
                         <td className="mono">{formatTime(e.occurred_at)}</td>
-                        <td>{pos?.stock_name ?? e.stock_code}</td>
-                        <td>{eventLabel(e.event_type)}</td>
+                        <td>{e.stock_code}</td>
+                        <td>{eventLabel('BUY_EXECUTED')}</td>
                         <td className="price">{e.quantity}</td>
                         <td className="price">{formatKrw(e.price)}</td>
                       </tr>
-                    );
-                  })
+                    ))}
+                    {todaysSells.slice(0, 6 - todaysBuys.length).map((e) => (
+                      <tr key={`sell-${e.stock_code}-${e.occurred_at}`}>
+                        <td className="mono">{formatTime(e.occurred_at)}</td>
+                        <td>{e.stock_code}</td>
+                        <td>{e.reason ?? '청산'}</td>
+                        <td className="price">{e.quantity}</td>
+                        <td className="price">{formatKrw(e.price)}</td>
+                      </tr>
+                    ))}
+                  </>
                 )}
               </tbody>
             </table>

@@ -4,7 +4,14 @@
 > 
 > 본 문서는 V7.1 시스템의 **단일 진입점**입니다.
 > 
-> 13개 문서로 구성된 PRD 패키지의 통합 요약 + 네비게이션을 제공합니다.
+> 15개 문서로 구성된 PRD 패키지의 통합 요약 + 네비게이션을 제공합니다.
+> 
+> ⚠️ **2026-04-25 PRD Patch #2**: UI 디자인 시스템을 IBM Carbon Design System으로 전환.
+> 자세한 내용은 `13_APPENDIX.md` §6.2.X 참조.
+>
+> ⚠️ **PRD Patch #5 (V7.1.0d, 2026-04-27)**: 키움 REST API 18개 매핑 확정 + orders 테이블 신규 +
+> positions.current_price 컬럼 추가 + daily_reports 소프트 삭제 + settings/broker·trading read-only.
+> 자세한 내용은 `13_APPENDIX.md` §6.2.Z 참조. 키움 API 매핑 상세는 `KIWOOM_API_ANALYSIS.md` 참조.
 
 ---
 
@@ -147,7 +154,7 @@ V7.1의 모든 설계 결정은 이 5원칙에 부합해야 합니다.
 
 ## §2. PRD 문서 가이드
 
-### 2.1 14개 문서 목록
+### 2.1 15개 문서 목록
 
 ```
 docs/v71/
@@ -162,7 +169,8 @@ docs/v71/
 ├── 07_SKILLS_SPEC.md                      # 표준 스킬 8개
 ├── 08_HARNESS_SPEC.md                     # 자동 검증 7개
 ├── 09_API_SPEC.md                         # 백엔드 API
-├── 10_UI_GUIDE.md                         # UI 명세 (Claude Design용)
+├── 10_UI_GUIDE.md                         # ⚠️ DEPRECATED (shadcn/ui 참고용)
+├── 10_UI_GUIDE_CARBON.md                  # ★ UI 명세 (Carbon Design System, 실제 구현)
 ├── 11_REPORTING.md                        # 리포트 시스템 (Claude Opus 4.7)
 ├── 12_SECURITY.md                         # 보안 정책
 └── 13_APPENDIX.md                         # 결정 이력 + 부록
@@ -183,7 +191,8 @@ docs/v71/
 | 07 | 표준 함수 | Claude Code | 매우 김 |
 | 08 | 자동 검증 도구 | Claude Code | 김 |
 | 09 | API 명세 | Claude Code + Claude Design | 김 |
-| **10** | **UI 명세** | **Claude Design** | **매우 김** |
+| ~~10~~ | ~~UI 명세 (shadcn/ui)~~ ⚠️ DEPRECATED | 참고용 | - |
+| **10C** | **UI 명세 (Carbon)** ★ | **Claude Code (Phase 5)** | **매우 김** |
 | 11 | 리포트 (AI 활용) | Claude Code | 김 |
 | 12 | 보안 정책 | Claude Code | 김 |
 | 13 | 결정 이력 + 용어 | 모두 (참고용) | 중간 |
@@ -214,6 +223,13 @@ Claude Design UI 작업:
   2. 10_UI_GUIDE.md (전체)
   3. 09_API_SPEC.md (백엔드 연결)
   4. 12_SECURITY.md (인증 화면)
+
+Claude Code UI 작업 (Phase 5):
+  1. 01_PRD_MAIN.md (개요)
+  2. **10_UI_GUIDE_CARBON.md** ★ (Carbon 기준 모든 화면)
+  3. 10_UI_GUIDE.md (참고용, 인터랙션 흐름만)
+  4. 09_API_SPEC.md (백엔드 연결)
+  5. 12_SECURITY.md (인증 화면)
 
 거래 룰 검증:
   - 02_TRADING_RULES.md (단일 진실)
@@ -546,11 +562,59 @@ DB:
   월 1회 외부 백업
 
 외부 API:
-  - 키움 OpenAPI (실거래)
+  - 키움 OpenAPI (실거래) -- Patch #5 18개 매핑 확정
   - Anthropic Claude Opus 4.7 (리포트)
   - Telegram Bot API (알림)
   - DART OpenAPI (공시)
   - 네이버 뉴스 API (뉴스)
+
+키움 API 18개 (PRD Patch #5, V7.1.0d, 2026-04-27):
+  운영 도메인: https://api.kiwoom.com
+  모의 도메인: https://mockapi.kiwoom.com (KRX 전용)
+  WebSocket 운영: wss://api.kiwoom.com:10000
+  WebSocket 모의: wss://mockapi.kiwoom.com:10000
+
+  인증 (2):
+    au10001 토큰 발급: POST /oauth2/token
+    au10002 토큰 폐기: POST /oauth2/revoke
+
+  종목 정보 (1):
+    ka10001 주식기본정보: POST /api/dostk/stkinfo
+
+  차트 (2) ★:
+    ka10080 분봉차트: POST /api/dostk/chart (tic_scope=3, PATH_A)
+    ka10081 일봉차트: POST /api/dostk/chart (PATH_B)
+
+  주문 (4) ★:
+    kt10000 매수, kt10001 매도, kt10002 정정, kt10003 취소
+    공통: POST /api/dostk/ordr
+    필수: dmst_stex_tp=KRX (V7.1은 KRX만)
+    trde_tp: 0(지정가) / 3(시장가)
+    ⚠ client_order_id 필드 없음 → orders 테이블로 자체 매핑
+
+  계좌 (3) ★:
+    ka10075 미체결, ka10076 체결내역, kt00018 잔고평가
+    공통: POST /api/dostk/acnt
+    kt00018 응답: cur_prc / pur_pric / rmnd_qty (포지션 동기화)
+
+  WebSocket (5) ★:
+    0B 주식체결: 실시간 시세 (필드 10=현재가, 27/28=호가, 290=장구분)
+    00 주문체결: 계좌 (필드 9203=주문번호, 913=상태, 910/911=체결가/량)
+    04 잔고: 계좌 (필드 930=수량, 931=매입단가)
+    1h VI 발동/해제: 필드 9068=VI구분, 1224=해제시각
+    0D 주식호가잔량 (선택)
+
+  보조 (1):
+    ka10004 주식호가요청 (REST): POST /api/dostk/mrkcond
+
+  주요 오류 코드:
+    1700 요청 개수 초과 → 지수 백오프 (1s → 2s → 4s)
+    1902 종목 정보 없음 → 종목 등록 검증
+    8005 토큰 무효 → 자동 재발급
+    8010 토큰 발급 IP ≠ 사용 IP → CRITICAL 알림
+    8030/8031 실전/모의 환경 불일치 → 시작 시 검증
+
+  상세 매핑 + 구현 예시: KIWOOM_API_ANALYSIS.md 참조 (1,366라인)
 ```
 
 ---

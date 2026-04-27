@@ -23,6 +23,14 @@ dependencies = [
     "structlog>=23.2.0",
     "pandas>=2.0.0",
     "tenacity>=8.2.0",
+    # V7.1 Phase 5 -- Web Backend
+    "fastapi>=0.110.0",
+    "uvicorn[standard]>=0.27.0",
+    "python-jose[cryptography]>=3.3.0",
+    "passlib[bcrypt]>=1.7.4",
+    "pyotp>=2.9.0",
+    "python-multipart>=0.0.9",
+    "slowapi>=0.1.9",
 ]
 
 [project.optional-dependencies]

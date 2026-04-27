@@ -2,6 +2,10 @@ import { useEffect } from 'react';
 import { Navigate, Route, Routes } from 'react-router-dom';
 
 import { AppShell } from '@/components/shell/AppShell';
+import {
+  PrivateRoute,
+  PublicOnlyRoute,
+} from '@/contexts/PrivateRoute';
 import { Login } from '@/pages/Login';
 import { LoginTotp } from '@/pages/LoginTotp';
 import { Dashboard } from '@/pages/Dashboard';
@@ -32,12 +36,33 @@ export default function App() {
   return (
     <>
       <Routes>
-        {/* Auth pages render without the AppShell. */}
-        <Route path="/login" element={<Login />} />
-        <Route path="/login/totp" element={<LoginTotp />} />
+        {/* Auth pages render without the AppShell. Already-logged-in
+            users are redirected to /dashboard. */}
+        <Route
+          path="/login"
+          element={
+            <PublicOnlyRoute>
+              <Login />
+            </PublicOnlyRoute>
+          }
+        />
+        <Route
+          path="/login/totp"
+          element={
+            <PublicOnlyRoute>
+              <LoginTotp />
+            </PublicOnlyRoute>
+          }
+        />
 
-        {/* All other routes share AppShell. */}
-        <Route element={<AppShell theme={theme} onCycleTheme={cycleTheme} />}>
+        {/* All other routes share AppShell -- protected. */}
+        <Route
+          element={
+            <PrivateRoute>
+              <AppShell theme={theme} onCycleTheme={cycleTheme} />
+            </PrivateRoute>
+          }
+        >
           <Route path="/" element={<Navigate to="/dashboard" replace />} />
           <Route path="/dashboard" element={<Dashboard />} />
           <Route path="/tracked-stocks" element={<TrackedStocks />} />

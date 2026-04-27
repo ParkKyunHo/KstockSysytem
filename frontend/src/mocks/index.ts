@@ -5,6 +5,7 @@
 import { mockBoxes } from './boxes';
 import { mockNotifications } from './notifications';
 import { mockPositions } from './positions';
+import { mockReports } from './reports';
 import { mockSystemStatus } from './system';
 import { mockTradeEvents } from './tradeEvents';
 import { mockTrackedStocks, type TrackedStockWithPrice } from './trackedStocks';
@@ -13,6 +14,7 @@ import type {
   Box,
   NotificationRecord,
   Position,
+  Report,
   SystemStatusData,
   TradeEvent,
 } from '@/types';
@@ -23,6 +25,7 @@ export interface MockState {
   positions: Position[];
   tradeEvents: TradeEvent[];
   notifications: NotificationRecord[];
+  reports: Report[];
   systemStatus: SystemStatusData;
 }
 
@@ -32,6 +35,7 @@ export const initialMock: MockState = {
   positions: mockPositions,
   tradeEvents: mockTradeEvents,
   notifications: mockNotifications,
+  reports: mockReports,
   systemStatus: mockSystemStatus,
 };
 

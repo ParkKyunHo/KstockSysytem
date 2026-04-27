@@ -1,30 +1,55 @@
-// V7.1 Login -- direct port of frontend-prototype/src/pages/login.js LoginPage.
+// V7.1 Login -- wired to /api/v71/auth/login (PRD §1.2 step 1).
 
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 
 import { Btn, Field, InlineNotif, Input } from '@/components/ui';
+import { useAuth } from '@/contexts/AuthContext';
+import { ApiClientError } from '@/lib/api';
 
 export function Login() {
   const navigate = useNavigate();
+  const location = useLocation();
+  const { login } = useAuth();
+
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const valid = username.length > 0 && password.length >= 4;
+  const valid = username.length >= 3 && password.length >= 8;
 
-  const submit = () => {
+  const submit = async () => {
+    if (!valid || loading) return;
     setError(null);
     setLoading(true);
-    setTimeout(() => {
-      setLoading(false);
-      if (valid) {
-        navigate('/login/totp');
-      } else {
-        setError('로그인 실패: ID와 비밀번호를 입력하세요');
+    try {
+      const result = await login(username, password);
+      if (result.totp_required) {
+        navigate('/login/totp', {
+          state: {
+            sessionId: result.session_id,
+            from: (location.state as { from?: string } | null)?.from,
+          },
+        });
+        return;
       }
-    }, 400);
+      const redirectTo =
+        (location.state as { from?: string } | null)?.from ?? '/dashboard';
+      navigate(redirectTo, { replace: true });
+    } catch (err) {
+      if (err instanceof ApiClientError) {
+        if (err.errorCode === 'RATE_LIMIT_EXCEEDED') {
+          setError('로그인 시도가 너무 많습니다. 잠시 후 다시 시도하세요.');
+        } else {
+          setError('로그인 실패: 사용자 이름/비밀번호를 확인하세요.');
+        }
+      } else {
+        setError('네트워크 오류로 로그인할 수 없습니다.');
+      }
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -55,7 +80,7 @@ export function Login() {
           <Input
             value={username}
             onChange={setUsername}
-            placeholder="admin"
+            placeholder="3~50자 영숫자_"
             lg
           />
         </Field>
@@ -64,10 +89,10 @@ export function Login() {
             value={password}
             onChange={setPassword}
             type="password"
-            placeholder="4자리 이상"
+            placeholder="8자리 이상"
             lg
             onKeyDown={(e) => {
-              if (e.key === 'Enter' && valid && !loading) submit();
+              if (e.key === 'Enter' && valid && !loading) void submit();
             }}
           />
         </Field>
@@ -75,7 +100,7 @@ export function Login() {
           kind="primary"
           size="lg"
           full
-          onClick={submit}
+          onClick={() => void submit()}
           disabled={!valid || loading}
         >
           {loading ? '로그인 중...' : '로그인'}

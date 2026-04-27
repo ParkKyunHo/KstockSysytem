@@ -1,8 +1,25 @@
-# V7.1 UI 가이드 (UI Guide)
+# V7.1 UI 가이드 (UI Guide) - shadcn/ui 버전 [DEPRECATED]
 
+> ⚠️ **이 문서는 더 이상 사용되지 않습니다 (DEPRECATED)**
+> 
+> ⚠️ **2026-04-25 결정**: V7.1은 **IBM Carbon Design System**으로 구현합니다.
+> 
+> ⚠️ **실제 구현 시 사용할 문서**: `10_UI_GUIDE_CARBON.md`
+> 
+> ---
+> 
+> 본 문서는 shadcn/ui 기준으로 작성되었으며, **참고용으로만 보존**됩니다.
+> - 화면 구조, 인터랙션 흐름, 사용자 시나리오: 동일하게 적용
+> - 컴포넌트 사용법 (shadcn/ui 부분): **무시**, Carbon 컴포넌트 사용
+> - 변환 매핑: `10_UI_GUIDE_CARBON.md` 부록 C 참조
+> 
+> 결정 배경: `13_APPENDIX.md` §6 (변경 이력) 참조
+> 
+> ---
+> 
 > 이 문서는 V7.1 시스템의 **웹 대시보드 UI/UX**를 정의합니다.
 > 
-> **Claude Design 작업의 단일 입력 문서**입니다.
+> ~~**Claude Design 작업의 단일 입력 문서**입니다.~~ → **10_UI_GUIDE_CARBON.md가 단일 입력 문서**
 > 
 > 백엔드 API는 09_API_SPEC.md를 따르고, 본 문서는 화면별 명세를 다룹니다.
 

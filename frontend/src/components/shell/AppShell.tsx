@@ -1,13 +1,21 @@
 // V7.1 AppShell -- direct port of frontend-prototype/src/components/shell.js.
 // Header (cds-header) + SideNav (cds-side-nav) with system-status footer.
+//
+// P5.5: ``system status`` footer + header unread counter are wired to
+// the real REST API. Mock data still flows through the Outlet context
+// for the pages that have not been migrated yet.
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 
 import { I, type IconComponent } from '@/components/icons';
+import { useAuth } from '@/contexts/AuthContext';
 import { useLiveMock } from '@/hooks/useLiveMock';
+import { useSystemStatus, useUnreadNotifications } from '@/hooks/useApi';
+import { useWsBootstrap } from '@/hooks/useWebSocket';
 import { initialMock, type MockState } from '@/mocks';
 import { formatTime } from '@/lib/formatters';
+import type { SystemStatusOut } from '@/api/system';
 import type { ThemeName } from '@/types';
 
 interface AppShellProps {
@@ -60,8 +68,21 @@ export function AppShell({ theme, onCycleTheme }: AppShellProps) {
   const [sideOpen, setSideOpen] = useState(false);
   const navigate = useNavigate();
   const location = useLocation();
+  const { user } = useAuth();
+
+  // P5.5: real API state.
+  useWsBootstrap();
+  const { data: systemStatus } = useSystemStatus();
+  const { data: unreadData } = useUnreadNotifications();
+
+  // Mock context kept for the pages that have not yet been migrated.
   const mock = useLiveMock(initialMock);
-  const unread = mock.notifications.length; // P5.4 wires real "is_read"
+
+  // Merge: prefer real status but fall back to mock until the API
+  // responds (e.g. brand-new page load). Mock notifications are still
+  // surfaced when the unread API has not yet returned.
+  const liveSystemStatus = systemStatus ?? mock.systemStatus;
+  const unread = unreadData?.unread_count ?? mock.notifications.length;
 
   const close = () => setSideOpen(false);
   const goto = (to: string) => {
@@ -76,6 +97,11 @@ export function AppShell({ theme, onCycleTheme }: AppShellProps) {
     return location.pathname === item.to;
   };
 
+  const userInitial = useMemo(() => {
+    const name = user?.username ?? '';
+    return name.length > 0 ? name.charAt(0).toUpperCase() : '?';
+  }, [user]);
+
   return (
     <div className="app-shell">
       <AppHeader
@@ -84,6 +110,8 @@ export function AppShell({ theme, onCycleTheme }: AppShellProps) {
         theme={theme}
         onCycleTheme={onCycleTheme}
         onNav={goto}
+        userInitial={userInitial}
+        userName={user?.username ?? ''}
       />
       <div className="app-body">
         <AppSideNav
@@ -91,7 +119,7 @@ export function AppShell({ theme, onCycleTheme }: AppShellProps) {
           onClose={close}
           isActive={isActive}
           onNav={goto}
-          mock={mock}
+          systemStatus={liveSystemStatus}
         />
         <main className="app-content">
           <Outlet context={{ mock } satisfies AppShellOutletContext} />
@@ -111,12 +139,16 @@ function AppHeader({
   theme,
   onCycleTheme,
   onNav,
+  userInitial,
+  userName,
 }: {
   onToggleSide: () => void;
   unread: number;
   theme: ThemeName;
   onCycleTheme: () => ThemeName;
   onNav: (to: string) => void;
+  userInitial: string;
+  userName: string;
 }) {
   return (
     <header className="cds-header">
@@ -155,8 +187,8 @@ function AppHeader({
           className="cds-header__user"
           onClick={() => onNav('/settings')}
         >
-          <div className="cds-header__avatar">박</div>
-          <span className="cds-header__name-text">박균호</span>
+          <div className="cds-header__avatar">{userInitial}</div>
+          <span className="cds-header__name-text">{userName}</span>
         </div>
       </div>
     </header>
@@ -172,15 +204,15 @@ function AppSideNav({
   onClose,
   isActive,
   onNav,
-  mock,
+  systemStatus,
 }: {
   open: boolean;
   onClose: () => void;
   isActive: (item: NavItem) => boolean;
   onNav: (to: string) => void;
-  mock: MockState;
+  systemStatus: SystemStatusOut | MockState['systemStatus'];
 }) {
-  const sys = mock.systemStatus;
+  const sys = systemStatus;
   return (
     <>
       {open ? (

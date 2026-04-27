@@ -24,6 +24,14 @@ SRC_V71 = SRC / "core" / "v71"
 TESTS = REPO_ROOT / "tests"
 DOCS_V71 = REPO_ROOT / "docs" / "v71"
 
+# V7.1 land covers core engine + Phase 5 web layer + Patch #5 ORM file.
+# Anything outside this list is considered V7.0/legacy by the harnesses.
+V71_PATHS: tuple[Path, ...] = (
+    SRC_V71,
+    SRC / "web" / "v71",
+    SRC / "database" / "models_v71.py",
+)
+
 
 class HarnessResult:
     """하네스 실행 결과 누적기."""
@@ -72,13 +80,42 @@ def iter_python_files(root: Path, *, exclude: Iterable[str] = ()) -> Iterable[Pa
         yield path
 
 
+def _is_under_v71(path: Path) -> bool:
+    rp = path.resolve()
+    for v71 in V71_PATHS:
+        if not v71.exists():
+            continue
+        try:
+            rp.relative_to(v71)
+        except ValueError:
+            if rp == v71.resolve():
+                return True
+            continue
+        else:
+            return True
+    return False
+
+
 def iter_v71_python_files() -> Iterable[Path]:
-    if not SRC_V71.is_dir():
-        return iter(())
-    return iter_python_files(SRC_V71, exclude=("__pycache__",))
+    seen: set[Path] = set()
+    for v71 in V71_PATHS:
+        if not v71.exists():
+            continue
+        if v71.is_file() and v71.suffix == ".py":
+            if v71 not in seen:
+                seen.add(v71)
+                yield v71
+        elif v71.is_dir():
+            for p in iter_python_files(v71, exclude=("__pycache__",)):
+                if p not in seen:
+                    seen.add(p)
+                    yield p
 
 
 def iter_v70_core_python_files() -> Iterable[Path]:
     if not SRC.is_dir():
         return iter(())
-    return iter_python_files(SRC, exclude=("__pycache__", "core/v71/"))
+    for path in iter_python_files(SRC, exclude=("__pycache__",)):
+        if _is_under_v71(path):
+            continue
+        yield path
