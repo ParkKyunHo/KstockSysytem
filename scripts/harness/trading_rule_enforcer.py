@@ -24,7 +24,13 @@ from _common import SRC_V71, HarnessResult, iter_v71_python_files
 
 MAGIC_FLOATS = {-0.05, -0.02, 0.04, 0.05, 0.10, 4.0, 3.0, 2.5, 2.0}
 RAW_HTTP_MODULES = {"httpx", "requests", "aiohttp"}
-ALLOWED_RAW_HTTP = {"src/core/v71/skills/kiwoom_api_skill.py"}
+# Transport-layer modules that own the wire-level Kiwoom conversation. Anything
+# above them (services, executors, skills) must go through this seam instead
+# of pulling in httpx directly.
+ALLOWED_RAW_HTTP_PREFIXES = (
+    "src/core/v71/skills/kiwoom_api_skill.py",
+    "src/core/v71/exchange/",
+)
 # Files allowed to literal magic floats. v71_constants is the single
 # definition site for all magic numbers (Harness 3's whole point is to
 # force everyone else to import from it).
@@ -78,11 +84,12 @@ def main() -> None:
                     f"Magic literal {value!r} at {rel}:{lineno} -- use V71Constants instead."
                 )
         for lineno, mod in visitor.raw_http_hits:
-            if rel in ALLOWED_RAW_HTTP:
+            if any(rel == p or rel.startswith(p) for p in ALLOWED_RAW_HTTP_PREFIXES):
                 continue
             result.violate(
                 f"Raw HTTP module {mod!r} imported at {rel}:{lineno} — "
-                f"use kiwoom_api_skill instead."
+                f"use the V7.1 exchange transport layer (src/core/v71/exchange/) "
+                f"or the existing kiwoom_api_skill facade."
             )
 
     result.note(f"Inspected {file_count} V7.1 Python files.")
