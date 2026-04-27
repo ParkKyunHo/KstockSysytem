@@ -48,6 +48,17 @@ from .kiwoom_client import (
     V71KiwoomTradeType,
     V71KiwoomTransportError,
 )
+from .kiwoom_websocket import (
+    V71KiwoomChannelType,
+    V71KiwoomWebSocket,
+    V71WebSocketAuthError,
+    V71WebSocketError,
+    V71WebSocketHandler,
+    V71WebSocketMessage,
+    V71WebSocketState,
+    V71WebSocketSubscription,
+    V71WebSocketTransportError,
+)
 from .rate_limiter import V71RateLimiter, V71RateLimiterStats
 from .token_manager import (
     V71TokenAuthError,
@@ -59,6 +70,7 @@ from .token_manager import (
 
 __all__ = [
     "V71KiwoomBusinessError",
+    "V71KiwoomChannelType",
     "V71KiwoomClient",
     "V71KiwoomEnvMismatchError",
     "V71KiwoomError",
@@ -74,6 +86,7 @@ __all__ = [
     "V71KiwoomTradeType",
     "V71KiwoomTransportError",
     "V71KiwoomUnknownError",
+    "V71KiwoomWebSocket",
     "V71RateLimiter",
     "V71RateLimiterStats",
     "V71StockNotFoundError",
@@ -82,6 +95,13 @@ __all__ = [
     "V71TokenInfo",
     "V71TokenManager",
     "V71TokenRequestError",
+    "V71WebSocketAuthError",
+    "V71WebSocketError",
+    "V71WebSocketHandler",
+    "V71WebSocketMessage",
+    "V71WebSocketState",
+    "V71WebSocketSubscription",
+    "V71WebSocketTransportError",
     "compute_backoff_seconds",
     "is_fatal",
     "map_business_error",

@@ -156,5 +156,12 @@ class V71Constants:
     RATE_LIMIT_ERROR_CODES: Final[tuple[str, ...]] = ("EGW00201",)
     """Rate-limited -- triggers exponential backoff."""
 
+    # ---- Kiwoom WebSocket reconnect (02_TRADING_RULES.md §8.2) ----
+    WS_PHASE_1_BACKOFF_SECONDS: Final[tuple[float, ...]] = (1.0, 2.0, 4.0, 8.0, 16.0)
+    """Phase 1 exponential backoff -- 5 attempts, ~31 s total."""
+
+    WS_PHASE_2_INTERVAL_SECONDS: Final[float] = 300.0
+    """Phase 2 fixed interval -- infinite retries every 5 minutes."""
+
 
 __all__ = ["V71Constants"]

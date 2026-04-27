@@ -263,3 +263,18 @@ def make_kiwoom_client(make_kiwoom_transport, fake_token_manager, fake_rate_limi
         return client, transport, fake_token_manager, fake_rate_limiter
 
     return _build
+
+
+# ---------------------------------------------------------------------------
+# Kiwoom WebSocket fixtures (P5-Kiwoom-4)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def fake_token_manager_for_ws():
+    """AsyncMock V71TokenManager returning a fixed token."""
+    from unittest.mock import AsyncMock
+
+    tm = AsyncMock()
+    tm.get_token = AsyncMock(return_value="WS_TOKEN_FIXTURE_1234ABCD")
+    return tm
