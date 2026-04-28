@@ -2957,6 +2957,80 @@ uvicorn.run('src.web.v71.main:app', host='127.0.0.1', port=8001, log_level='info
 
 ---
 
+### Phase 5 후속 P5-Kiwoom-Adapter: V71KiwoomExchangeAdapter (Phase 6 unblock, 2026-04-28)
+
+**Commit `83c42aa`**: `feat(v71): exchange P5-Kiwoom-Adapter — V71KiwoomExchangeAdapter (Phase 6 unblock)`
+**규모**: 5 files +1044 / -0
+**Tag**: `v71-phase5-kiwoom-complete` (Phase 5 후속 9 단위 완성)
+
+#### 신규 / 변경
+
+- **exchange_adapter.py 신규** (~430 LOC):
+  * V71KiwoomExchangeAdapter — ExchangeAdapter Protocol 구현 (5 메서드)
+  * DI: V71KiwoomClient + V71OrderManager + same-instance invariant 검증 (token/rate-limiter 단일 소스)
+  * get_orderbook → ka10004 + bid_1/ask_1/last_price (cur_prc 누락 시 ka10001 fallback)
+  * get_current_price → ka10001 → cur_prc int
+  * send_order → V71OrderRequest + V71OrderManager.submit_order (DB INSERT + WS 매칭 + on_position_fill 보존)
+  * cancel_order → V71OrderManager.cancel_order
+  * get_order_status → DB-first (V71OrderManager.get_order_state) + ka10075 fallback
+  * _FIELDS_KA10004 / _FIELDS_KA10001 MappingProxyType (P7 paper smoke 보정)
+- **kiwoom_client.py**: get_orderbook (ka10004) + get_stock_info (ka10001) 추가 + 상수
+- **order_manager.py**: get_order_state public 메서드 추가 (V71KiwoomExchangeAdapter용)
+
+#### architect Q1~Q8 결정
+
+- **Q1 send_order = 옵션 B (V71OrderManager 통합)**: 02 §6/§7 룰 보존 강제
+- **Q2 cancel_order = V71OrderManager.cancel_order**: 원주문 audit chain 보존
+- **Q3 ka10004 (호가) = 본 단위 추가** + 응답 필드 가정 + P7 보정 (TODO 인라인)
+- **Q4 ka10001 (현재가) = 본 단위 추가**
+- **Q5 DI = 2 슬롯 + same-instance invariant** (4.5/sec quota 보호)
+- **Q6 V71OrderResult.order_id = kiwoom_order_no** (str, broker-assigned)
+- **Q7 get_order_status = DB-first 하이브리드** (V71OrderManager + ka10075 fallback)
+- **Q8 tag 시점 = 본 단위 후 즉시** v71-phase5-kiwoom-complete
+
+#### 워크플로우 (12단계, 3 에이전트)
+
+| 에이전트 | 산출 |
+|---------|-----|
+| v71-architect | PASS 조건부 + Q1~Q8 결정 + 권고 6건 모두 반영 |
+| security + test 병렬 | PASS — 31 케이스 |
+
+#### 검증
+
+- 단위 테스트: 31/31 PASS in 0.12s
+- V7.1 회귀: **1049/1049 PASS** (1018 + 31)
+- Exchange 누적: **464/464 PASS** (9 단위 완성)
+- 6 harness: 1/2/3/4/6 PASS, 5 WARN
+- ruff: 0 errors
+
+#### Phase 5 후속 9 단위 완성
+
+| 단위 | Commit | 누적 테스트 |
+|------|--------|---------|
+| P5-Kiwoom-1 | aef8a23 | 66 |
+| P5-Kiwoom-2 | 64ccf36 | 108 |
+| P5-Kiwoom-3 | 365b9b5 | 180 |
+| P5-Kiwoom-4 | 1744f6b | 208 |
+| P5-Kiwoom-5 | ba0c287 | 287 |
+| P5-Kiwoom-6 | c6fb195 | 351 |
+| P5-Kiwoom-Notify | e6c0034 | 394 |
+| P5-Kiwoom-Wire | 51e1a8f | 433 |
+| **P5-Kiwoom-Adapter** | **83c42aa** | **464** |
+
+V7.1 전체 회귀 1049/1049, exchange 464/464.
+
+#### 다음 단계 (Phase 5 후속 종료)
+
+- **`v71-phase5-kiwoom-complete` tag** 생성 + push
+- **Phase 6 시작**: 거래 룰 실행 wiring (V71BoxManager + V71BuyExecutor + V71ExitExecutor에 V71KiwoomExchangeAdapter 주입)
+- **Phase 7 직전**:
+  * AWS Lightsail (43.200.235.74) 정리/초기화 (사용자 위임)
+  * 텔레그램 봇 재활성화 (기존 ID)
+  * reconciler 공존 결정 (in-memory vs DB)
+  * ka10004/ka10001 wire-level 응답 보정 (P7 paper smoke)
+
+---
+
 ### Phase 5 후속 P5-Kiwoom-Wire: kiwoom_api_skill module-level wiring (2026-04-28)
 
 **Commit `51e1a8f`**: `feat(v71): exchange P5-Kiwoom-Wire — kiwoom_api_skill module-level wiring (V7.0 호환 surface)`
