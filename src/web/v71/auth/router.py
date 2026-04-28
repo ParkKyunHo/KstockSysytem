@@ -57,7 +57,10 @@ def _envelope(payload: Any, request_id: str) -> dict[str, Any]:
 
 
 @router.post("/login", status_code=status.HTTP_200_OK)
-@limiter.limit(LOGIN_LIMIT)
+# TODO(rate-limit-v2): slowapi 0.1.9 의 @limiter.limit 가 fastapi 0.115
+# signature introspection 을 깨뜨려 query/body validation 실패. slowapi
+# 1.x 호환 release (또는 자체 미들웨어 rate limit) 도입 시 재활성화.
+# @limiter.limit(LOGIN_LIMIT)
 async def login(
     body: LoginRequest,
     request: Request,
@@ -105,7 +108,8 @@ async def login(
 
 
 @router.post("/totp/verify", status_code=status.HTTP_200_OK)
-@limiter.limit(LOGIN_LIMIT)
+# TODO(rate-limit-v2): see /login note above.
+# @limiter.limit(LOGIN_LIMIT)
 async def totp_verify(
     body: TotpVerifyRequest,
     request: Request,
