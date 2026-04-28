@@ -2957,6 +2957,86 @@ uvicorn.run('src.web.v71.main:app', host='127.0.0.1', port=8001, log_level='info
 
 ---
 
+### Phase 5 후속 P5-Kiwoom-Wire: kiwoom_api_skill module-level wiring (2026-04-28)
+
+**Commit `51e1a8f`**: `feat(v71): exchange P5-Kiwoom-Wire — kiwoom_api_skill module-level wiring (V7.0 호환 surface)`
+**규모**: 2 files +937 / -52
+
+#### 변경
+
+- **kiwoom_api_skill.py 확장** (architect 옵션 C: 작은 단위):
+  * NotImpl 7개를 V71KiwoomClient 위임으로 채움 (call_kiwoom_api / send_buy_order / send_sell_order / cancel_order / get_balance / get_position / get_order_status)
+  * KiwoomAPIError 계층에 `v71_mapped: V71KiwoomMappedError | None` 속성 추가 (keyword-only) — caller가 except 후 notify_kiwoom_error에 위임 가능
+  * KiwoomAPIContext 시그니처 유지 (V7.0 호환). docstring에 V7.1 wiring 명시 (client는 V71KiwoomClient 인스턴스 필수)
+  * 헬퍼 5개: `_require_v71_client` (isinstance guard, fail-fast) / `_v71_response_to_kiwoom` / `_wrap_business_error` / `_wrap_transport_error` / `_filter_position_by_stock`
+
+#### 핵심 동작
+
+- **call_kiwoom_api**: V71KiwoomClient.request 위임 (rate-limit + token + retry + 구조화 로깅 모두 V71KiwoomClient가 처리)
+- **send_buy/sell_order**: V71KiwoomClient.place_buy/sell_order 위임 (raw transport, DB INSERT 없음). docstring에 "V71OrderManager 우선 사용" 명시 (거래 룰 / 멱등성 / WS 매칭은 V71OrderManager 책임)
+- **cancel_order**: V71KiwoomClient.cancel_order(cancel_qty=0) 위임 (잔량 전부 취소)
+- **get_balance / get_position**: kt00018 위임. get_position은 stock_code 매칭 필터링 추가
+- **get_order_status**: ka10075 (미체결조회) 위임 + ord_no 매칭. 미체결에 없으면 found=False (ka10076 별도 후속 단위)
+
+#### 에러 매핑 (V71 → V7.0 호환)
+
+| V71 (raw) | V7.0 호환 | v71_mapped |
+|----------|----------|-----------|
+| V71KiwoomTransportError | KiwoomTimeoutError | None |
+| V71KiwoomRateLimitError (1700) | KiwoomRateLimitError | V71KiwoomRateLimitError |
+| V71KiwoomTokenInvalidError (8005) | KiwoomAuthError | V71KiwoomTokenInvalidError |
+| 기타 V71KiwoomMappedError | KiwoomAPIError | V71KiwoomMappedError |
+| V71KiwoomClient ValueError (Security M2) | KiwoomAPIError "invalid input" | None |
+
+`__cause__` 보존 — 디버깅 + stack trace.
+
+#### 워크플로우 (12단계, 3 에이전트)
+
+| 에이전트 | 발견 | 반영 |
+|---------|-----|-----|
+| v71-architect | PASS 조건부, 옵션 C 권고 (작은 단위), Q1~Q8 모두 결정 | ExchangeAdapter 구현체는 후속 단위로 분리 |
+| security-reviewer | PASS — CRITICAL/HIGH 0 / MEDIUM 2 / LOW 5 | M1 token echo는 P5-Kiwoom-Notify 차단 영역, M2 ValueError 즉시 반영 |
+| test-strategy | 38 가이드 → 39 케이스 구현 | - |
+
+#### 검증
+
+- 단위 테스트: 39/39 PASS in 0.12s
+  * guard 3 / call_kiwoom_api 4 / send_buy 5 / send_sell 4 / cancel 3 / get_balance 2 / get_position 4 / get_order_status 4 / KiwoomAPIError 4 / _filter_position 4 / 보안 회귀 2
+- V7.1 회귀: 1018/1018 PASS (979 + 39)
+- Exchange 누적: 433/433 PASS (66+42+72+28+79+64+43+39)
+- 6 harness: 1/2/3/4/6 PASS, 5 WARN
+- ruff: 0 errors after auto-fix
+
+#### 함정 / 학습
+
+- **AsyncMock spec=V71KiwoomClient 필수**: isinstance 가드 통과 위해 spec 명시. 단순 AsyncMock()은 fail-fast가 잡음
+- **architect Q4 결정**: send_buy_order는 V71OrderManager가 아닌 V71KiwoomClient 위임 — module-level convenience는 raw transport 의도. V71OrderManager는 KiwoomAPIContext에 db_session_factory 주입 필요 (breaking change)
+- **architect Q8 결정**: KiwoomAPIError에 v71_mapped 속성 추가 — V7.0 호환 surface 유지 + V7.1 caller가 notify_kiwoom_error로 위임 가능
+- **Security M2**: ValueError → KiwoomAPIError wrap 누락은 docstring "Raises: KiwoomAPIError" 계약 위반. caller (paper-trade smoke / health check)가 broker 에러와 입력 에러 분기를 일관 처리
+
+#### Phase 5 후속 8 단위 누적
+
+| 단위 | Commit | 누적 테스트 |
+|------|--------|---------|
+| P5-Kiwoom-1 | aef8a23 | 66 |
+| P5-Kiwoom-2 | 64ccf36 | 108 |
+| P5-Kiwoom-3 | 365b9b5 | 180 |
+| P5-Kiwoom-4 | 1744f6b | 208 |
+| P5-Kiwoom-5 | ba0c287 | 287 |
+| P5-Kiwoom-6 | c6fb195 | 351 |
+| P5-Kiwoom-Notify | e6c0034 | 394 |
+| **P5-Kiwoom-Wire** | **51e1a8f** | **433** |
+
+V7.1 회귀 1018/1018, exchange 433/433.
+
+#### 다음 단위
+
+- **P5-Kiwoom-Adapter (선택)**: V71KiwoomExchangeAdapter (ExchangeAdapter Protocol 구현체) + ka10004 (호가) + ka10001 (현재가) V71KiwoomClient 메서드 추가. v71_buy_executor / exit_executor가 Phase 6 시작 시 의존
+- **Phase 5 후속 완료** → `v71-phase5-kiwoom-complete` tag (Adapter 단위 후 자연스러움 — architect 권고)
+- **Phase 7 직전**: AWS Lightsail 정리 (사용자 위임) + 텔레그램 봇 재활성화 + reconciler 공존 (in-memory vs DB) 결정
+
+---
+
 ### Phase 5 후속 P5-Kiwoom-Notify: 키움 에러 → notification (2026-04-28)
 
 **Commit `e6c0034`**: `feat(v71): exchange P5-Kiwoom-Notify — 키움 에러 → notification 자동 변환`
