@@ -38,6 +38,7 @@ _PRODUCTION_FLAGS = (
     "v71.buy_executor_v71",
     "v71.exit_executor_v71",
     "v71.exit_orchestrator",
+    "v71.daily_summary",
 )
 
 
@@ -197,6 +198,10 @@ async def test_attach_with_all_flags_on_production_succeeds(production_env):  # 
             # P-Wire-2
             assert handle.reconciler is not None
             assert handle.reconciler_task is not None
+
+            # P-Wire-8: daily summary scheduler
+            assert handle.daily_summary is not None
+            assert handle.daily_summary_scheduler is not None
 
             # Production mode guarantee: ViMonitor wired so degraded_vi
             # flag is OFF (BuyExecutor uses real is_vi_active).

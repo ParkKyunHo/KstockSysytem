@@ -1799,6 +1799,31 @@ class TestExitOrchestratorWiring:
         stop_mock.assert_awaited_once()
         assert handle.exit_orchestrator is None
 
+    async def test_daily_summary_flag_off_leaves_slots_none(self):
+        os.environ["V71_FF__V71__DAILY_SUMMARY"] = "false"
+        ff.reload()
+        from src.web.v71.trading_bridge import (
+            attach_trading_engine,
+            detach_trading_engine,
+        )
+        handle = await attach_trading_engine()
+        try:
+            assert handle.daily_summary is None
+            assert handle.daily_summary_scheduler is None
+        finally:
+            await detach_trading_engine(handle)
+
+    async def test_daily_summary_requires_notification_v71(self):
+        os.environ["V71_FF__V71__DAILY_SUMMARY"] = "true"
+        os.environ["V71_FF__V71__NOTIFICATION_V71"] = "false"
+        ff.reload()
+        from src.web.v71.trading_bridge import attach_trading_engine
+
+        with pytest.raises(
+            RuntimeError, match="requires v71.notification_v71",
+        ):
+            await attach_trading_engine()
+
     async def test_orchestrator_wires_callbacks_into_executor_and_monitor(
         self,
     ):

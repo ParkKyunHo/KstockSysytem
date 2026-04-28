@@ -430,6 +430,13 @@ class _TradingEngineHandle:
         # registration is sufficient.
         self.exit_calculator: Any = None
         self.exit_orchestrator: Any = None
+        # P-Wire-8: V71DailySummary + V71DailySummaryScheduler. Scheduler
+        # owns an asyncio.Task that wakes at 15:30 each trading day and
+        # dispatches the LOW-severity daily summary through the
+        # notification queue. detach must call ``scheduler.stop()`` so
+        # the task is cancelled before notification_service goes away.
+        self.daily_summary: Any = None
+        self.daily_summary_scheduler: Any = None
 
 
 # Default reconciliation cadence (PRD 02_TRADING_RULES.md §7.1 -- "매 5분마다").
@@ -1192,6 +1199,78 @@ async def _build_kiwoom_websocket(
     return {"ws": ws, "is_paper": is_paper}
 
 
+async def _build_daily_summary(
+    handle: _TradingEngineHandle,
+) -> Any:
+    """Construct V71DailySummary + V71DailySummaryScheduler at 15:30 KST.
+
+    Cross-flag invariant:
+      * v71.notification_v71 ON (notifier required)
+      * v71.position_v71 ON (position manager required)
+      * v71.box_system ON (box manager required)
+    Optional:
+      * v71.kiwoom_exchange ON → get_total_capital provides PnL %
+      * list_tracked: empty list (TrackedSummary wiring is a follow-up)
+    """
+    from src.utils.feature_flags import is_enabled
+
+    if not is_enabled("v71.notification_v71"):
+        raise RuntimeError(
+            "trading_bridge: v71.daily_summary requires v71.notification_v71"
+        )
+    if handle.notification_service is None:
+        raise RuntimeError(
+            "trading_bridge: V71DailySummary requires notification_service"
+        )
+    if handle.position_manager is None:
+        raise RuntimeError(
+            "trading_bridge: V71DailySummary requires position_manager"
+        )
+    if handle.box_manager is None:
+        raise RuntimeError(
+            "trading_bridge: V71DailySummary requires box_manager"
+        )
+
+    from src.core.v71.notification.v71_daily_summary import (
+        DailySummaryContext,
+        ScheduledTime,
+        V71DailySummary,
+        V71DailySummaryScheduler,
+    )
+
+    clock = handle.clock if handle.clock is not None else V71RealClock()
+    # list_tracked: TrackedSummary list is a follow-up (DB query +
+    # box_count aggregation). Returning empty keeps the summary running
+    # without that section so production gets daily PnL today.
+    def _list_tracked() -> list[Any]:
+        return []
+
+    # get_total_capital is a kiwoom-backed callable assembled in
+    # _build_buy_executor. Reuse its closure so capital appears in the
+    # summary's PnL % when buy_executor is wired.
+    get_total_capital_fn: Any = None
+    if handle.buy_executor is not None:
+        ctx = handle.buy_executor._ctx
+        get_total_capital_fn = ctx.get_total_capital
+
+    summary_ctx = DailySummaryContext(
+        position_manager=handle.position_manager,
+        box_manager=handle.box_manager,
+        notifier=handle.notification_service,
+        clock=clock,
+        list_tracked=_list_tracked,
+        get_total_capital=get_total_capital_fn,
+        get_tomorrow_events=None,
+    )
+    summary = V71DailySummary(context=summary_ctx)
+    scheduler = V71DailySummaryScheduler(
+        daily_summary=summary, clock=clock,
+        target=ScheduledTime(hour=15, minute=30),
+    )
+    await scheduler.start()
+    return summary, scheduler
+
+
 async def _build_exit_orchestrator(
     handle: _TradingEngineHandle,
 ) -> Any:
@@ -1702,6 +1781,28 @@ async def attach_trading_engine() -> _TradingEngineHandle:
             "-- price-driven exits not active",
         )
 
+    # P-Wire-8: V71DailySummary scheduler at 15:30 KST. Independent of
+    # kiwoom -- only needs the notification stack + position/box
+    # managers. Capital % is opt-in via the BuyExecutor's get_total_capital.
+    if is_enabled("v71.daily_summary"):
+        try:
+            summary, scheduler = await _build_daily_summary(handle)
+        except Exception as exc:  # noqa: BLE001 -- boot failure surfaces
+            logger.error(
+                "trading_bridge: v71.daily_summary enabled but "
+                "construction failed: %s",
+                type(exc).__name__,
+            )
+            raise
+        handle.daily_summary = summary
+        handle.daily_summary_scheduler = scheduler
+        logger.info("trading_bridge: V71DailySummary scheduler started (15:30)")
+    else:
+        logger.warning(
+            "trading_bridge: feature flag 'v71.daily_summary' disabled "
+            "-- daily PnL alert at 15:30 not scheduled",
+        )
+
     # P-Wire-2: V71Reconciler periodic task. Only spins up when the
     # exchange infrastructure is already wired -- there is nothing to
     # reconcile against without a kiwoom_client.
@@ -1757,6 +1858,19 @@ async def detach_trading_engine(handle: _TradingEngineHandle) -> None:
     """
     handle.box_manager = None
     handle.position_manager = None
+
+    # P-Wire-8: stop the daily summary scheduler before notification
+    # service goes away (the scheduler enqueues into the same queue).
+    if handle.daily_summary_scheduler is not None:
+        try:
+            await handle.daily_summary_scheduler.stop()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "trading_bridge: daily_summary_scheduler.stop() failed: %s",
+                type(exc).__name__,
+            )
+    handle.daily_summary_scheduler = None
+    handle.daily_summary = None
 
     # P-Wire-4a/4b/4c/6: drop executors + monitor + orchestrator +
     # supporting closures. All are stateless (no aclose / cancel
