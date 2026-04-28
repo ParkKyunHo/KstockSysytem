@@ -2957,6 +2957,89 @@ uvicorn.run('src.web.v71.main:app', host='127.0.0.1', port=8001, log_level='info
 
 ---
 
+### Phase 6/7 wiring P-Wire-4a: V71BuyExecutor wiring + V71RealClock 추출 (2026-04-28)
+
+**Commit `385b7d1`**: `feat(v71): web P-Wire-4a — V71BuyExecutor wiring + V71RealClock 추출 + 4 callable factory`
+**규모**: 6 files +981 / -20
+
+#### 신규 / 변경
+
+- **`src/core/v71/v71_realclock.py` 신규** (~48 LOC):
+  * `V71RealClock` 클래스 (P-Wire-3 `_AsyncioRealClock` 추출, top-level core 모듈)
+  * 의존 방향 보호 (strategies → notification 회피)
+
+- **trading_bridge.py 확장** (~+469 LOC):
+  * `_coerce_int(raw)`: kiwoom 0-padded 숫자 + L2 negative clamp
+  * `_build_total_capital_cache(client)`: kt00018 5분 TTL + H1 inflight 가드 + M4 dict 형 검증 + outer try/except BaseException
+  * `_build_invested_pct_factory(pm, capital)`: list_for_stock 합 / capital * 100
+  * `_build_prev_close_cache(client)`: 일별 캐시 + H1 inflight set 가드
+  * `_build_tracked_stock_lookup(initial)`: dict resolver
+  * `_load_tracked_stocks_cache()`: DB SELECT + M1 `_VALID_STOCK_CODE` 정규식 + M3 `asyncio.timeout(10s)` + invalid skip
+  * `_build_buy_executor(handle)`: cross-flag 검증 (box_system + kiwoom_exchange + notification_v71 모두 ON) + handle invariant + V71BuyExecutor 생성
+  * `_TradingEngineHandle` 5 슬롯 추가 (buy_executor / clock / total_capital_refresh / prev_close_cache / tracked_stock_cache)
+  * attach: cross-flag check → load tracked_stocks → 4 callable factory → prime total_capital → V71BuyExecutor 생성
+  * detach: 5 슬롯 None + `system_state.degraded_vi = False` 리셋
+
+- **`config/feature_flags.yaml`**: `v71.buy_executor_v71: false` 추가
+- **`src/web/v71/api/system/state.py`**: `SystemState.degraded_vi: bool = False` (M2 dashboard 가시화)
+
+- **테스트 32 케이스 추가** (1118 → 1150):
+  * `tests/v71/test_v71_realclock.py` 신규 (4): now / sleep / sleep_until_skip_past / sleep_until_future_sleeps
+  * `tests/v71/web/test_trading_bridge_wiring.py` 추가 (28):
+    - Group J `_coerce_int` (6 parametrize)
+    - Group K `_build_total_capital_cache` (5: first_refresh / kiwoom_error / body_not_dict / missing_keys / inflight_guard)
+    - Group L `_build_invested_pct_factory` (4: zero / empty / open+partial / closed_excluded)
+    - Group M prev_close + tracked_stock + load_tracked (8: hit / miss / regex filter / db error)
+    - Group N `_build_buy_executor` cross-flag (4: 3-flag parametrize + notification_service None)
+    - Group O attach/detach (2: flag_off / detach reset degraded_vi)
+
+#### Architect Q1~Q9 결정
+
+- Q1 옵션 B: 4a (Buy) + 4b (Exit) + 4c (VI) 분리 (헌법 §5 단순함)
+- Q2 옵션 A: V71RealClock을 `src/core/v71/v71_realclock.py` top-level (의존 방향)
+- Q3 옵션 C: ViMonitor P-Wire-4c — 본 단위는 stub + degraded_vi=True
+- Q4 옵션 B: kt00018 5분 TTL 캐시 (env stub 옵션 D는 §1 위반 위험으로 거부)
+- Q5: list_for_stock + cost basis (CLOSED 제외)
+- Q6: prev_close 일별 캐시 + lazy fetch + miss 시 0 (PATH_B abandon)
+- Q7: tracked_stock_resolver는 부팅 시 1회 SELECT + dict
+- Q8: cross-flag fail-loud RuntimeError
+- Q9: P-Wire-4a 5 슬롯
+
+#### Security 패치 (HIGH 1 + MEDIUM 4 + LOW 3)
+
+- **H1**: orphan task + inflight 가드 (`_refresh` / `_fetch` outer try/except BaseException + sync state["inflight"])
+- **M1**: tracked_stocks DB 값 `_VALID_STOCK_CODE` 정규식 (reconciler.py 패턴)
+- **M2**: VI stub per-call WARNING + `system_state.degraded_vi=True`
+- **M3**: `asyncio.timeout(10s)` DB session
+- **M4**: response.body isinstance dict 검증
+- **L1**: `time.monotonic()` (asyncio.get_event_loop().time() 폐기 회피)
+- **L2**: `max(0, value)` negative clamp
+
+#### 워크플로우 (12단계, 3 에이전트 병렬)
+
+| 에이전트 | 산출 |
+|---------|-----|
+| v71-architect | Q1~Q9 결정 + 권고 6건 모두 반영 |
+| security-reviewer | HIGH 1 + MEDIUM 4 + LOW 3 모두 즉시 반영 (H1 inflight + M1 regex + M2 가시화 + M3 timeout + M4 dict + L1 monotonic + L2 clamp) |
+| test-strategy | 52 케이스 가이드 → 32 구현 (병합/parametrize 압축) |
+
+#### 검증
+
+- 단위 테스트: 77/77 PASS in 1.35s (P-Wire-1 11 + P-Wire-2 11 + P-Wire-3 23 + P-Wire-4a 28 + Clock 4)
+- V7.1 회귀: **1150/1150 PASS** in 8.37s (1118 → 1150, +32 신규)
+- 6 harness: 1/2/3/4/6 PASS, 5 WARN
+- ruff: clean (B007 in state.py은 pre-existing, 본 단위 무관)
+
+#### 다음 단계
+
+- **P-Wire-4b**: V71ExitExecutor wiring (Clock + Notifier + ExchangeAdapter + on_position_closed callback)
+  * 의존 wiring은 모두 P-Wire-4a에서 준비됨 — Exit-only flag (`v71.exit_executor_v71`) + cross-flag 재사용
+- **P-Wire-4c**: V71ViMonitor wiring (`v71.vi_monitor` 활성화 + WebSocket 9068 dispatcher 등록 + is_vi_active 진짜 콜러블 + degraded_vi=False)
+- **P-Wire-5**: paper smoke (`KIWOOM_ENV=SANDBOX`) + ka10004/ka10001/ka10081 wire-level 보정 + total_capital prime + tracked_stocks seed
+- **Phase 7 P7.1**: paper trade
+
+---
+
 ### Phase 6/7 wiring P-Wire-3: V71NotificationService 스택 wiring (2026-04-28)
 
 **Commit `110ac41`**: `feat(v71): web P-Wire-3 — V71NotificationService 스택 wiring (queue + circuit + Postgres)`
