@@ -58,6 +58,8 @@ PAPER_BASE_URL = "https://mockapi.kiwoom.com"
 CHART_PATH = "/api/dostk/chart"
 ORDER_PATH = "/api/dostk/ordr"
 ACCOUNT_PATH = "/api/dostk/acnt"
+MARKET_PATH = "/api/dostk/mrkcond"
+STOCK_INFO_PATH = "/api/dostk/stkinfo"
 
 API_ID_MINUTE_CHART = "ka10080"
 API_ID_DAILY_CHART = "ka10081"
@@ -67,6 +69,8 @@ API_ID_MODIFY = "kt10002"
 API_ID_CANCEL = "kt10003"
 API_ID_PENDING_ORDERS = "ka10075"
 API_ID_ACCOUNT_BALANCE = "kt00018"
+API_ID_ORDERBOOK = "ka10004"
+API_ID_STOCK_INFO = "ka10001"
 
 DEFAULT_REQUEST_TIMEOUT_SECONDS = float(V71Constants.API_TIMEOUT_SECONDS)
 
@@ -615,6 +619,46 @@ class V71KiwoomClient:
             next_key=next_key,
         )
 
+    async def get_orderbook(
+        self,
+        *,
+        stock_code: str,
+        cont_yn: str = "N",
+        next_key: str = "",
+    ) -> V71KiwoomResponse:
+        """ka10004 주식호가요청 -- 호가 잔량 / 매도·매수 1~10호가.
+
+        Response field assumptions verified during P7 paper smoke; the
+        ExchangeAdapter wraps this and pulls the 1호가 fields it needs.
+        """
+        return await self.request(
+            api_id=API_ID_ORDERBOOK,
+            endpoint=MARKET_PATH,
+            payload={"stk_cd": stock_code},
+            cont_yn=cont_yn,
+            next_key=next_key,
+        )
+
+    async def get_stock_info(
+        self,
+        *,
+        stock_code: str,
+        cont_yn: str = "N",
+        next_key: str = "",
+    ) -> V71KiwoomResponse:
+        """ka10001 주식기본정보요청 -- 종목명 / 시가 / 고가 / 저가 / 현재가 등.
+
+        Used by ExchangeAdapter.get_current_price; field name verified
+        against KIWOOM_API_ANALYSIS.md §2.
+        """
+        return await self.request(
+            api_id=API_ID_STOCK_INFO,
+            endpoint=STOCK_INFO_PATH,
+            payload={"stk_cd": stock_code},
+            cont_yn=cont_yn,
+            next_key=next_key,
+        )
+
     async def get_account_balance(
         self,
         *,
@@ -647,13 +691,17 @@ __all__ = [
     "API_ID_DAILY_CHART",
     "API_ID_MINUTE_CHART",
     "API_ID_MODIFY",
+    "API_ID_ORDERBOOK",
     "API_ID_PENDING_ORDERS",
     "API_ID_SELL",
+    "API_ID_STOCK_INFO",
     "CHART_PATH",
     "DEFAULT_REQUEST_TIMEOUT_SECONDS",
     "LIVE_BASE_URL",
+    "MARKET_PATH",
     "ORDER_PATH",
     "PAPER_BASE_URL",
+    "STOCK_INFO_PATH",
     "V71KiwoomBusinessError",
     "V71KiwoomClient",
     "V71KiwoomError",

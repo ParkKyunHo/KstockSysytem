@@ -698,6 +698,19 @@ class V71OrderManager:
             response=response,
         )
 
+    # ---------------------- Public API: lookup -------------------------
+
+    async def get_order_state(
+        self, kiwoom_order_no: str,
+    ) -> V71Order | None:
+        """Return the v71_orders row for ``kiwoom_order_no``, or None.
+
+        Public surface so V71KiwoomExchangeAdapter (and other consumers
+        that need the freshest persisted view of an order) can poll the
+        DB without reaching into the private ``_fetch_order_by_kiwoom_no``.
+        """
+        return await self._fetch_order_by_kiwoom_no(kiwoom_order_no)
+
     # ---------------------- Public API: WS reconcile -------------------
 
     async def on_websocket_order_event(self, msg: V71WebSocketMessage) -> None:

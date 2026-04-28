@@ -40,6 +40,7 @@ from .error_mapper import (
     should_force_token_refresh,
     should_retry_with_backoff,
 )
+from .exchange_adapter import V71KiwoomExchangeAdapter
 from .kiwoom_client import (
     V71KiwoomBusinessError,
     V71KiwoomClient,
@@ -97,6 +98,7 @@ __all__ = [
     "V71KiwoomClient",
     "V71KiwoomEnvMismatchError",
     "V71KiwoomError",
+    "V71KiwoomExchangeAdapter",
     "V71KiwoomIPMismatchError",
     "V71KiwoomInvalidInputError",
     "V71KiwoomMappedError",
