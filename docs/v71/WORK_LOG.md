@@ -2957,6 +2957,76 @@ uvicorn.run('src.web.v71.main:app', host='127.0.0.1', port=8001, log_level='info
 
 ---
 
+### Phase 6/7 wiring P-Wire-6: V71ExitOrchestrator (PRICE_TICK → Exit 파이프라인) (2026-04-28)
+
+**Commit `ad32d67`**: `feat(v71): web P-Wire-6 — V71ExitOrchestrator (PRICE_TICK → ExitCalculator → ExitExecutor)`
+**규모**: 5 files +796 / -3
+
+#### Ultrathink 분석 후 선택
+
+다음 작업으로 6개 옵션을 비교 분석:
+- A. ka10001/ka10004/ka10081 wire-level 보정 — paper smoke 직전, 추측 위험
+- **B. V71ExitOrchestrator (선택)** — Phase 7 paper trade 자동 청산 루프 핵심
+- C. V71BuyOrchestrator — BoxDetector + V7.0 CandleManager 의존, 큰 단위
+- D. V71RestartRecovery wiring — §13 안전 기능, 독립
+- E. PRICE_TICK 채널 단독 — B의 부분집합
+- F. Paper smoke harness — 사용자 자원 필요
+
+선택 근거: B는 Pure code, 모든 의존 wired됨, 헌법 §2 NFR1 (자동 청산 항상 운영) 직접 만족, paper smoke 시 trading 동작 검증 가능.
+
+#### 신규 / 변경
+
+- **`src/core/v71/strategies/exit_orchestrator.py` 신규** (~312 LOC):
+  * `V71ExitOrchestrator` 클래스
+    - DI: position_manager + exit_calculator + exit_executor + websocket
+    - `start()` PRICE_TICK 핸들러 등록 (idempotent)
+    - `stop()` best-effort unsubscribe (idempotent)
+    - `subscribe(stock_code)` / `unsubscribe(stock_code)` 라이프사이클
+    - `on_position_closed(stock_code, position_id)` — ExitExecutorContext.on_position_closed 콜백 호환 (no remaining open → unsubscribe)
+    - `reevaluate_stock(stock_code, current_price)` — ViMonitorContext.on_vi_resumed 콜백 호환 (PRD §10.4 1초 budget)
+    - 핵심 헬퍼: `_handle_price_message` (multi-key alias 10/stck_prpr/cur_prc + fail-secure WARNING + BaseException catch), `_evaluate_stock` (per-stock asyncio.Lock 직렬화), `_route_decision` (effective_stop.source 'TS' → execute_ts_exit, 'FIXED' → execute_stop_loss)
+    - 격리: TYPE_CHECKING으로 V71ExitExecutor / V71ExitCalculator import (exchange.__init__ 순환 회피)
+
+- **trading_bridge.py wiring**:
+  * `_build_exit_orchestrator(handle)` async helper (cross-flag invariant)
+  * 2 슬롯 (exit_calculator + exit_orchestrator)
+  * `v71.exit_orchestrator` flag (false 기본)
+  * attach: P-Wire-5 (WS) 다음, P-Wire-2 (reconciler) 직전에 wire
+  * detach: orchestrator.stop() 시도 + 슬롯 None 클리어
+
+#### 검증
+
+- 단위 테스트 23 신규 (1169 → 1192):
+  * test_exit_orchestrator.py 19: start/stop/subscribe (4) + 가격 라우팅 (6) + 메시지 파싱 (4) + 콜백 (3) + 격리 (2)
+  * test_trading_bridge_wiring.py Group S 4: flag_off + cross-flag missing (executor + websocket) + detach stop()
+- V7.1 회귀: **1192/1192 PASS** in 8.62s
+- 6 harness: 1/2/3/4/6 PASS, 5 WARN
+- ruff: clean (B015 + 7 자동 fix)
+
+#### Phase 7 P7.1 paper trade 진입 — 시스템 측 준비 완료
+
+자동 매매 핵심 루프 wired:
+- ✓ BuyExecutor (P-Wire-4a, 4 callable + tracked_resolver)
+- ✓ ExitExecutor (P-Wire-4b)
+- ✓ ViMonitor (P-Wire-4c, BuyExecutor stub 교체)
+- ✓ KiwoomWebSocket (P-Wire-5, VI 9068 dispatcher)
+- ✓ **ExitOrchestrator (P-Wire-6, PRICE_TICK → 자동 청산)**
+
+남은 사용자 자원 작업:
+- AWS Lightsail (43.200.235.74) 정리/초기화
+- Telegram bot 재활성화 (기존 ID)
+- KIWOOM_ENV=SANDBOX paper smoke
+  * VI WS 9068 wire-level 필드명 보정
+  * ka10004/ka10001/ka10081 응답 보정
+  * total_capital prime / tracked_stocks seed
+
+남은 (선택) 자율 단위:
+- on_position_closed → orchestrator.on_position_closed 콜백 wire (BuyExecutor/ExitExecutor 미세 수정)
+- reevaluate_stock → ViMonitor.on_vi_resumed 콜백 wire
+- 시그널 코디네이터 (BoxDetector + 자동 매수 트리거) — 별도 Phase
+
+---
+
 ### Phase 6/7 wiring P-Wire-5: V71KiwoomWebSocket + VI 9068 dispatcher (2026-04-28)
 
 **Commit `3b7604e`**: `feat(v71): web P-Wire-5 — V71KiwoomWebSocket wiring + VI 9068 dispatcher`
