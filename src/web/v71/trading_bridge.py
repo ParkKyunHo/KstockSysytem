@@ -423,6 +423,13 @@ class _TradingEngineHandle:
         # ``vi_monitor.on_vi_triggered`` / ``on_vi_resolved``.
         self.kiwoom_websocket: Any = None
         self.kiwoom_websocket_task: asyncio.Task[None] | None = None
+        # P-Wire-6: V71ExitCalculator + V71ExitOrchestrator. The
+        # orchestrator owns the PRICE_TICK handler that fans out to
+        # ExitExecutor; the calculator is the stateless pure-decision
+        # leaf the orchestrator calls. No background task -- handler
+        # registration is sufficient.
+        self.exit_calculator: Any = None
+        self.exit_orchestrator: Any = None
 
 
 # Default reconciliation cadence (PRD 02_TRADING_RULES.md §7.1 -- "매 5분마다").
@@ -1185,6 +1192,45 @@ async def _build_kiwoom_websocket(
     return {"ws": ws, "is_paper": is_paper}
 
 
+async def _build_exit_orchestrator(
+    handle: _TradingEngineHandle,
+) -> Any:
+    """Construct V71ExitCalculator + V71ExitOrchestrator + register
+    PRICE_TICK handler on the WebSocket.
+
+    Cross-flag invariant: depends on P-Wire-4b (exit_executor) +
+    P-Wire-5 (kiwoom_websocket) being wired -- the orchestrator has
+    nothing to drive without both.
+    """
+    if handle.exit_executor is None:
+        raise RuntimeError(
+            "trading_bridge: v71.exit_orchestrator requires exit_executor "
+            "(v71.exit_executor_v71 must be ON)",
+        )
+    if handle.position_manager is None:
+        raise RuntimeError(
+            "trading_bridge: v71.exit_orchestrator requires position_manager",
+        )
+    if handle.kiwoom_websocket is None:
+        raise RuntimeError(
+            "trading_bridge: v71.exit_orchestrator requires kiwoom_websocket "
+            "(v71.kiwoom_websocket must be ON)",
+        )
+
+    from src.core.v71.exit.exit_calculator import V71ExitCalculator
+    from src.core.v71.strategies.exit_orchestrator import V71ExitOrchestrator
+
+    calculator = V71ExitCalculator()
+    orchestrator = V71ExitOrchestrator(
+        position_manager=handle.position_manager,
+        exit_calculator=calculator,
+        exit_executor=handle.exit_executor,
+        websocket=handle.kiwoom_websocket,
+    )
+    await orchestrator.start()
+    return calculator, orchestrator
+
+
 def _build_vi_monitor(handle: _TradingEngineHandle) -> Any:
     """Construct V71ViMonitor (PRD 02 §10 VI state machine).
 
@@ -1572,6 +1618,29 @@ async def attach_trading_engine() -> _TradingEngineHandle:
             "-- realtime channels not subscribed",
         )
 
+    # P-Wire-6: V71ExitOrchestrator (PRICE_TICK -> ExitCalculator ->
+    # ExitExecutor pipeline). Must run AFTER P-Wire-5 wired the WS so
+    # ``register_handler`` lands on a real client; the orchestrator
+    # itself does not start a background task.
+    if is_enabled("v71.exit_orchestrator"):
+        try:
+            calculator, orchestrator = await _build_exit_orchestrator(handle)
+        except Exception as exc:  # noqa: BLE001 -- boot failure surfaces
+            logger.error(
+                "trading_bridge: v71.exit_orchestrator enabled but "
+                "construction failed: %s",
+                type(exc).__name__,
+            )
+            raise
+        handle.exit_calculator = calculator
+        handle.exit_orchestrator = orchestrator
+        logger.info("trading_bridge: V71ExitOrchestrator wired")
+    else:
+        logger.warning(
+            "trading_bridge: feature flag 'v71.exit_orchestrator' disabled "
+            "-- price-driven exits not active",
+        )
+
     # P-Wire-2: V71Reconciler periodic task. Only spins up when the
     # exchange infrastructure is already wired -- there is nothing to
     # reconcile against without a kiwoom_client.
@@ -1628,9 +1697,21 @@ async def detach_trading_engine(handle: _TradingEngineHandle) -> None:
     handle.box_manager = None
     handle.position_manager = None
 
-    # P-Wire-4a/4b/4c: drop executors + monitor + supporting closures.
-    # All are stateless (no aclose / cancel needed) -- the underlying
-    # caches die with the closures.
+    # P-Wire-4a/4b/4c/6: drop executors + monitor + orchestrator +
+    # supporting closures. All are stateless (no aclose / cancel
+    # needed) -- the underlying caches die with the closures. The
+    # orchestrator's stop() is best-effort unsubscribe; do it before
+    # nulling the slot.
+    if handle.exit_orchestrator is not None:
+        try:
+            await handle.exit_orchestrator.stop()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "trading_bridge: exit_orchestrator.stop() failed: %s",
+                type(exc).__name__,
+            )
+    handle.exit_orchestrator = None
+    handle.exit_calculator = None
     handle.buy_executor = None
     handle.exit_executor = None
     handle.vi_monitor = None

@@ -1672,3 +1672,75 @@ class TestKiwoomWebsocketAttachDetach:
             RuntimeError, match="v71.kiwoom_exchange is OFF",
         ):
             await attach_trading_engine()
+
+
+# ---------------------------------------------------------------------------
+# Group S: P-Wire-6 V71ExitOrchestrator wiring (4 cases)
+# ---------------------------------------------------------------------------
+
+
+class TestExitOrchestratorWiring:
+    async def test_orchestrator_flag_off_leaves_slots_none(self):
+        os.environ["V71_FF__V71__EXIT_ORCHESTRATOR"] = "false"
+        ff.reload()
+        from src.web.v71.trading_bridge import (
+            attach_trading_engine,
+            detach_trading_engine,
+        )
+        handle = await attach_trading_engine()
+        try:
+            assert handle.exit_orchestrator is None
+            assert handle.exit_calculator is None
+        finally:
+            await detach_trading_engine(handle)
+
+    async def test_orchestrator_requires_exit_executor(self):
+        os.environ["V71_FF__V71__EXIT_ORCHESTRATOR"] = "true"
+        os.environ["V71_FF__V71__EXIT_EXECUTOR_V71"] = "false"
+        ff.reload()
+        from src.web.v71.trading_bridge import attach_trading_engine
+
+        with pytest.raises(
+            RuntimeError, match="requires exit_executor",
+        ):
+            await attach_trading_engine()
+
+    async def test_orchestrator_requires_websocket(self):
+        # exit_executor + cross-flag deps need to be ON first to reach
+        # the orchestrator branch -- but websocket must be OFF.
+        # A simpler check: orchestrator helper directly with handle.
+        os.environ["V71_FF__V71__EXIT_V71"] = "true"
+        ff.reload()
+        from unittest.mock import MagicMock
+
+        from src.web.v71.trading_bridge import (
+            _build_exit_orchestrator,
+            _TradingEngineHandle,
+        )
+
+        handle = _TradingEngineHandle()
+        handle.exit_executor = MagicMock()
+        handle.position_manager = MagicMock()
+        handle.kiwoom_websocket = None
+        with pytest.raises(
+            RuntimeError, match="requires kiwoom_websocket",
+        ):
+            await _build_exit_orchestrator(handle)
+
+    async def test_detach_calls_orchestrator_stop(self):
+        os.environ["V71_FF__V71__EXIT_ORCHESTRATOR"] = "false"
+        ff.reload()
+        from unittest.mock import MagicMock
+
+        from src.web.v71.trading_bridge import (
+            attach_trading_engine,
+            detach_trading_engine,
+        )
+        handle = await attach_trading_engine()
+        # Stub orchestrator to verify stop() is invoked
+        stop_mock = AsyncMock()
+        handle.exit_orchestrator = MagicMock()
+        handle.exit_orchestrator.stop = stop_mock
+        await detach_trading_engine(handle)
+        stop_mock.assert_awaited_once()
+        assert handle.exit_orchestrator is None
