@@ -2957,6 +2957,104 @@ uvicorn.run('src.web.v71.main:app', host='127.0.0.1', port=8001, log_level='info
 
 ---
 
+### Phase 6/7 wiring P-Wire-2: V71Reconciler 정기 실행 (2026-04-28)
+
+**Commit `04721b1`**: `feat(v71): web P-Wire-2 — V71Reconciler 정기 실행 wiring (5분 주기)`
+**규모**: 2 files +311 / -4
+
+#### 신규 / 변경
+
+- **trading_bridge.py 확장** (~+150 LOC):
+  * `_TradingEngineHandle` 슬롯: `reconciler` + `reconciler_task: asyncio.Task[None] | None`
+  * `_RECONCILER_INTERVAL_DEFAULT_SECONDS = 300.0` (PRD 02 §7 정합성 5분 기본)
+  * `_resolve_reconciler_interval()` — `V71_RECONCILER_INTERVAL_SECONDS` env 오버라이드, 양수만 허용
+  * `_reconciler_loop(reconciler, *, interval_seconds)` — try/except `CancelledError` 우선 처리 + Exception 흡수 (always-run policy) + `logger.exception` 로깅
+  * `_build_reconciler(handle)` — kiwoom_client/exchange_adapter 미빌드 시 `RuntimeError("v71.reconciliation_v71 requires v71.kiwoom_exchange")`
+  * `attach_trading_engine`: `is_enabled('v71.reconciliation_v71')` 가드 + `asyncio.create_task(name='v71_reconciler_loop')`
+  * `detach_trading_engine`: `kiwoom_client.aclose()` 전에 `cancel + await + suppress(CancelledError)` + 슬롯 클리어
+
+- **test_trading_bridge_wiring.py 확장** (~+165 LOC):
+  * Group D `TestReconcilerWiring` (5):
+    - flag_off → reconciler/reconciler_task 모두 None
+    - flag_on without kiwoom → `RuntimeError`
+    - task_started_with_default_interval → 300.0
+    - loop_runs_reconcile_all_periodically → ≥2 ticks at 0.01s
+    - loop_survives_reconcile_all_failure → side_effect=RuntimeError에도 다음 tick 진행
+  * Group E `TestReconcilerIntervalHelper` (6 parametrize):
+    - "60"→60.0, "0.5"→0.5, ""→300.0, "abc"→300.0, "0"→300.0, "-5"→300.0
+
+#### 워크플로우 (12단계, 4 에이전트)
+
+| 단계 | 산출 |
+|------|------|
+| v71-architect | reconciler 라이프사이클 + 의존성 + always-run policy 결정 |
+| security-reviewer | env 파싱 fail-secure + cancel/await 누수 차단 |
+| test-strategy | 11 케이스 (Group D 5 + Group E 6) 도출 |
+| trading-logic-verifier | PRD 02 §7 / §13 정합성 룰 매핑 (kt00018 ↔ DB scenarios A~E) |
+
+#### 검증
+
+- 단위 테스트: 22/22 PASS in 1.22s (P-Wire-1 11 + P-Wire-2 11)
+- V7.1 회귀: **1095/1095 PASS** in 8.12s
+- 6 harness: 1/2/3/4/6 PASS, 5 WARN
+- ruff: clean (SIM105 → `contextlib.suppress` 변환)
+
+#### 다음 단계
+
+- **P-Wire-3**: V71BuyExecutor / V71ExitExecutor 콜백 wiring (4 callable: is_vi_active / get_previous_close / get_total_capital / get_invested_pct_for_stock) — 또는 V71NotificationQueue + V71NotificationService + Telegram bot 통합
+- **P-Wire-4**: paper smoke (`KIWOOM_ENV=SANDBOX`) + ka10004/ka10001 wire-level 응답 보정
+- **Phase 7 P7.1**: paper trade
+- **Pre-Phase 7**: AWS Lightsail 정리(자동/위임), Telegram bot 재활성화
+
+---
+
+### Phase 6/7 wiring P-Wire-1: 키움 거래 wiring (lifespan, 2026-04-28)
+
+**Commit `3f2d943`**: `feat(v71): web P-Wire-1 — kiwoom exchange wiring (lifespan attach_trading_engine)`
+**규모**: 3 files (+config flag + trading_bridge + 테스트 11)
+
+#### 신규 / 변경
+
+- **trading_bridge.py**: `_TradingEngineHandle`에 5 슬롯 추가
+  - token_manager / rate_limiter / kiwoom_client / order_manager / exchange_adapter
+- **`config/feature_flags.yaml`**: `v71.kiwoom_exchange: false` (Phase 5 후속 / Phase 7 wiring)
+- **wiring 절차** (`is_enabled('v71.kiwoom_exchange')`):
+  1. `KIWOOM_APP_KEY/SECRET` 미존재 시 RuntimeError
+  2. V71TokenManager + V71RateLimiter (paper: 0.33/sec, prod: 4.5/sec)
+  3. V71KiwoomClient (httpx.AsyncClient + token + rate-limiter 같은 인스턴스)
+  4. V71OrderManager (`get_db_manager().session()` + on_position_fill=None)
+  5. V71KiwoomExchangeAdapter(kiwoom_client, order_manager) — same-instance invariant
+- **detach 순서**: exchange_adapter → order_manager → kiwoom_client.aclose() → rate_limiter → token_manager
+
+#### 검증
+
+- 단위 테스트 11 (Group A flag off 4 / Group B env missing 3 / Group C wiring 4)
+- V7.1 회귀: 1084 → 1095 PASS
+
+---
+
+### Phase 6 P6.1: V71DataCollector (리포트 데이터 수집, 2026-04-28)
+
+**Commit `a289ca9`**: `feat(v71): report P6.1 — V71DataCollector (Phase 6 시작, kiwoom + DART/News Protocol)`
+**규모**: 4 files (+collector + Protocols + 테스트 24)
+
+#### 신규 / 변경
+
+- **`src/core/v71/report/data_collector.py`** (신규):
+  * `V71CollectedData` (frozen dataclass + tuple sources for immutable audit trail)
+  * `V71DartClient` / `V71NewsClient` Protocol — runtime_checkable
+  * `V71DataCollector.collect(stock_code)`: 키움 ka10001 + ka10081 (일봉) 페이지네이션 + DART/News graceful degradation
+  * **보안**: `_safe_error_message` (M1: return_msg echo 차단) + `_VALID_STOCK_CODE` (M2: 6자리 강제) + 12-page safety bound (cont_yn 무한 루프 방지)
+  * Pagination helper — kiwoom_api_skill 직접 호출 (V71KiwoomClient 의존 X)
+
+#### 검증
+
+- 단위 테스트 24/24 PASS
+- V7.1 회귀: 1060 → 1084 PASS
+- **참고**: 사용자 지시 "리포트는 추후 추가 기능, 우선순위 낮음" → P6.2/P6.3/P6.4 보류, P-Wire 우선
+
+---
+
 ### Phase 5 후속 P5-Kiwoom-Adapter: V71KiwoomExchangeAdapter (Phase 6 unblock, 2026-04-28)
 
 **Commit `83c42aa`**: `feat(v71): exchange P5-Kiwoom-Adapter — V71KiwoomExchangeAdapter (Phase 6 unblock)`
