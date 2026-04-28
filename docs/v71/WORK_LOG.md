@@ -4808,4 +4808,49 @@ setup_v71.ps1 완료 후 `config/feature_flags.yaml`을 단계별 ON:
 
 각 단계 service restart + boot_smoke_v71.ps1 권장. **이 흐름은 사용자 명시 결정** (실거래 자금 위험).
 
+### 운영 진입 Step 2~6 완료 — boot smoke 6/6 PASS (commit 96516b2, 2026-04-29)
+
+> 사용자 결정: 실거래 모드 + `V71_AUTO_TRADING=true` + setup_v71.ps1 자동 실행
+
+#### 실행 흐름
+
+| Step | 결과 |
+|------|------|
+| 1. 로컬 V7.1 회귀 + harness | ✅ 1332/1332 + 6/6 PASS |
+| 2. AWS V7.0 release archive | ✅ tar.gz 102M + 103M (원본 보존) |
+| 3. service stop | ✅ |
+| 4. 코드 + .env + harness 전송 + shared/.env mirror (chmod 600) | ✅ |
+| 5a. venv pip install (V7.1 deps) | ✅ fastapi/uvicorn/asyncpg/pyotp/jose 등 |
+| 5b. systemd unit (v71.service) 적용 + daemon-reload | ✅ |
+| 6. service start + boot smoke 6/6 | ✅ active / :8080 / /api/v71/health 200 / market_calendar fallback / Application startup complete / DB land |
+
+#### PowerShell 5.1 호환 fix (4 파일, commit 96516b2)
+
+setup_v71.ps1 실행 중 발견된 4가지 이슈 일괄 정정:
+
+1. here-string PowerShell expansion 충돌 (`$()` PowerShell vs bash) → single-quoted + `-replace` PLACEHOLDER
+2. NativeCommandError stderr wrapping (ssh "Permanently added" warning) → `-o LogLevel=ERROR` 추가 + `Invoke-Expression` → 직접 `& ssh @SSH_ARGS`
+3. multiline bash newline 손실 → stdin pipe (`$cmd | & ssh @SSH_ARGS dest "bash"`)
+4. V7.0 current/scripts/ 미존재 → `mkdir -p` 선행
+5. `/health` 404 (api_router prefix=`/api/v71`) → `/api/v71/health` + 매치 정규식 완화
+
+#### 현재 운영 상태
+
+- AWS Lightsail: V7.1 배포 완료, systemd active, uvicorn :8080
+- `feature_flags.yaml` 모두 `false` (default) — **매매 wire 비활성** (안전)
+- `V71_AUTO_TRADING=true` (사용자 결정) — 단, feature flag 모두 false라 자동매매 발화 안 함
+- DB: 17 V7.1 테이블 land + market_calendar 0 rows (P-Wire-14 fallback)
+
+#### Step 7 — 단계적 feature flag 활성화
+
+사용자 명시 결정 후 단계별 진행 (자금 위험):
+1. `v71.kiwoom_exchange` → restart → 키움 REST 연결
+2. `v71.notification_v71` → restart → 텔레그램 발송 검증
+3. `v71.kiwoom_websocket` → PRICE_TICK 채널
+4. `v71.box_system` + `v71.buy_executor_v71` + `v71.exit_executor_v71` + `v71.vi_monitor`
+5. `v71.candle_builder` (P-Wire-12) + `v71.box_entry_detector` (P-Wire-13) — **자동 박스 진입 활성**
+6. `v71.exit_orchestrator` + `v71.daily_summary` + `v71.monthly_review` + `v71.telegram_commands_v71` + `v71.restart_recovery`
+
+각 단계 service restart + boot_smoke_v71.ps1 권장.
+
 ---
