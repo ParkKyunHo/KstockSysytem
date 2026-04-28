@@ -2957,6 +2957,56 @@ uvicorn.run('src.web.v71.main:app', host='127.0.0.1', port=8001, log_level='info
 
 ---
 
+### Phase 6/7 wiring P-Wire-11: V71RestartRecovery (§13 7-step + orphan order 방지) (2026-04-28)
+
+**Commit `34a6342`**: `feat(v71): web P-Wire-11 — V71RestartRecovery wiring (§13 7-step + orphan order 방지)`
+**규모**: 3 files +313
+
+#### 7-step 자동 실행 (실전 자금 안전성 1차 방어선)
+
+- **Step 0**: `enter_safe_mode` → `system_state.safe_mode=True` (BuyExecutor 새 매수 차단)
+- **Step 1**: reconnect (DB SELECT 1 / kiwoom token 재발급 / WS state 체크 / telegram bot 검증)
+- **Step 2**: `cancel_all_pending_orders` — DB SUBMITTED + PARTIAL 주문 → V71OrderManager.cancel_order 일괄 호출 (**orphan 차단**)
+- **Step 3**: position-side V71Reconciler.reconcile(broker_balances) — kt00018 ↔ DB 정합성
+- **Step 4**: PRICE_TICK 재구독 — list_open() 모든 stock_code
+- **Step 5**: missed trigger skip (option A, §13.1)
+- **Step 6**: `exit_safe_mode`
+- **Step 7**: CRITICAL 알림 + RecoveryReport handle 노출
+
+#### 신규 모듈/슬롯
+
+- `_build_restart_recovery(handle)` async helper (~250 LOC):
+  * cross-flag (notification_v71 + kiwoom_exchange + reconciliation_v71)
+  * handle invariant (5 슬롯)
+  * position-side V71Reconciler 로컬 빌드 (P-Wire-2 exchange-side와 다른 API)
+  * 10 callable 도출
+- `_TradingEngineHandle` 3 슬롯 (position_reconciler / restart_recovery / restart_recovery_report)
+- attach: v71.restart_recovery flag 가드 + 끝부분 실행 + RecoveryReport.failures 로그
+- detach: 슬롯 None (stateless wrapper)
+
+#### kt00018 holdings 파싱
+
+`acnt_evlt_remn_indv_tot` 리스트 → `KiwoomBalance(stock_code, quantity, avg_price)` + `_VALID_STOCK_CODE` 정규식 (security M1 패턴)
+
+#### Why (실전 자금 안전성)
+
+- AWS systemd 재시작 → 키움 미체결 + DB 빈 상태 = **unbounded risk**
+- 5분 reconciler는 position만 체크 (order 미체크)
+- restart_recovery가 attach 직후 cancel → orphan 즉시 차단
+- safe_mode + reconcile + resubscribe → stale state 매수 결정 회피
+
+#### 검증
+
+- 단위 테스트 2 신규 + production_boot_smoke 3 슬롯 검증
+- V7.1 회귀: **1209/1209 PASS** in 17.09s
+- 6 harness PASS, ruff clean
+
+#### Phase 7 P7.1 진입 직전 시스템 상태 (13 단위 wired)
+
+신규 P-Wire-11 추가 → 12 → **13 wiring units**. 운영자 surface는 P-Wire-10이 마지막.
+
+---
+
 ### Phase 6/7 wiring P-Wire-10: V71TelegramCommands 등록 + 폴링 (2026-04-28)
 
 **Commit `ef92639`**: `feat(v71): web P-Wire-10 — V71TelegramCommands 등록 + 폴링 시작`
