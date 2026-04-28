@@ -648,6 +648,8 @@ M5: Phase 7 완료
 
 ### 3.9 P1.8: trading_engine.py 정리
 
+> **Phase A 완료 (2026-04-28)**: 사용자 결정에 따라 P1.8의 점진적 정리 대신 V7.0 trading_engine.py 자체를 Phase A Step D에서 일괄 삭제했습니다. 본 절은 historical reference입니다. WORK_LOG.md 의 "Phase A: V7.0 완전 폐기" entry 참조.
+
 ```yaml
 주의: 이게 가장 큰 작업. 4,904줄 → ~1,500줄 예상.
 

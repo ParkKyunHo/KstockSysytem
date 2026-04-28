@@ -174,18 +174,19 @@ P1.7 wave_harvest_exit.py 정리
   - V7.0 ATR 배수 (6.0 → 4.5 → 4.0 → 3.5 → 2.5 → 2.0) 제거
   - V7.1 ATR 배수 (4.0 → 3.0 → 2.5 → 2.0)로 교체
 
-P1.8 trading_engine.py 정리
-  - V6/V7 신호 시스템 호출 부분 모두 제거
-  - V7 ExitCoordinator, V7SignalCoordinator 호출 제거
-  - 메인 엔진 골격만 유지
-  - V7.1 모듈 hooks 추가 준비
+P1.8 trading_engine.py 정리 (historical — Phase A에서 폐기로 대체됨)
+  - 사용자 결정 (2026-04-28): V7.0 Purple-ReAbs 완전 폐기.
+  - Phase A Step D에서 src/core/trading_engine.py + 관련 V7.0 모듈
+    (candle_builder / market_schedule / realtime_data_manager / api/* / etc.)
+    전체를 일괄 git rm. 점진적 정리 X.
+  - V7.1 진입은 src.web.v71.main:app + src.web.v71.trading_bridge wiring.
 
-검증:
-  Phase 1 완료 후 다음 명령 통과 확인:
-    python -c "from src.core import trading_engine"  # 깨지지 않음
-    pytest tests/ --ignore=tests/v6 --ignore=tests/v7
-    grep -r "from src.core.signal_pool" src/  # 결과 없어야 함
-    grep -r "from src.core.strategies.v6" src/  # 결과 없어야 함
+검증 (Phase A 완료 시점):
+    python -c "import src.core.v71"                            # OK
+    python -c "import src.web.v71.main"                        # OK
+    python -c "from src.notification.telegram import TelegramBot"  # 보존
+    pytest tests/v71/                                          # 1279/1279 PASS
+    python scripts/harness/run_all.py                          # 6/6 PASS
 ```
 
 ### 2.2 Phase 2: V7.1 신규 모듈 골격 (인프라 정리 후)

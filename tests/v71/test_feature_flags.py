@@ -31,8 +31,8 @@ class TestYamlLoad:
     def test_loads_known_flag_as_bool(self):
         assert ff.is_enabled("v71.box_system") is False
 
-    def test_safety_flag_is_true_by_default(self):
-        assert ff.is_enabled("v71.v70_box_fallback") is True
+    def test_candle_builder_defaults_false(self):
+        assert ff.is_enabled("v71.candle_builder") is False
 
     def test_unknown_path_returns_default_false(self):
         assert ff.is_enabled("does.not.exist") is False
@@ -43,7 +43,7 @@ class TestYamlLoad:
     def test_all_flags_returns_complete_snapshot(self):
         snapshot = ff.all_flags()
         assert "v71.box_system" in snapshot
-        assert "v71.v70_box_fallback" in snapshot
+        assert "v71.candle_builder" in snapshot
         assert all(isinstance(v, bool) for v in snapshot.values())
 
 
@@ -52,9 +52,11 @@ class TestEnvOverride:
         os.environ["V71_FF__V71__BOX_SYSTEM"] = "true"
         assert ff.is_enabled("v71.box_system") is True
 
-    def test_env_false_overrides_yaml_true(self):
-        os.environ["V71_FF__V71__V70_BOX_FALLBACK"] = "false"
-        assert ff.is_enabled("v71.v70_box_fallback") is False
+    def test_env_false_overrides_env_true_after_reload(self):
+        os.environ["V71_FF__V71__BOX_SYSTEM"] = "true"
+        assert ff.is_enabled("v71.box_system") is True
+        os.environ["V71_FF__V71__BOX_SYSTEM"] = "false"
+        assert ff.is_enabled("v71.box_system") is False
 
     @pytest.mark.parametrize("token", ["1", "TRUE", "yes", "On", "y", "t"])
     def test_truthy_tokens(self, token):
@@ -63,8 +65,8 @@ class TestEnvOverride:
 
     @pytest.mark.parametrize("token", ["0", "FALSE", "no", "Off", "n", "f"])
     def test_falsy_tokens(self, token):
-        os.environ["V71_FF__V71__V70_BOX_FALLBACK"] = token
-        assert ff.is_enabled("v71.v70_box_fallback") is False
+        os.environ["V71_FF__V71__CANDLE_BUILDER"] = token
+        assert ff.is_enabled("v71.candle_builder") is False
 
     def test_invalid_token_falls_back_to_yaml(self):
         os.environ["V71_FF__V71__BOX_SYSTEM"] = "garbage"

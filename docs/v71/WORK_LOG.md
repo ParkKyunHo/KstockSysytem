@@ -4401,4 +4401,44 @@ scripts/deploy/* (3개) → `scripts/archive/v70/deploy/`:
 
 Step E — PRD 문서 (04_ARCHITECTURE / 05_MIGRATION_PLAN / 07_SKILLS_SPEC / 08_HARNESS_SPEC / 00_CLAUDE_CODE_GENERATION_PROMPT) + `config/feature_flags.yaml` (v70_box_fallback 제거 + v71.candle_builder 추가).
 
+### Step E: PRD 문서 + feature_flags 갱신 (2026-04-28)
+
+**규모**: 7 파일 수정 (config + 1 test + 5 PRD)
+
+#### config/feature_flags.yaml
+
+| 변경 | 내용 |
+|------|------|
+| 제거 | `v70_box_fallback: true` (V7.0 폐기로 의미 상실) |
+| 추가 | `candle_builder: false` (P-Wire-12 V71CandleManager attach gate) |
+
+#### tests/v71/test_feature_flags.py
+
+V7.0 의존 제거에 맞춰 4 테스트 갱신:
+- `test_safety_flag_is_true_by_default` 삭제 (default=true flag 없음)
+- `test_candle_builder_defaults_false` 신규 (V7.1 신규 flag)
+- `test_env_false_overrides_yaml_true` → `test_env_false_overrides_env_true_after_reload` (reload 동작 검증)
+- `test_falsy_tokens` `v70_box_fallback` → `candle_builder`
+- `test_all_flags_returns_complete_snapshot` snapshot 키 갱신
+
+#### PRD 문서 (5개)
+
+| 파일 | 변경 |
+|------|------|
+| `07_SKILLS_SPEC.md:911` | `from src.core.market_schedule import get_next_trading_day` → V7.1 API (`get_v71_market_schedule().next_trading_day()`) |
+| `08_HARNESS_SPEC.md` §2.4 | V7.0 → V7.1 의존성 차단 예시에 "Phase A 완료 — historical reference" 마커 추가 |
+| `04_ARCHITECTURE.md` §0.2 | "V7.0과의 차별점" → V7.0 폐기 완료 + V7.1 단독 운영 + PATH_A/B 명시 |
+| `05_MIGRATION_PLAN.md` §3.9 | P1.8 trading_engine.py 정리 → "Phase A Step D 일괄 삭제" historical 마커 |
+| `00_CLAUDE_CODE_GENERATION_PROMPT.md` | P1.8 절차 → Phase A historical + 신규 검증 명령 (V7.1 import + pytest tests/v71/ + scripts/harness/run_all.py) |
+
+#### 검증
+
+- V7.1 회귀: 1279/1279 PASS
+- 6 harness PASS (Harness 5 Feature Flag PASS 유지 — candle_builder 신규 등록)
+- ruff: 163 errors (Step D 후 baseline 동등, 신규 issue 0)
+
+#### 다음
+
+Step F — P-Wire-12 V71CandleManager wiring (`src/web/v71/trading_bridge.py` attach/detach + `v71.candle_builder` flag 가드 + `tracked_stock_cache` loop add_stock + `start_eod_scheduler` 60s + detach stop FIRST). **12단계 워크플로우 적용** (architect → 구현 → security + test 병렬 → 회귀 → harness → ruff → commit).
+
 ---

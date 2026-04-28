@@ -51,5 +51,5 @@ v71:
   kiwoom_websocket: false      # P-Wire-5 — V71KiwoomWebSocket realtime channels (PRICE / ORDER / BALANCE / VI)
   exit_orchestrator: false     # P-Wire-6 — V71ExitOrchestrator (PRICE_TICK → ExitCalculator → ExitExecutor)
 
-  # 안전 장치 (역방향 비활성화)
-  v70_box_fallback: true       # V7.1 박스 미활성 시 V7.0 동작 유지 보장
+  # Phase A 산출 (V7.0 폐기 후 V7.1 candle/market 인프라)
+  candle_builder: false        # P-Wire-12 — V71CandleManager attach (PATH_A 3분봉 + PATH_B 일봉, 자동 박스 감지)

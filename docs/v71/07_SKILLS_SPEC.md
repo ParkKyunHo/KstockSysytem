@@ -908,8 +908,9 @@ def _calculate_next_trading_day_at(current_time: datetime, hhmm: str) -> datetim
     Returns:
         다음 영업일의 hhmm 시각 datetime
     """
-    from src.core.market_schedule import get_next_trading_day
-    next_day = get_next_trading_day(current_time.date())
+    from src.core.v71.market.v71_market_schedule import get_v71_market_schedule
+    schedule = get_v71_market_schedule()
+    next_day = schedule.next_trading_day(current_time.date())
     return datetime.combine(next_day, datetime.strptime(hhmm, "%H:%M").time())
 ```
 

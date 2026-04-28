@@ -550,13 +550,15 @@ if __name__ == "__main__":
     main()
 ```
 
-### 2.4 차단 예시
+### 2.4 차단 예시 (historical — V7.0 폐기 전 시점)
+
+> **Phase A 완료 (2026-04-28)**: V7.0은 완전 폐기되었으므로 V7.0 → V7.1 import 패턴 자체가 발생할 수 없습니다. 본 예시는 마이그레이션 기간 중 의존성 단방향 보장이 필요했던 historical reference입니다. 현재는 V7.1 내부 순환 의존만 검사합니다.
 
 ```
-입력:
-  src/core/candle_builder.py:
+[과거 마이그레이션 시점] 입력:
+  src/core/candle_builder.py:                      # V7.0 (이제 폐기됨)
     from src.core.v71.box.box_manager import V71BoxManager  # V7.0 → V7.1!
-    
+
   src/core/v71/box/box_manager.py:
     from src.core.candle_builder import CandleBuilder
 
