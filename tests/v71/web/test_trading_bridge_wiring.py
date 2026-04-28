@@ -1434,3 +1434,92 @@ class TestExitExecutorAttachDetach:
         await detach_trading_engine(handle)
         assert handle.exit_executor is None
         assert handle.clock is None
+
+
+# ---------------------------------------------------------------------------
+# Group Q: P-Wire-4c V71ViMonitor wiring (5 cases)
+# ---------------------------------------------------------------------------
+
+
+class TestBuildViMonitor:
+    @staticmethod
+    def _make_handle_with_notification():
+        from unittest.mock import MagicMock
+
+        from src.web.v71.trading_bridge import _TradingEngineHandle
+
+        h = _TradingEngineHandle()
+        h.notification_service = MagicMock()
+        return h
+
+    def test_notification_v71_off_raises(self):
+        os.environ["V71_FF__V71__VI_MONITOR"] = "true"
+        os.environ["V71_FF__V71__NOTIFICATION_V71"] = "false"
+        ff.reload()
+        from src.web.v71.trading_bridge import _build_vi_monitor
+
+        handle = self._make_handle_with_notification()
+        with pytest.raises(
+            RuntimeError, match="v71.notification_v71 is OFF",
+        ):
+            _build_vi_monitor(handle)
+
+    def test_notification_service_none_raises(self):
+        os.environ["V71_FF__V71__VI_MONITOR"] = "true"
+        os.environ["V71_FF__V71__NOTIFICATION_V71"] = "true"
+        ff.reload()
+        from src.web.v71.trading_bridge import _build_vi_monitor
+
+        handle = self._make_handle_with_notification()
+        handle.notification_service = None
+        with pytest.raises(
+            RuntimeError, match="V71ViMonitor requires notification_service",
+        ):
+            _build_vi_monitor(handle)
+
+    def test_build_succeeds_with_dependencies(self):
+        os.environ["V71_FF__V71__VI_MONITOR"] = "true"
+        os.environ["V71_FF__V71__NOTIFICATION_V71"] = "true"
+        ff.reload()
+        from src.web.v71.trading_bridge import _build_vi_monitor
+
+        handle = self._make_handle_with_notification()
+        monitor, clock = _build_vi_monitor(handle)
+        assert monitor is not None
+        assert clock is not None
+        # is_vi_active default state is False (no triggers yet)
+        assert monitor.is_vi_active("005930") is False
+
+
+class TestViMonitorAttachDetach:
+    async def test_attach_vi_monitor_flag_off_leaves_slot_none_with_degraded(
+        self,
+    ):
+        # vi_monitor flag OFF + buy_executor flag OFF (avoid wiring chain)
+        os.environ["V71_FF__V71__VI_MONITOR"] = "false"
+        os.environ["V71_FF__V71__BUY_EXECUTOR_V71"] = "false"
+        ff.reload()
+        from src.web.v71.trading_bridge import (
+            attach_trading_engine,
+            detach_trading_engine,
+        )
+        handle = await attach_trading_engine()
+        try:
+            assert handle.vi_monitor is None
+        finally:
+            await detach_trading_engine(handle)
+
+    async def test_detach_clears_vi_monitor_slot(self):
+        os.environ["V71_FF__V71__VI_MONITOR"] = "false"
+        ff.reload()
+        from src.web.v71.api.system.state import system_state
+        from src.web.v71.trading_bridge import (
+            attach_trading_engine,
+            detach_trading_engine,
+        )
+        # Force degraded_vi True to verify reset
+        system_state.degraded_vi = True
+        handle = await attach_trading_engine()
+        await detach_trading_engine(handle)
+        assert handle.vi_monitor is None
+        assert system_state.degraded_vi is False

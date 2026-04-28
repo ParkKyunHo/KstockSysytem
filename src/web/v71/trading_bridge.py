@@ -407,6 +407,13 @@ class _TradingEngineHandle:
         # ``on_position_closed`` callback is wired in P-Wire-4c (ViMonitor)
         # or by a future orchestrator. None in 4b → silent (OK for paper).
         self.exit_executor: Any = None
+        # P-Wire-4c: V71ViMonitor (PRD 02 §10 single-price interval state
+        # machine). Per-stock in-memory tracker; consumed by BuyExecutor's
+        # ``is_vi_active`` callable (replacing the P-Wire-4a stub) and by
+        # the ExitCalculator/orchestrator pipeline. WebSocket 9068
+        # subscription is wired in P-Wire-5 paper smoke alongside the WS
+        # dispatcher.
+        self.vi_monitor: Any = None
 
 
 # Default reconciliation cadence (PRD 02_TRADING_RULES.md §7.1 -- "매 5분마다").
@@ -954,24 +961,29 @@ async def _build_buy_executor(handle: _TradingEngineHandle) -> dict[str, Any]:
     tracked_seed = await _load_tracked_stocks_cache()
     tracked_lookup, tracked_cache = _build_tracked_stock_lookup(tracked_seed)
 
-    # Architect Q3 stub: VI wiring is P-Wire-4c. Surface the gap on
-    # every call so PATH_A buy decisions land in operational logs and
-    # mark system_state.degraded_vi so the dashboard sees the gap
-    # (security M2).
-    def is_vi_active_stub(stock_code: str) -> bool:
-        logger.warning(
-            "trading_bridge: VI stub returned False for %s "
-            "(P-Wire-4c not yet wired)",
-            stock_code,
-        )
-        return False
+    # P-Wire-4c integration: prefer the real V71ViMonitor when it is
+    # already wired on the handle (`v71.vi_monitor` ON earlier in
+    # attach). Falls back to the stub + degraded_vi flag when ViMonitor
+    # is OFF -- keeping paper smoke without VI safe (PATH_A entries
+    # land but caller knows from the dashboard).
+    if handle.vi_monitor is not None:
+        is_vi_active_callable = handle.vi_monitor.is_vi_active
+        system_state.degraded_vi = False
+    else:
+        def is_vi_active_callable(stock_code: str) -> bool:
+            logger.warning(
+                "trading_bridge: VI stub returned False for %s "
+                "(P-Wire-4c not yet wired)",
+                stock_code,
+            )
+            return False
 
-    system_state.degraded_vi = True
-    logger.warning(
-        "trading_bridge: VI monitor not wired (P-Wire-4c TODO) -- "
-        "is_vi_active stub returns False; PATH_A entries will not "
-        "be blocked by VI state (system_state.degraded_vi=True)",
-    )
+        system_state.degraded_vi = True
+        logger.warning(
+            "trading_bridge: VI monitor not wired -- is_vi_active stub "
+            "returns False; PATH_A entries will not be blocked by VI "
+            "state (system_state.degraded_vi=True)",
+        )
 
     ctx = BuyExecutorContext(
         exchange=handle.exchange_adapter,
@@ -979,7 +991,7 @@ async def _build_buy_executor(handle: _TradingEngineHandle) -> dict[str, Any]:
         position_store=handle.position_manager,
         notifier=handle.notification_service,
         clock=clock,
-        is_vi_active=is_vi_active_stub,
+        is_vi_active=is_vi_active_callable,
         get_previous_close=get_previous_close,
         get_total_capital=get_total_capital,
         get_invested_pct_for_stock=get_invested_pct,
@@ -994,6 +1006,43 @@ async def _build_buy_executor(handle: _TradingEngineHandle) -> dict[str, Any]:
         "prev_close_cache": prev_close_cache,
         "tracked_stock_cache": tracked_cache,
     }
+
+
+def _build_vi_monitor(handle: _TradingEngineHandle) -> Any:
+    """Construct V71ViMonitor (PRD 02 §10 VI state machine).
+
+    Cross-flag invariant:
+      * ``v71.vi_monitor`` is checked by V71ViMonitor.__init__'s
+        ``require_enabled`` -- keeping the lifespan/constructor gate
+        consistent.
+      * ``v71.notification_v71`` must be ON because TRIGGERED / RESUMED
+        emit HIGH alerts.
+
+    Reuses ``handle.clock`` when P-Wire-4a/4b already built one;
+    otherwise creates a fresh V71RealClock (stateless).
+    """
+    from src.utils.feature_flags import is_enabled
+
+    if not is_enabled("v71.notification_v71"):
+        raise RuntimeError(
+            "trading_bridge: v71.vi_monitor enabled but "
+            "v71.notification_v71 is OFF -- VI alerts cannot be delivered"
+        )
+    if handle.notification_service is None:
+        raise RuntimeError(
+            "trading_bridge: V71ViMonitor requires notification_service "
+            "(v71.notification_v71 ON but service is queue-only)",
+        )
+
+    from src.core.v71.vi_monitor import V71ViMonitor, ViMonitorContext
+
+    clock = handle.clock if handle.clock is not None else V71RealClock()
+    ctx = ViMonitorContext(
+        notifier=handle.notification_service,
+        clock=clock,
+        on_vi_resumed=None,  # orchestrator/ExitCalculator wiring later
+    )
+    return V71ViMonitor(context=ctx), clock
 
 
 async def _build_exit_executor(handle: _TradingEngineHandle) -> Any:
@@ -1237,6 +1286,30 @@ async def attach_trading_engine() -> _TradingEngineHandle:
             "-- notification stack not constructed",
         )
 
+    # P-Wire-4c: V71ViMonitor wiring. Must run BEFORE BuyExecutor so the
+    # real ``is_vi_active`` callable replaces the P-Wire-4a stub. Fail
+    # closed if notification_service is missing (TRIGGERED/RESUMED HIGH
+    # alerts cannot be delivered).
+    if is_enabled("v71.vi_monitor"):
+        try:
+            vi_monitor, vi_clock = _build_vi_monitor(handle)
+        except Exception as exc:  # noqa: BLE001 -- boot failure surfaces
+            logger.error(
+                "trading_bridge: v71.vi_monitor enabled but construction "
+                "failed: %s",
+                type(exc).__name__,
+            )
+            raise
+        handle.vi_monitor = vi_monitor
+        if handle.clock is None:
+            handle.clock = vi_clock
+        logger.info("trading_bridge: V71ViMonitor wired")
+    else:
+        logger.warning(
+            "trading_bridge: feature flag 'v71.vi_monitor' disabled "
+            "-- VI state machine OFF (BuyExecutor falls back to stub)",
+        )
+
     # P-Wire-4a: V71BuyExecutor wiring. Cross-flag invariant requires
     # box_system + kiwoom_exchange + notification_v71 all ON; missing
     # any of those raises (handled by lifespan).
@@ -1347,11 +1420,12 @@ async def detach_trading_engine(handle: _TradingEngineHandle) -> None:
     handle.box_manager = None
     handle.position_manager = None
 
-    # P-Wire-4a/4b: drop executors + supporting closures. They are
-    # stateless (no aclose / cancel needed) -- the underlying caches die
-    # with the closures.
+    # P-Wire-4a/4b/4c: drop executors + monitor + supporting closures.
+    # All are stateless (no aclose / cancel needed) -- the underlying
+    # caches die with the closures.
     handle.buy_executor = None
     handle.exit_executor = None
+    handle.vi_monitor = None
     handle.clock = None
     handle.total_capital_refresh = None
     handle.prev_close_cache = None
