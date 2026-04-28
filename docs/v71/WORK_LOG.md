@@ -2957,6 +2957,61 @@ uvicorn.run('src.web.v71.main:app', host='127.0.0.1', port=8001, log_level='info
 
 ---
 
+### Phase 6/7 wiring P-Wire-10: V71TelegramCommands 등록 + 폴링 (2026-04-28)
+
+**Commit `ef92639`**: `feat(v71): web P-Wire-10 — V71TelegramCommands 등록 + 폴링 시작`
+**규모**: 3 files +261 / -19
+
+#### Refactor (공유 TelegramBot 인스턴스)
+
+- `_build_telegram_bot()` 신규: 자격증명 검증 + 단일 인스턴스 생성
+- `_build_telegram_send_fn(bot)`: 시그니처 변경 (이전엔 매 호출 새 봇 생성)
+- `_build_notification_stack()`이 `telegram_bot`을 dict에 노출 → handle 슬롯에 저장
+- NotificationService 발신 + TelegramCommands 수신이 같은 봇 공유 → 중복 폴링/메시지 누수 차단
+
+#### `_build_telegram_commands(handle)` 신규 helper
+
+- Cross-flag: v71.notification_v71 ON + telegram_bot + chat_id 존재
+- CommandContext 빌드:
+  * box / position / queue / repo / circuit_breaker (이미 wired) + Clock 재사용
+  * telegram_send: V7.0 봇 send_message wrap (chat_id 인자 지원)
+  * audit_log: 임시 logger.warning (12_SECURITY.md §8.3 audit pipeline은 후속)
+  * authorized_chat_ids: TELEGRAM_CHAT_ID env (단일 권한)
+  * safe_mode_get/set: `system_state.safe_mode` + entered_at/resumed_at
+  * cancel_order: V71OrderManager.cancel_order(UUID) wrap (예외 fail-secure)
+  * list_tracked: empty placeholder (TrackedSummary 후속)
+  * report_handler: None (Phase 6)
+- 13개 명령어 (status/positions/tracking/pending/today/recent/report/stop/resume/cancel/alerts/settings/help) 등록
+- `bot.start_polling()` 호출 → 첫 /status부터 작동
+
+#### attach/detach 순서
+
+- attach: P-Wire-9 직전 (notification + box/position 빌드 후)
+- detach: bot.stop_polling FIRST → daily/monthly stop → notification_service.stop → kiwoom
+
+#### 사용자 정책 반영
+
+> "켈레그램 동작 테스트는 배포 후 진행"
+> = 등록 + 폴링 코드 path는 지금 wire, 실제 명령 응답 테스트는 배포 후
+
+#### 검증
+
+- 단위 테스트 2 신규 + TestTelegramSendFnBuilder 3 갱신
+- production_boot_smoke 보강 (TelegramBot mock에 register_command + start/stop_polling)
+- V7.1 회귀: **1207/1207 PASS** in 8.71s (1205 → 1207, +2 신규)
+- 6 harness PASS, ruff clean
+
+#### Phase 7 P7.1 진입 직전 시스템 상태 (12 단위 wired)
+
+운영자가 즉시 사용 가능한 surface:
+- 자동 매매 (auto-buy/exit + VI handling + reconciler)
+- 일일/월간 알림 (15:30 + 1일 09:00)
+- **텔레그램 13 명령어 (/status / /positions / /stop / /resume / /cancel ...)** ← P-Wire-10
+- 웹 대시보드 (Phase 5)
+- 안전 모드 토글 (telegram /stop or web)
+
+---
+
 ### Phase 6/7 wiring 추가 단위 P-Wire-7/8/9 (2026-04-28)
 
 #### P-Wire-7 (commit `b0e4a31`): orchestrator callback wiring
