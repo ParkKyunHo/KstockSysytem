@@ -2957,6 +2957,89 @@ uvicorn.run('src.web.v71.main:app', host='127.0.0.1', port=8001, log_level='info
 
 ---
 
+### Phase 6/7 wiring P-Wire-5: V71KiwoomWebSocket + VI 9068 dispatcher (2026-04-28)
+
+**Commit `3b7604e`**: `feat(v71): web P-Wire-5 — V71KiwoomWebSocket wiring + VI 9068 dispatcher`
+**규모**: 3 files +378
+
+#### 신규 / 변경
+
+- **trading_bridge.py 확장** (~+228 LOC):
+  * `_make_vi_handler(vi_monitor)` factory: WS message → vi_monitor 호출
+    - stock_code: `_VALID_STOCK_CODE` 정규식 검증
+    - 9068 status 추출 (multi-key alias: "9068" / "vi_kind" / "vi_state")
+    - trigger_price / prev_close / first_price 동일 패턴 (paper smoke 보정 예정)
+    - 모든 fail-secure: WARNING + skip + BaseException catch-all
+  * `_build_kiwoom_websocket(handle)` async helper:
+    - Cross-flag: `v71.kiwoom_exchange` ON + `handle.token_manager` 존재 검증
+    - V71KiwoomWebSocket 생성 (token_manager 공유)
+    - vi_monitor 있으면 VI 핸들러 등록 + VI 채널 subscribe (item="" 계좌-level)
+    - vi_monitor 없으면 WARNING
+  * `_TradingEngineHandle.kiwoom_websocket` + `kiwoom_websocket_task` 슬롯 추가
+  * attach: WS 빌드 + `asyncio.create_task(name='v71_kiwoom_websocket')`
+  * detach: WS.aclose() + task.cancel() + suppress(CancelledError) **BEFORE** kiwoom_client.aclose() (token_manager 공유 보호)
+
+- **`config/feature_flags.yaml`**: `v71.kiwoom_websocket: false` 추가
+
+- **테스트 8 케이스 추가** (1161 → 1169):
+  * Group R `TestViHandler` (6):
+    - dispatches_triggered / dispatches_resolved
+    - invalid_stock_code_skipped (BAD-CODE) / missing_status_skipped
+    - unknown_status_logs_warning / zero_trigger_price_skipped
+  * Group R `TestKiwoomWebsocketAttachDetach` (2):
+    - websocket_flag_off_leaves_slot_none
+    - kiwoom_exchange_off_raises (cross-flag)
+
+#### 검증
+
+- 단위 테스트: 96/96 PASS in 1.45s (P-Wire-1/2/3/4/5 누적)
+- V7.1 회귀: **1169/1169 PASS** in 8.50s (1161 → 1169, +8 신규)
+- 6 harness: 1/2/3/4/6 PASS, 5 WARN
+- ruff: clean (I001 import sort autofix)
+
+#### Phase 7 P7.1 paper trade 진입 전 잔여 항목
+
+- AWS Lightsail (43.200.235.74) 정리/초기화 (사용자 위임 정책 — `aws_deployment_policy.md`)
+- Telegram bot 재활성화 (기존 ID, `telegram_bot_policy.md`)
+- paper smoke 시나리오 검증 (`KIWOOM_ENV=SANDBOX`):
+  * VI WS 9068 wire-level 필드명 확인
+  * ka10004 (호가) / ka10001 (현재가) / ka10081 (일봉) 응답 보정
+  * total_capital prime / tracked_stocks seed
+
+---
+
+### Phase 6/7 wiring P-Wire-4c: V71ViMonitor wiring + BuyExecutor stub 제거 (2026-04-28)
+
+**Commit `1e6dea1`**: `feat(v71): web P-Wire-4c — V71ViMonitor wiring + BuyExecutor stub 제거`
+**규모**: 2 files +183 / -20
+
+#### 신규 / 변경
+
+- **trading_bridge.py 확장**:
+  * `_build_vi_monitor(handle)` helper: cross-flag (v71.notification_v71 ON + notification_service != None) + V71RealClock 재사용 + ViMonitorContext + V71ViMonitor 인스턴스 + clock 함께 반환
+  * `_TradingEngineHandle.vi_monitor` 슬롯 추가
+  * `_build_buy_executor`: handle.vi_monitor 있으면 `is_vi_active = vi_monitor.is_vi_active` + `degraded_vi=False`; 없으면 stub + `degraded_vi=True`
+  * attach: P-Wire-4a (BuyExecutor) **직전**에 P-Wire-4c 호출 (stub 교체 가능)
+  * detach: vi_monitor=None + degraded_vi 리셋
+
+- **테스트 5 케이스 추가** (1156 → 1161):
+  * Group Q `TestBuildViMonitor` (3): notification_v71_off / service_none / build_succeeds
+  * Group Q `TestViMonitorAttachDetach` (2): flag_off / detach_clears + degraded_vi 리셋
+
+#### Why
+
+- §10 VI handling은 trading rule 헌법 — stub은 PROD 활성화 시 §10 위반
+- ViMonitor를 BuyExecutor 직전에 wire해야 stub 교체 가능
+- on_vi_resumed 콜백은 ExitCalculator/orchestrator wired 후 (Phase 7)
+
+#### 검증
+
+- 단위 테스트: 88/88 PASS
+- V7.1 회귀: **1161/1161 PASS** (1156 → 1161, +5)
+- 6 harness PASS, ruff clean
+
+---
+
 ### Phase 6/7 wiring P-Wire-4b: V71ExitExecutor wiring (2026-04-28)
 
 **Commit `e8af26b`**: `feat(v71): web P-Wire-4b — V71ExitExecutor wiring (Clock + cross-flag 재사용)`
