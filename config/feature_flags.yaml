@@ -53,3 +53,4 @@ v71:
 
   # Phase A 산출 (V7.0 폐기 후 V7.1 candle/market 인프라)
   candle_builder: false        # P-Wire-12 — V71CandleManager attach (PATH_A 3분봉 + PATH_B 일봉, 자동 박스 감지)
+  box_entry_detector: false    # P-Wire-13 — V71BoxEntryDetector pair (PATH_A + PATH_B subscribers → BuyExecutor)

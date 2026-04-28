@@ -152,6 +152,22 @@ class V71CandleManager:
         for d in self._daily.values():
             d.register_on_complete(callback)
 
+    def unregister_on_complete(self, callback: OnCandleCompleteFn) -> None:
+        """Idempotent removal mirroring :meth:`register_on_complete`.
+
+        Pairs with subscriber lifecycles (V71BoxEntryDetector etc.) so
+        attach -> detach -> re-attach cycles do not leak stale callbacks
+        into the manager / builder subscriber lists. Removing a callback
+        that was never registered is a silent no-op (defence-in-depth
+        for overlapping shutdown paths).
+        """
+        with contextlib.suppress(ValueError):
+            self._subscribers.remove(callback)
+        for tm in self._three_min.values():
+            tm.unregister_on_complete(callback)
+        for d in self._daily.values():
+            d.unregister_on_complete(callback)
+
     # ------------------------------------------------------------------
     # Inspection
     # ------------------------------------------------------------------

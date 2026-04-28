@@ -18,6 +18,7 @@ try/except so a buggy box_entry_detector cannot block a slow indicator.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 from collections import deque
 from collections.abc import Awaitable, Callable
@@ -117,6 +118,11 @@ class V71ThreeMinuteCandleBuilder:
 
     def register_on_complete(self, callback: OnCandleCompleteFn) -> None:
         self._subscribers.append(callback)
+
+    def unregister_on_complete(self, callback: OnCandleCompleteFn) -> None:
+        # Idempotent -- silent when callback was never registered.
+        with contextlib.suppress(ValueError):
+            self._subscribers.remove(callback)
 
     # ------------------------------------------------------------------
     # Tick ingestion

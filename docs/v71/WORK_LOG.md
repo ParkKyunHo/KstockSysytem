@@ -4550,4 +4550,74 @@ async def _build_candle_manager(handle: _TradingEngineHandle) -> None:
 - Phase 7 paper trade 또는 production 직접 진입 (사용자 결정: paper skip)
 - BoxEntryDetector subscriber wiring (`candle_manager.register_on_complete`) — 별도 단위로 추적
 
+### Phase A 후속 P-Wire-13: V71BoxEntryDetector subscriber wiring (2026-04-28)
+
+**Commit**: TBD-p-wire-13
+**규모**: 10 files +773 -213
+
+#### 12단계 워크플로우
+
+| 단계 | 도구 | 결과 |
+|------|------|------|
+| 1 | PRD + V7.1 코드 학습 | V71BoxEntryDetector V7.0 호환층 발견 (CandleSource sync Protocol → V71CandleManager async와 불일치) |
+| 2 | **v71-architect** | PASS w/ WARNING 5 + 권고 8 (Q1~Q9). 옵션 A 채택 (V71BoxEntryDetector V7.1 단독 표준 정정) |
+| 3 | 구현 | 옵션 A — V71BoxEntryDetector + V71CandleManager unregister API + trading_bridge wiring |
+| 4 | **security + test 병렬** | security HIGH 1 (H1 detach leak) + MEDIUM 3 + LOW 3 / test 27 케이스 권고 |
+| 5 | 보안 H1/M1/M2 즉시 패치 | V71CandleManager + builders `unregister_on_complete` API 추가 + tzinfo guard + logger.warning type-only |
+| 6 | 테스트 작성 | 21 신규 (detector V7.1 표준 12 + wiring 8 + bidirectional resolver 3 + unregister 3) — 기존 8 fail 갱신 |
+| 7 | 실행 + 디버그 | cross-flag test BoxManager require_enabled 의존성 발견 → handle 빌드 후 flag toggle 패턴으로 정정 |
+| 8 | 6 harness | PASS |
+| 9 | ruff lint | 6 신규 issue → SIM105 (`with contextlib.suppress`) 전환 → baseline 163 동등 |
+| 10 | V7.1 전체 회귀 | 1316/1316 PASS (1295 → 1316, +21 신규) |
+| 11 | commit (no push) | (이번 commit) |
+| 12 | WORK_LOG + work-context + memory 갱신 | (이 entry) |
+
+#### V71BoxEntryDetector 정정 (옵션 A)
+
+V7.0 폐기 후 dead code 제거 + V7.1 단독 표준:
+- `CandleSource` Protocol 제거 (V7.0 sync 시그니처)
+- `_on_bar_complete_sync` 제거 (`asyncio.get_running_loop()` + `loop.create_task` wrapper)
+- `__init__` 인자: `candle_source` → `candle_manager: V71CandleManager` + `timeframe_filter: V71Timeframe`
+- `start()`: `self._candle_manager.register_on_complete(self._on_bar_complete_async)` 호출
+- `stop()` 신규 (idempotent + `unregister_on_complete` 호출 — H1 leak 차단)
+- `_on_bar_complete_async`: timeframe filter (silent skip) + check_entry
+- M2 패치: `logger.exception` → `logger.warning("...failed: %s", type(exc).__name__)` (Bearer/Auth traceback 노출 차단)
+
+#### V71CandleManager + builders unregister_on_complete (security H1)
+
+`register_on_complete`이 append-only인 구조에 대응 unregister API 부재 → detach 시 detector callback leak. attach/detach/attach 사이클에서 stale detector가 candle_manager subscribers에 잔존 → **중복 매수 위험**.
+
+추가:
+- `V71BaseCandleBuilder` Protocol에 `unregister_on_complete` 메서드 추가
+- `V71ThreeMinuteCandleBuilder.unregister_on_complete` 구현 (`contextlib.suppress(ValueError)`)
+- `V71DailyCandleBuilder.unregister_on_complete` 구현
+- `V71CandleManager.unregister_on_complete` 구현 (manager subscribers + 모든 builder fan-out)
+
+#### trading_bridge.py P-Wire-13 wiring
+
+| 변경 | 내용 |
+|------|------|
+| handle slots 2개 | `box_entry_detector_path_a` + `box_entry_detector_path_b` |
+| `_build_bidirectional_tracked_lookup(seed)` | forward + reverse closure (같은 dict 공유 — restart_recovery refresh 시 stale 안 됨, architect Q6 옵션 C) |
+| `_build_market_context_provider(handle)` | V71MarketSchedule + vi_monitor 통합 closure + tzinfo guard (security M1) — naive timestamp 시 UTC 가정 + KST 변환 |
+| `_build_box_entry_detectors(handle)` | cross-flag invariant 3개 (`v71.candle_builder` + `v71.box_system` + `v71.buy_executor_v71`) + slot 5개 검증 + 2 detector 생성 + start + security H1 rollback (`detector_b` 실패 시 `detector_a.stop()`) |
+| attach 위치 | P-Wire-12 (candle_manager) 직후 + P-Wire-6 (orchestrator) 이전 |
+| detach 위치 | P-Wire-12 candle_manager.stop() 이전 (subscribers 살아있는 동안 unregister) |
+| feature flag | `v71.box_entry_detector` (false 기본) |
+
+#### Phase A Step F follow-up — 별도 추적 단위
+
+- **P-Wire-14 (V71MarketSchedule holidays seed wiring)**: V71MarketSchedule.set_holidays 호출 + KST tz-aware is_market_open() 정정 + DB V71_HOLIDAYS 테이블 또는 hardcoded 정합. 헌법 1 (휴장일 박스 진입 차단) 보장 책임.
+
+#### 검증
+
+- V7.1 회귀: **1316/1316** PASS (1295 + 21 신규)
+- 6 harness: PASS
+- ruff: 163 errors (Phase A baseline 동등, 신규 issue 0 — SIM105 자동 전환)
+- 10 files +773 -213
+
+#### 다음
+
+P-Wire-14 (V71MarketSchedule holidays seed) — 헌법 1 휴장일 차단. P-Wire-14 완료 후 Phase 7 paper smoke 또는 production 직접 진입 가능.
+
 ---

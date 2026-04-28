@@ -17,6 +17,7 @@ day (Constitution §4 항상 운영).
 
 from __future__ import annotations
 
+import contextlib
 import logging
 from collections import deque
 from collections.abc import Awaitable, Callable
@@ -169,6 +170,11 @@ class V71DailyCandleBuilder:
 
     def register_on_complete(self, callback: OnCandleCompleteFn) -> None:
         self._subscribers.append(callback)
+
+    def unregister_on_complete(self, callback: OnCandleCompleteFn) -> None:
+        # Idempotent -- silent when callback was never registered.
+        with contextlib.suppress(ValueError):
+            self._subscribers.remove(callback)
 
     # ------------------------------------------------------------------
     # Fetch helpers (manager-driven)

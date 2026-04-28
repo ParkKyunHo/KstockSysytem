@@ -29,6 +29,7 @@ import contextlib
 import logging
 import re
 import time
+from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 from typing import Any
 from uuid import UUID
@@ -462,6 +463,14 @@ class _TradingEngineHandle:
         # boot). Both must release before kiwoom_websocket.aclose().
         self.candle_manager: Any = None
         self.candle_history_task: asyncio.Task[None] | None = None
+        # P-Wire-13 (Phase A Step F follow-up): V71BoxEntryDetector pair.
+        # PATH_A subscribes to 3분봉 candles and dispatches PULLBACK_A /
+        # BREAKOUT_A entries; PATH_B subscribes to daily candles and
+        # dispatches PATH_B entries. Both register with V71CandleManager
+        # via ``register_on_complete`` and release through
+        # ``unregister_on_complete`` on detach (P-Wire-13 H1 leak fix).
+        self.box_entry_detector_path_a: Any = None
+        self.box_entry_detector_path_b: Any = None
 
 
 # Default reconciliation cadence (PRD 02_TRADING_RULES.md §7.1 -- "매 5분마다").
@@ -1890,6 +1899,194 @@ async def _build_candle_manager(
         raise
 
 
+# ---------------------------------------------------------------------------
+# P-Wire-13 (Phase A Step F follow-up): V71BoxEntryDetector wiring helpers.
+# ---------------------------------------------------------------------------
+
+
+def _build_bidirectional_tracked_lookup(
+    seed: dict | None,
+) -> tuple[Callable[[str], object], Callable[[str], str | None]]:
+    """Return ``(forward, reverse)`` lookups sharing a single backing dict.
+
+    Architect Q6 (P-Wire-13) decided the resolver must mirror live
+    cache mutations (P-Wire-11 restart_recovery refresh) so the reverse
+    closure walks the *same* dict the forward path reads. The dict is
+    captured by reference (no copy), so any mutation visible to forward
+    is also visible to reverse on the next call.
+
+    Reverse is O(N). Hot path frequency = bar completion (3-min + daily)
+    × tracked stocks (~10-50). Architect Q6 confirmed acceptable cost.
+    """
+    forward_dict: dict = dict(seed or {})
+
+    def forward(tracked_id: str) -> object:
+        return forward_dict.get(tracked_id)
+
+    def reverse(stock_code: str) -> str | None:
+        if not stock_code:
+            return None
+        for tid, code in forward_dict.items():
+            if code == stock_code:
+                return str(tid)
+        return None
+
+    return forward, reverse
+
+
+def _build_market_context_provider(
+    handle: _TradingEngineHandle,
+) -> Callable[[Any], Any]:
+    """Build the MarketContext closure for V71BoxEntryDetector.
+
+    Combines V71MarketSchedule (singleton) + handle.vi_monitor. Wraps
+    candle.timestamp in KST timezone before passing to the schedule
+    (architect Q7 + security M1) -- the schedule compares naive local
+    time and AWS Lightsail runs UTC, so a tzinfo guard prevents a
+    9-hour drift that would mis-classify market_open / closed.
+
+    Note (P-Wire-14 follow-up): V71MarketSchedule.set_holidays is not
+    yet wired -- holiday detection is empty so weekday checks treat
+    every weekday as a trading day. The detector itself is robust to
+    that gap (entry conditions also require regular session window),
+    but Phase 7 paper smoke must verify or land P-Wire-14 first.
+    """
+    from src.core.v71.market.v71_market_schedule import (
+        get_v71_market_schedule,
+    )
+    from src.core.v71.skills.box_entry_skill import MarketContext
+
+    schedule = get_v71_market_schedule()
+    vi_monitor = handle.vi_monitor
+
+    def provider(candle: Any) -> Any:
+        ts = candle.timestamp
+        # Security M1 (P-Wire-13): defend against naive timestamps from
+        # restart_recovery / replay paths -- naive datetime.astimezone()
+        # would silently drift by the host's local offset (UTC on AWS,
+        # KST on dev) producing wrong market-phase decisions.
+        if ts.tzinfo is None:
+            logger.warning(
+                "trading_bridge: market_context received naive timestamp "
+                "(stock=%s timeframe=%s) -- treating as UTC",
+                candle.stock_code, candle.timeframe.name,
+            )
+            ts = ts.replace(tzinfo=timezone.utc)
+        kst_now = ts.astimezone(_CANDLE_KST).replace(tzinfo=None)
+        return MarketContext(
+            is_market_open=schedule.is_market_open(kst_now),
+            is_vi_active=(
+                vi_monitor.is_vi_active(candle.stock_code)
+                if vi_monitor is not None
+                else False
+            ),
+            is_vi_recovered_today=(
+                vi_monitor.is_vi_recovered_today(candle.stock_code)
+                if vi_monitor is not None
+                else False
+            ),
+            current_time=ts,
+        )
+
+    return provider
+
+
+async def _build_box_entry_detectors(
+    handle: _TradingEngineHandle,
+) -> None:
+    """Construct PATH_A + PATH_B V71BoxEntryDetector pair and subscribe
+    them to V71CandleManager.
+
+    Cross-flag invariant (architect Q3, opt B): direct dependencies
+    only -- ``v71.candle_builder`` (subscribe target) +
+    ``v71.box_system`` (detector __init__ require_enabled) +
+    ``v71.buy_executor_v71`` (on_entry callback source). The
+    transitive ``v71.kiwoom_*`` flags are already enforced by P-Wire-12.
+
+    Slot invariant: candle_manager + box_manager + buy_executor +
+    vi_monitor + tracked_stock_cache must all be wired. Anything
+    missing means an upstream P-Wire skipped -- raise so the lifespan
+    surfaces the misconfiguration rather than silently wiring half a
+    pipeline.
+
+    Security H1 rollback: ``register_on_complete`` is append-only on
+    the V71CandleManager + builder fan-out. If the second detector's
+    ``start()`` raises, roll back the first detector's subscription
+    via ``stop()`` so the manager doesn't end up with an orphan
+    callback (P-Wire-12 M1 pattern mirror).
+    """
+    from src.utils.feature_flags import is_enabled
+
+    missing = [
+        flag
+        for flag in (
+            "v71.candle_builder",
+            "v71.box_system",
+            "v71.buy_executor_v71",
+        )
+        if not is_enabled(flag)
+    ]
+    if missing:
+        raise RuntimeError(
+            "trading_bridge: v71.box_entry_detector enabled but required "
+            f"dependencies are OFF: {missing}",
+        )
+
+    slot_checks = (
+        ("candle_manager", handle.candle_manager),
+        ("box_manager", handle.box_manager),
+        ("buy_executor", handle.buy_executor),
+        ("vi_monitor", handle.vi_monitor),
+        ("tracked_stock_cache", handle.tracked_stock_cache),
+    )
+    for slot_name, slot_value in slot_checks:
+        if slot_value is None:
+            raise RuntimeError(
+                "trading_bridge: v71.box_entry_detector requires "
+                f"{slot_name} (upstream P-Wire must be wired)",
+            )
+
+    from src.core.v71.box.box_entry_detector import V71BoxEntryDetector
+    from src.core.v71.v71_constants import V71Timeframe
+
+    _forward, reverse_lookup = _build_bidirectional_tracked_lookup(
+        handle.tracked_stock_cache,
+    )
+    market_context_provider = _build_market_context_provider(handle)
+
+    detector_a = V71BoxEntryDetector(
+        path_type="PATH_A",
+        candle_manager=handle.candle_manager,
+        timeframe_filter=V71Timeframe.THREE_MINUTE,
+        box_manager=handle.box_manager,
+        on_entry=handle.buy_executor.on_entry_decision,
+        resolve_tracked_id=reverse_lookup,
+        market_context=market_context_provider,
+    )
+    detector_a.start()
+    try:
+        detector_b = V71BoxEntryDetector(
+            path_type="PATH_B",
+            candle_manager=handle.candle_manager,
+            timeframe_filter=V71Timeframe.DAILY,
+            box_manager=handle.box_manager,
+            on_entry=handle.buy_executor.on_entry_decision,
+            resolve_tracked_id=reverse_lookup,
+            market_context=market_context_provider,
+        )
+        detector_b.start()
+    except BaseException:
+        # Security H1 rollback -- detector_a already registered with
+        # the candle manager; release before propagating so the
+        # subscriber list stays clean.
+        with contextlib.suppress(Exception):
+            detector_a.stop()
+        raise
+
+    handle.box_entry_detector_path_a = detector_a
+    handle.box_entry_detector_path_b = detector_b
+
+
 def _build_vi_monitor(handle: _TradingEngineHandle) -> Any:
     """Construct V71ViMonitor (PRD 02 §10 VI state machine).
 
@@ -2323,6 +2520,35 @@ async def attach_trading_engine() -> _TradingEngineHandle:
             "-- 3분봉 + 일봉 dispatcher off (PATH_A/B detection blocked)",
         )
 
+    # P-Wire-13 (Phase A Step F follow-up): V71BoxEntryDetector pair.
+    # Must run AFTER P-Wire-12 wired the candle manager (subscribe
+    # target) and BEFORE P-Wire-11 restart_recovery (which resubscribes
+    # PRICE_TICK -- the box detector's subscription chain must already
+    # be in place so re-subscription naturally fans into it). Sits
+    # between candle and exit pipelines so the candle->box->buy and
+    # candle->exit pipelines are wired symmetrically.
+    if is_enabled("v71.box_entry_detector"):
+        try:
+            await _build_box_entry_detectors(handle)
+        except Exception as exc:  # noqa: BLE001 -- boot failure surfaces
+            logger.error(
+                "trading_bridge: v71.box_entry_detector enabled but "
+                "construction failed: %s",
+                type(exc).__name__,
+            )
+            raise
+        logger.info(
+            "trading_bridge: V71BoxEntryDetector wired "
+            "(path_a=%s, path_b=%s)",
+            "ready" if handle.box_entry_detector_path_a else "off",
+            "ready" if handle.box_entry_detector_path_b else "off",
+        )
+    else:
+        logger.warning(
+            "trading_bridge: feature flag 'v71.box_entry_detector' "
+            "disabled -- automatic box entries will not fire",
+        )
+
     # P-Wire-6: V71ExitOrchestrator (PRICE_TICK -> ExitCalculator ->
     # ExitExecutor pipeline). Must run AFTER P-Wire-5 wired the WS so
     # ``register_handler`` lands on a real client; the orchestrator
@@ -2573,6 +2799,27 @@ async def detach_trading_engine(handle: _TradingEngineHandle) -> None:
             )
     handle.exit_orchestrator = None
     handle.exit_calculator = None
+
+    # P-Wire-13 (Phase A Step F follow-up): stop the box entry
+    # detectors BEFORE candle_manager.stop() flushes the final 3분봉
+    # bucket. ``detector.stop()`` calls ``unregister_on_complete`` so
+    # the manager's subscriber list is clean by the time
+    # ``manager.stop()`` runs. Both detectors are independent --
+    # failure on one must not block the other (best-effort).
+    for slot in (
+        "box_entry_detector_path_a",
+        "box_entry_detector_path_b",
+    ):
+        det = getattr(handle, slot, None)
+        if det is not None:
+            try:
+                det.stop()
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "trading_bridge: %s.stop() failed: %s",
+                    slot, type(exc).__name__,
+                )
+            setattr(handle, slot, None)
 
     # P-Wire-12 (Phase A Step F): stop candle manager + cancel boot
     # priming task BEFORE buy_executor/exit_executor nullify (subscribers

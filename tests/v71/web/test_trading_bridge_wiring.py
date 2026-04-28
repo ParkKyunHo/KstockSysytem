@@ -2234,3 +2234,215 @@ class TestCandleManagerWiring:
         assert handle.candle_history_task is None
         # But stop() was invoked for cleanup (security M1)
         assert stop_calls == ["stop"]
+
+
+# ---------------------------------------------------------------------------
+# Group W: P-Wire-13 V71BoxEntryDetector wiring (Phase A Step F follow-up)
+# ---------------------------------------------------------------------------
+
+
+def _make_box_detector_handle():
+    """Stubbed handle with all P-Wire-13 dependencies fulfilled."""
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock, MagicMock
+
+    from src.core.v71.box.box_manager import V71BoxManager
+    from src.core.v71.candle.v71_candle_manager import V71CandleManager
+    from src.web.v71.trading_bridge import _TradingEngineHandle
+
+    handle = _TradingEngineHandle()
+
+    kiwoom = MagicMock()
+    kiwoom.get_daily_chart = AsyncMock(
+        return_value=SimpleNamespace(data={"stk_dt_pole_chart_qry": []}),
+    )
+    ws = MagicMock()
+    ws.register_handler = MagicMock()
+
+    candle_manager = V71CandleManager(
+        kiwoom_client=kiwoom, kiwoom_websocket=ws,
+    )
+
+    buy_executor = MagicMock()
+    buy_executor.on_entry_decision = AsyncMock()
+
+    vi_monitor = MagicMock()
+    vi_monitor.is_vi_active = MagicMock(return_value=False)
+    vi_monitor.is_vi_recovered_today = MagicMock(return_value=False)
+
+    handle.kiwoom_client = kiwoom
+    handle.kiwoom_websocket = ws
+    handle.candle_manager = candle_manager
+    handle.box_manager = V71BoxManager()
+    handle.buy_executor = buy_executor
+    handle.vi_monitor = vi_monitor
+    handle.tracked_stock_cache = {1: "005930", 2: "000660"}
+    return handle
+
+
+class TestBoxEntryDetectorWiring:
+    """P-Wire-13 (Phase A Step F follow-up) BoxEntryDetector wiring."""
+
+    async def test_flag_off_leaves_slots_none(self):
+        os.environ["V71_FF__V71__BOX_ENTRY_DETECTOR"] = "false"
+        ff.reload()
+        from src.web.v71.trading_bridge import (
+            attach_trading_engine,
+            detach_trading_engine,
+        )
+
+        handle = await attach_trading_engine()
+        try:
+            assert handle.box_entry_detector_path_a is None
+            assert handle.box_entry_detector_path_b is None
+        finally:
+            await detach_trading_engine(handle)
+
+    @pytest.mark.parametrize(
+        "missing_flag,env_key",
+        [
+            ("v71.candle_builder", "V71_FF__V71__CANDLE_BUILDER"),
+            ("v71.box_system", "V71_FF__V71__BOX_SYSTEM"),
+            ("v71.buy_executor_v71", "V71_FF__V71__BUY_EXECUTOR_V71"),
+        ],
+    )
+    async def test_cross_flag_off_raises(self, missing_flag, env_key):
+        # First boot the dependencies WITH all flags enabled so
+        # V71BoxManager / V71CandleManager construct cleanly. Then flip
+        # the missing flag and call the wiring helper directly so the
+        # cross-flag invariant fires before any constructor.
+        os.environ["V71_FF__V71__BOX_ENTRY_DETECTOR"] = "true"
+        os.environ["V71_FF__V71__CANDLE_BUILDER"] = "true"
+        os.environ["V71_FF__V71__BOX_SYSTEM"] = "true"
+        os.environ["V71_FF__V71__BUY_EXECUTOR_V71"] = "true"
+        ff.reload()
+        from src.web.v71.trading_bridge import (
+            _build_box_entry_detectors,
+        )
+        handle = _make_box_detector_handle()
+
+        os.environ[env_key] = "false"
+        ff.reload()
+
+        with pytest.raises(RuntimeError, match=missing_flag):
+            await _build_box_entry_detectors(handle)
+
+    @pytest.mark.parametrize(
+        "slot_name",
+        [
+            "candle_manager", "box_manager", "buy_executor",
+            "vi_monitor", "tracked_stock_cache",
+        ],
+    )
+    async def test_slot_none_raises(self, slot_name):
+        os.environ["V71_FF__V71__BOX_ENTRY_DETECTOR"] = "true"
+        os.environ["V71_FF__V71__CANDLE_BUILDER"] = "true"
+        os.environ["V71_FF__V71__BOX_SYSTEM"] = "true"
+        os.environ["V71_FF__V71__BUY_EXECUTOR_V71"] = "true"
+        ff.reload()
+        from src.web.v71.trading_bridge import (
+            _build_box_entry_detectors,
+        )
+        handle = _make_box_detector_handle()
+        setattr(handle, slot_name, None)
+
+        with pytest.raises(RuntimeError, match=f"requires {slot_name}"):
+            await _build_box_entry_detectors(handle)
+
+    async def test_normal_wire_creates_path_a_and_path_b(self):
+        os.environ["V71_FF__V71__BOX_ENTRY_DETECTOR"] = "true"
+        os.environ["V71_FF__V71__CANDLE_BUILDER"] = "true"
+        os.environ["V71_FF__V71__BOX_SYSTEM"] = "true"
+        os.environ["V71_FF__V71__BUY_EXECUTOR_V71"] = "true"
+        ff.reload()
+        from src.core.v71.v71_constants import V71Timeframe
+        from src.web.v71.trading_bridge import _build_box_entry_detectors
+        handle = _make_box_detector_handle()
+
+        await _build_box_entry_detectors(handle)
+        try:
+            assert handle.box_entry_detector_path_a is not None
+            assert handle.box_entry_detector_path_b is not None
+            assert (
+                handle.box_entry_detector_path_a._timeframe_filter
+                == V71Timeframe.THREE_MINUTE
+            )
+            assert (
+                handle.box_entry_detector_path_b._timeframe_filter
+                == V71Timeframe.DAILY
+            )
+            # Both subscribed -- candle_manager has 2 subscribers
+            assert len(handle.candle_manager._subscribers) == 2
+        finally:
+            handle.box_entry_detector_path_a.stop()
+            handle.box_entry_detector_path_b.stop()
+
+    async def test_attach_failure_rolls_back_path_a(self, monkeypatch):
+        """Security H1: detector_b.start() failure must release
+        detector_a's subscription so the candle manager subscriber
+        list stays clean."""
+        os.environ["V71_FF__V71__BOX_ENTRY_DETECTOR"] = "true"
+        os.environ["V71_FF__V71__CANDLE_BUILDER"] = "true"
+        os.environ["V71_FF__V71__BOX_SYSTEM"] = "true"
+        os.environ["V71_FF__V71__BUY_EXECUTOR_V71"] = "true"
+        ff.reload()
+        from src.core.v71.box.box_entry_detector import V71BoxEntryDetector
+        from src.web.v71.trading_bridge import _build_box_entry_detectors
+
+        # Make the second start() raise.
+        call_count = [0]
+        original_start = V71BoxEntryDetector.start
+
+        def maybe_fail(self):
+            call_count[0] += 1
+            if call_count[0] == 2:
+                raise RuntimeError("simulated_path_b_start_failure")
+            original_start(self)
+
+        monkeypatch.setattr(V71BoxEntryDetector, "start", maybe_fail)
+        handle = _make_box_detector_handle()
+
+        with pytest.raises(
+            RuntimeError, match="simulated_path_b_start_failure",
+        ):
+            await _build_box_entry_detectors(handle)
+        # detector_a should have been started then stopped (rollback);
+        # detector_b never finished start. Subscriber list is clean.
+        assert handle.box_entry_detector_path_a is None
+        assert handle.box_entry_detector_path_b is None
+        assert handle.candle_manager._subscribers == []
+
+
+# ---------------------------------------------------------------------------
+# Group X: bidirectional tracked lookup (P-Wire-13)
+# ---------------------------------------------------------------------------
+
+
+class TestBidirectionalTrackedLookup:
+    def test_forward_and_reverse_share_backing_dict(self):
+        from src.web.v71.trading_bridge import (
+            _build_bidirectional_tracked_lookup,
+        )
+        seed = {1: "005930", 2: "000660"}
+        forward, reverse = _build_bidirectional_tracked_lookup(seed)
+        assert forward(1) == "005930"
+        assert forward(2) == "000660"
+        assert reverse("005930") == "1"
+        assert reverse("000660") == "2"
+
+    def test_reverse_returns_none_for_unknown_or_empty(self):
+        from src.web.v71.trading_bridge import (
+            _build_bidirectional_tracked_lookup,
+        )
+        seed = {1: "005930"}
+        _forward, reverse = _build_bidirectional_tracked_lookup(seed)
+        assert reverse("999999") is None
+        assert reverse("") is None
+
+    def test_none_seed_yields_empty_lookups(self):
+        from src.web.v71.trading_bridge import (
+            _build_bidirectional_tracked_lookup,
+        )
+        forward, reverse = _build_bidirectional_tracked_lookup(None)
+        assert forward(1) is None
+        assert reverse("005930") is None

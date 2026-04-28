@@ -46,5 +46,15 @@ class V71BaseCandleBuilder(Protocol):
         isolation policy mirrors V71KiwoomWebSocket)."""
         ...
 
+    def unregister_on_complete(self, callback: OnCandleCompleteFn) -> None:
+        """Idempotent removal. Pairs with :meth:`register_on_complete`
+        so subscribers (V71BoxEntryDetector etc.) can detach cleanly
+        without leaking refs into the builder's subscriber list.
+
+        Raises nothing if ``callback`` was never registered (defensive
+        for re-attach cycles where the same detector instance might be
+        unregistered twice during overlapping shutdowns)."""
+        ...
+
 
 __all__ = ["OnCandleCompleteFn", "V71BaseCandleBuilder"]

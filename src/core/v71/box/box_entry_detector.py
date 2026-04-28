@@ -5,10 +5,15 @@ Spec:
   - 02_TRADING_RULES.md §4         (buy execution)
   - 04_ARCHITECTURE.md §5.3
 
-Phase: P3.2
+Phase: P3.2 (initial); revised in Phase A Step F follow-up (P-Wire-13)
+to drop the V7.0 sync ``CandleSource`` shim and subscribe directly to
+:class:`V71CandleManager` -- V7.0 was retired in Phase A so the sync
+``subscribe_bar_complete`` Protocol is dead code.
 
 Responsibilities:
-  - subscribe to CandleManager bar-complete events for a single path
+  - subscribe to V71CandleManager bar-complete events for a single path
+  - filter incoming candles by ``timeframe`` (PATH_A → 3min, PATH_B →
+    daily) since the manager fan-outs every timeframe to every subscriber
   - on each completed candle, look up active WAITING boxes for the
     ``(stock_code, path_type)`` group from V71BoxManager
   - call :func:`evaluate_box_entry` -- never re-derives conditions
@@ -19,18 +24,18 @@ Responsibilities:
 
 One-detector-per-path: the caller picks PATH_A (3-min) or PATH_B
 (daily) when constructing. Mixing paths in a single detector is a
-mistake -- ``box.path_type`` and ``candle.timeframe`` must agree.
+mistake -- ``box.path_type`` and ``candle.timeframe`` must agree, and
+``timeframe_filter`` enforces the manager-side guard.
 """
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from collections.abc import Awaitable, Callable
-from typing import Protocol
 
 from src.core.v71.box.box_manager import BoxRecord, V71BoxManager
 from src.core.v71.candle.types import V71Candle as Candle
+from src.core.v71.candle.v71_candle_manager import V71CandleManager
 from src.core.v71.skills.box_entry_skill import (
     Box,
     EntryDecision,
@@ -38,6 +43,7 @@ from src.core.v71.skills.box_entry_skill import (
     PathType,
     evaluate_box_entry,
 )
+from src.core.v71.v71_constants import V71Timeframe
 from src.utils.feature_flags import require_enabled
 
 log = logging.getLogger(__name__)
@@ -47,19 +53,6 @@ log = logging.getLogger(__name__)
 # The detector hands the executor both the decision (with fallback metadata)
 # and the BoxRecord so the executor can mark_triggered + look up tier/stock.
 OnEntryCallback = Callable[[EntryDecision, BoxRecord], Awaitable[object]]
-
-
-class CandleSource(Protocol):
-    """Minimal interface the detector requires from CandleManager.
-
-    Concrete implementation lives in V7.0 ``src.core.candle_builder``;
-    Protocol here lets unit tests fake the subscription without pulling
-    the real subscription manager.
-    """
-
-    def subscribe_bar_complete(
-        self, callback: Callable[[Candle], None]
-    ) -> None: ...
 
 
 # stock_code -> tracked_stock_id (or None if not tracked on this path).
@@ -81,7 +74,8 @@ class V71BoxEntryDetector:
         self,
         *,
         path_type: PathType,
-        candle_source: CandleSource,
+        candle_manager: V71CandleManager,
+        timeframe_filter: V71Timeframe,
         box_manager: V71BoxManager,
         on_entry: OnEntryCallback,
         resolve_tracked_id: TrackedIdResolver,
@@ -89,7 +83,8 @@ class V71BoxEntryDetector:
     ) -> None:
         require_enabled("v71.box_system")
         self._path_type: PathType = path_type
-        self._candle_source = candle_source
+        self._candle_manager = candle_manager
+        self._timeframe_filter = timeframe_filter
         self._box_manager = box_manager
         self._on_entry = on_entry
         self._resolve_tracked_id = resolve_tracked_id
@@ -103,36 +98,44 @@ class V71BoxEntryDetector:
     # ------------------------------------------------------------------
 
     def start(self) -> None:
-        """Register the bar-complete callback with the source.
+        """Register the bar-complete callback with V71CandleManager.
 
         Idempotent: calling twice is a no-op so callers can re-arm after
         a reconnect without bookkeeping.
         """
         if self._started:
             return
-        self._candle_source.subscribe_bar_complete(self._on_bar_complete_sync)
+        self._candle_manager.register_on_complete(self._on_bar_complete_async)
         self._started = True
 
-    # ------------------------------------------------------------------
-    # Sync hook for V7.0 CandleManager
-    # ------------------------------------------------------------------
+    def stop(self) -> None:
+        """Unregister the bar-complete callback. Idempotent.
 
-    def _on_bar_complete_sync(self, candle: Candle) -> None:
-        """V7.0 CandleManager invokes this synchronously.
-
-        We schedule the async :meth:`check_entry` on the running loop
-        and swallow failures so a V7.1 bug never crashes the V7.0 pipeline.
+        Pairs with :meth:`start`. After ``stop()`` the detector no
+        longer receives bar events; the previous-candle cache is
+        retained so a subsequent ``start()`` resumes with continuity
+        (paper smoke / harness re-attach scenarios).
         """
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            log.warning(
-                "No running loop in _on_bar_complete_sync (stock=%s); "
-                "skipping bar.",
-                candle.stock_code,
-            )
+        if not self._started:
             return
-        loop.create_task(self.check_entry(candle))
+        self._candle_manager.unregister_on_complete(
+            self._on_bar_complete_async,
+        )
+        self._started = False
+
+    # ------------------------------------------------------------------
+    # Async hook for V71CandleManager
+    # ------------------------------------------------------------------
+
+    async def _on_bar_complete_async(self, candle: Candle) -> None:
+        """V71CandleManager dispatches every timeframe to every subscriber.
+
+        Filter to the timeframe this detector cares about; everything
+        else is a silent skip (normal fan-out, not an error).
+        """
+        if candle.timeframe != self._timeframe_filter:
+            return
+        await self.check_entry(candle)
 
     # ------------------------------------------------------------------
     # Core check
@@ -175,11 +178,14 @@ class V71BoxEntryDetector:
                 continue
             try:
                 outcome = await self._on_entry(decision, box_record)
-            except Exception:  # noqa: BLE001 -- one box mustn't kill the bar
-                log.exception(
-                    "on_entry callback failed for box=%s stock=%s",
-                    box_record.id,
-                    stock_code,
+            except Exception as exc:  # noqa: BLE001 -- one box mustn't kill the bar
+                # Security M2 (P-Wire-13): logger.exception leaks the full
+                # traceback and (transitively) any KiwoomAPIError body
+                # echoes that bypass P-Wire-Notify Bearer/Auth masking.
+                # Type-only log mirrors P-Wire-3/4a/12 patterns.
+                log.warning(
+                    "on_entry callback failed for box=%s stock=%s: %s",
+                    box_record.id, stock_code, type(exc).__name__,
                 )
                 continue
             outcomes.append(outcome)
@@ -236,7 +242,6 @@ class V71BoxEntryDetector:
 
 
 __all__ = [
-    "CandleSource",
     "OnEntryCallback",
     "TrackedIdResolver",
     "MarketContextProvider",

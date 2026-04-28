@@ -103,6 +103,51 @@ def test_register_on_complete_propagates_to_future_builders():
 
 
 # ---------------------------------------------------------------------------
+# unregister_on_complete (Phase A Step F follow-up — security H1)
+# ---------------------------------------------------------------------------
+
+
+def test_unregister_on_complete_removes_from_manager_and_builders():
+    mgr, _kiwoom, _ws = _factory()
+    mgr.add_stock("005930")
+    cb = AsyncMock()
+    mgr.register_on_complete(cb)
+    assert cb in mgr._subscribers
+
+    mgr.unregister_on_complete(cb)
+    assert cb not in mgr._subscribers
+    assert cb not in mgr.get_three_minute_builder("005930")._subscribers
+    assert cb not in mgr.get_daily_builder("005930")._subscribers
+
+
+def test_unregister_on_complete_unknown_callback_is_noop():
+    mgr, _kiwoom, _ws = _factory()
+    mgr.add_stock("005930")
+    cb = AsyncMock()
+    # Never registered -- removal must not raise.
+    mgr.unregister_on_complete(cb)
+
+
+def test_unregister_then_register_round_trip_keeps_subscriber_list_clean():
+    """Security H1 (P-Wire-13): attach -> detach -> re-attach must
+    leave a clean subscriber list (no leak)."""
+    mgr, _kiwoom, _ws = _factory()
+    mgr.add_stock("005930")
+    cb1 = AsyncMock()
+
+    mgr.register_on_complete(cb1)
+    mgr.unregister_on_complete(cb1)
+    cb2 = AsyncMock()
+    mgr.register_on_complete(cb2)
+
+    assert cb1 not in mgr._subscribers
+    assert cb2 in mgr._subscribers
+    builder = mgr.get_three_minute_builder("005930")
+    assert cb1 not in builder._subscribers
+    assert cb2 in builder._subscribers
+
+
+# ---------------------------------------------------------------------------
 # PRICE_TICK routing
 # ---------------------------------------------------------------------------
 
