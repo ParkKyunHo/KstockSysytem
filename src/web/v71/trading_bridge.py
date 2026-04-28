@@ -29,7 +29,7 @@ import contextlib
 import logging
 import re
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 from uuid import UUID
 
@@ -455,6 +455,13 @@ class _TradingEngineHandle:
         self.position_reconciler: Any = None
         self.restart_recovery: Any = None
         self.restart_recovery_report: Any = None
+        # P-Wire-12: V71CandleManager (PATH_A 3분봉 + PATH_B 일봉 dispatcher).
+        # Owns the PRICE_TICK handler on V71KiwoomWebSocket and the EOD
+        # asyncio.Task scheduler. ``candle_history_task`` is the
+        # background ka10081 priming task (architect Q6 -- non-blocking
+        # boot). Both must release before kiwoom_websocket.aclose().
+        self.candle_manager: Any = None
+        self.candle_history_task: asyncio.Task[None] | None = None
 
 
 # Default reconciliation cadence (PRD 02_TRADING_RULES.md §7.1 -- "매 5분마다").
@@ -1784,6 +1791,105 @@ async def _build_exit_orchestrator(
     return calculator, orchestrator
 
 
+# P-Wire-12 (Phase A Step F): V71CandleManager wiring constants.
+# KRX market sessions are KST; AWS Lightsail typically runs UTC, so EOD
+# base_date and trigger comparisons must explicitly use KST. The V71
+# CandleManager's own ``_default_eod_date`` / ``_is_after_hhmm`` were
+# patched to KST in the same commit -- this constant exists for the
+# bridge-level history priming on attach.
+_CANDLE_KST = timezone(timedelta(hours=9))
+
+
+async def _build_candle_manager(
+    handle: _TradingEngineHandle,
+) -> None:
+    """Construct V71CandleManager + register PRICE_TICK handler + add
+    tracked stocks + start EOD scheduler. Background-launches
+    ``fetch_history_for_all`` so boot stays non-blocking.
+
+    Cross-flag invariant (architect Q1): depends on P-Wire-1
+    (``v71.kiwoom_exchange``) + P-Wire-5 (``v71.kiwoom_websocket``).
+    V71CandleManager.start() registers a PRICE_TICK handler on the
+    WebSocket and EOD fetch needs the kiwoom_client for ka10081 -- the
+    manager is dead on arrival without both.
+
+    Architect Q3 (cache=None gate): when ``v71.buy_executor_v71`` is
+    OFF, ``handle.tracked_stock_cache`` is None. Log WARNING and skip
+    the add_stock loop -- V71CandleManager is constructed and ready but
+    has no stocks until something else calls ``add_stock`` later.
+
+    Architect Q6 (boot priming): ``fetch_history_for_all`` primes the
+    daily candle cache so the first PATH_B 09:01 evaluation has bars
+    to work with. Run as a background task so a slow Kiwoom (4 req/sec
+    real / 0.33 req/sec paper) doesn't gate lifespan boot.
+    """
+    from src.utils.feature_flags import is_enabled
+
+    missing = [
+        flag
+        for flag in ("v71.kiwoom_exchange", "v71.kiwoom_websocket")
+        if not is_enabled(flag)
+    ]
+    if missing:
+        raise RuntimeError(
+            "trading_bridge: v71.candle_builder enabled but required "
+            f"dependencies are OFF: {missing}",
+        )
+    if handle.kiwoom_client is None:
+        raise RuntimeError(
+            "trading_bridge: v71.candle_builder requires kiwoom_client "
+            "(v71.kiwoom_exchange must be wired)",
+        )
+    if handle.kiwoom_websocket is None:
+        raise RuntimeError(
+            "trading_bridge: v71.candle_builder requires kiwoom_websocket "
+            "(v71.kiwoom_websocket must be wired)",
+        )
+
+    from src.core.v71.candle.v71_candle_manager import V71CandleManager
+
+    manager = V71CandleManager(
+        kiwoom_client=handle.kiwoom_client,
+        kiwoom_websocket=handle.kiwoom_websocket,
+    )
+    await manager.start()
+    # Security M1 (P-Wire-12): once start() registers the WS PRICE_TICK
+    # handler the manager owns external state. If a downstream step
+    # fails before the manager is attached to the handle, the lifespan
+    # detach path can't reach it and the WS handler leaks. Wrap the
+    # remaining steps so any failure rolls back the manager.
+    try:
+        if handle.tracked_stock_cache is None:
+            logger.warning(
+                "trading_bridge: v71.candle_builder enabled but "
+                "tracked_stock_cache is None (v71.buy_executor_v71 OFF) "
+                "-- 0 stocks tracked until BuyExecutor wires",
+            )
+        else:
+            for _tracked_id, stock_code in handle.tracked_stock_cache.items():
+                try:
+                    manager.add_stock(stock_code)
+                except Exception as exc:  # noqa: BLE001 -- backstop, idempotent
+                    logger.warning(
+                        "trading_bridge: candle_manager.add_stock(%s) "
+                        "failed: %s",
+                        stock_code, type(exc).__name__,
+                    )
+
+        await manager.start_eod_scheduler(interval_seconds=60.0)
+
+        handle.candle_manager = manager
+        base_date = datetime.now(_CANDLE_KST).strftime("%Y%m%d")
+        handle.candle_history_task = asyncio.create_task(
+            manager.fetch_history_for_all(base_date=base_date),
+            name="v71_candle_history_priming",
+        )
+    except BaseException:
+        with contextlib.suppress(Exception):
+            await manager.stop()
+        raise
+
+
 def _build_vi_monitor(handle: _TradingEngineHandle) -> Any:
     """Construct V71ViMonitor (PRD 02 §10 VI state machine).
 
@@ -2189,6 +2295,34 @@ async def attach_trading_engine() -> _TradingEngineHandle:
             "-- realtime channels not subscribed",
         )
 
+    # P-Wire-12 (Phase A Step F): V71CandleManager. Must run AFTER
+    # P-Wire-5 wired the WS so the PRICE_TICK handler registration lands
+    # on a real client, and BEFORE P-Wire-11 restart_recovery resubscribes
+    # market data so any new subscriptions land in the candle dispatcher.
+    # Wired BEFORE P-Wire-6 (exit_orchestrator) so future BoxEntryDetector
+    # subscriber registration is symmetric with the orchestrator's PRICE
+    # handler -- both consume the same WS source for different concerns.
+    if is_enabled("v71.candle_builder"):
+        try:
+            await _build_candle_manager(handle)
+        except Exception as exc:  # noqa: BLE001 -- boot failure surfaces
+            logger.error(
+                "trading_bridge: v71.candle_builder enabled but "
+                "construction failed: %s",
+                type(exc).__name__,
+            )
+            raise
+        logger.info(
+            "trading_bridge: V71CandleManager wired "
+            "(stocks=%d, eod_interval=60s, history_priming=running)",
+            len(handle.candle_manager.tracked_stocks()),
+        )
+    else:
+        logger.warning(
+            "trading_bridge: feature flag 'v71.candle_builder' disabled "
+            "-- 3분봉 + 일봉 dispatcher off (PATH_A/B detection blocked)",
+        )
+
     # P-Wire-6: V71ExitOrchestrator (PRICE_TICK -> ExitCalculator ->
     # ExitExecutor pipeline). Must run AFTER P-Wire-5 wired the WS so
     # ``register_handler`` lands on a real client; the orchestrator
@@ -2439,6 +2573,28 @@ async def detach_trading_engine(handle: _TradingEngineHandle) -> None:
             )
     handle.exit_orchestrator = None
     handle.exit_calculator = None
+
+    # P-Wire-12 (Phase A Step F): stop candle manager + cancel boot
+    # priming task BEFORE buy_executor/exit_executor nullify (subscribers
+    # could still touch them) and BEFORE notification + WebSocket
+    # shutdown. ``stop()`` flushes the final 3분봉 bucket while
+    # subscribers remain alive; the priming task is cancelled first so
+    # an in-flight ka10081 fetch doesn't outlive the kiwoom_client.
+    if handle.candle_history_task is not None:
+        handle.candle_history_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await handle.candle_history_task
+        handle.candle_history_task = None
+    if handle.candle_manager is not None:
+        try:
+            await handle.candle_manager.stop()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "trading_bridge: candle_manager.stop() failed: %s",
+                type(exc).__name__,
+            )
+        handle.candle_manager = None
+
     handle.buy_executor = None
     handle.exit_executor = None
     handle.vi_monitor = None

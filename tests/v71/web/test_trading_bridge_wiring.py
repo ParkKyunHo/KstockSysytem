@@ -1975,3 +1975,262 @@ class TestExitOrchestratorWiring:
         assert wired_vi.__self__ is orch
         assert wired_pc.__func__ is type(orch).on_position_closed
         assert wired_vi.__func__ is type(orch).on_vi_resumed
+
+
+# ---------------------------------------------------------------------------
+# Group T: P-Wire-12 V71CandleManager wiring (Phase A Step F)
+# ---------------------------------------------------------------------------
+
+
+def _make_candle_handle():
+    """Stubbed handle ready for direct ``_build_candle_manager(handle)``."""
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock, MagicMock
+
+    from src.web.v71.trading_bridge import _TradingEngineHandle
+
+    handle = _TradingEngineHandle()
+    kiwoom = MagicMock()
+    # ka10081 returns empty so fetch_history_for_all completes fast
+    kiwoom.get_daily_chart = AsyncMock(
+        return_value=SimpleNamespace(data={"stk_dt_pole_chart_qry": []}),
+    )
+    ws = MagicMock()
+    ws.register_handler = MagicMock()
+    handle.kiwoom_client = kiwoom
+    handle.kiwoom_websocket = ws
+    handle.tracked_stock_cache = {}
+    return handle
+
+
+async def _shutdown_candle_handle(handle):
+    """Cleanup helper for tests that build candle_manager directly."""
+    if handle.candle_history_task is not None:
+        handle.candle_history_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await handle.candle_history_task
+        handle.candle_history_task = None
+    if handle.candle_manager is not None:
+        await handle.candle_manager.stop()
+        handle.candle_manager = None
+
+
+class TestCandleManagerWiring:
+    """P-Wire-12 (Phase A Step F) -- V71CandleManager attach/detach."""
+
+    async def test_candle_builder_flag_off_leaves_slots_none(self):
+        os.environ["V71_FF__V71__CANDLE_BUILDER"] = "false"
+        ff.reload()
+        from src.web.v71.trading_bridge import (
+            attach_trading_engine,
+            detach_trading_engine,
+        )
+
+        handle = await attach_trading_engine()
+        try:
+            assert handle.candle_manager is None
+            assert handle.candle_history_task is None
+        finally:
+            await detach_trading_engine(handle)
+
+    async def test_kiwoom_exchange_off_raises(self):
+        os.environ["V71_FF__V71__CANDLE_BUILDER"] = "true"
+        os.environ["V71_FF__V71__KIWOOM_EXCHANGE"] = "false"
+        os.environ["V71_FF__V71__KIWOOM_WEBSOCKET"] = "true"
+        ff.reload()
+        from src.web.v71.trading_bridge import (
+            _build_candle_manager,
+            _TradingEngineHandle,
+        )
+        handle = _TradingEngineHandle()
+
+        with pytest.raises(RuntimeError, match=r"v71\.kiwoom_exchange"):
+            await _build_candle_manager(handle)
+
+    async def test_kiwoom_websocket_off_raises(self):
+        os.environ["V71_FF__V71__CANDLE_BUILDER"] = "true"
+        os.environ["V71_FF__V71__KIWOOM_EXCHANGE"] = "true"
+        os.environ["V71_FF__V71__KIWOOM_WEBSOCKET"] = "false"
+        ff.reload()
+        from src.web.v71.trading_bridge import (
+            _build_candle_manager,
+            _TradingEngineHandle,
+        )
+        handle = _TradingEngineHandle()
+
+        with pytest.raises(RuntimeError, match=r"v71\.kiwoom_websocket"):
+            await _build_candle_manager(handle)
+
+    async def test_build_raises_when_kiwoom_client_none(self):
+        from unittest.mock import MagicMock
+        os.environ["V71_FF__V71__CANDLE_BUILDER"] = "true"
+        os.environ["V71_FF__V71__KIWOOM_EXCHANGE"] = "true"
+        os.environ["V71_FF__V71__KIWOOM_WEBSOCKET"] = "true"
+        ff.reload()
+        from src.web.v71.trading_bridge import (
+            _build_candle_manager,
+            _TradingEngineHandle,
+        )
+        handle = _TradingEngineHandle()
+        handle.kiwoom_client = None
+        handle.kiwoom_websocket = MagicMock()
+
+        with pytest.raises(RuntimeError, match="requires kiwoom_client"):
+            await _build_candle_manager(handle)
+
+    async def test_build_raises_when_kiwoom_websocket_none(self):
+        from unittest.mock import MagicMock
+        os.environ["V71_FF__V71__CANDLE_BUILDER"] = "true"
+        os.environ["V71_FF__V71__KIWOOM_EXCHANGE"] = "true"
+        os.environ["V71_FF__V71__KIWOOM_WEBSOCKET"] = "true"
+        ff.reload()
+        from src.web.v71.trading_bridge import (
+            _build_candle_manager,
+            _TradingEngineHandle,
+        )
+        handle = _TradingEngineHandle()
+        handle.kiwoom_client = MagicMock()
+        handle.kiwoom_websocket = None
+
+        with pytest.raises(RuntimeError, match="requires kiwoom_websocket"):
+            await _build_candle_manager(handle)
+
+    async def test_cache_none_logs_warning_and_skips_add_stock(self, caplog):
+        import logging
+        os.environ["V71_FF__V71__CANDLE_BUILDER"] = "true"
+        os.environ["V71_FF__V71__KIWOOM_EXCHANGE"] = "true"
+        os.environ["V71_FF__V71__KIWOOM_WEBSOCKET"] = "true"
+        ff.reload()
+        from src.web.v71.trading_bridge import _build_candle_manager
+        handle = _make_candle_handle()
+        handle.tracked_stock_cache = None
+
+        with caplog.at_level(logging.WARNING):
+            await _build_candle_manager(handle)
+        try:
+            assert handle.candle_manager is not None
+            assert handle.candle_manager.tracked_stocks() == ()
+            assert "tracked_stock_cache is None" in caplog.text
+        finally:
+            await _shutdown_candle_handle(handle)
+
+    async def test_cache_empty_dict_silent_no_warning(self, caplog):
+        import logging
+        os.environ["V71_FF__V71__CANDLE_BUILDER"] = "true"
+        os.environ["V71_FF__V71__KIWOOM_EXCHANGE"] = "true"
+        os.environ["V71_FF__V71__KIWOOM_WEBSOCKET"] = "true"
+        ff.reload()
+        from src.web.v71.trading_bridge import _build_candle_manager
+        handle = _make_candle_handle()
+        handle.tracked_stock_cache = {}
+
+        with caplog.at_level(logging.WARNING):
+            await _build_candle_manager(handle)
+        try:
+            assert handle.candle_manager.tracked_stocks() == ()
+            assert "tracked_stock_cache is None" not in caplog.text
+        finally:
+            await _shutdown_candle_handle(handle)
+
+    async def test_cache_dict_adds_each_stock(self):
+        os.environ["V71_FF__V71__CANDLE_BUILDER"] = "true"
+        os.environ["V71_FF__V71__KIWOOM_EXCHANGE"] = "true"
+        os.environ["V71_FF__V71__KIWOOM_WEBSOCKET"] = "true"
+        ff.reload()
+        from src.web.v71.trading_bridge import _build_candle_manager
+        handle = _make_candle_handle()
+        handle.tracked_stock_cache = {1: "005930", 2: "000660"}
+
+        await _build_candle_manager(handle)
+        try:
+            tracked = set(handle.candle_manager.tracked_stocks())
+            assert tracked == {"005930", "000660"}
+        finally:
+            await _shutdown_candle_handle(handle)
+
+    async def test_add_stock_failure_isolated_per_stock(
+        self, caplog, monkeypatch,
+    ):
+        import logging
+        os.environ["V71_FF__V71__CANDLE_BUILDER"] = "true"
+        os.environ["V71_FF__V71__KIWOOM_EXCHANGE"] = "true"
+        os.environ["V71_FF__V71__KIWOOM_WEBSOCKET"] = "true"
+        ff.reload()
+        from src.core.v71.candle.v71_candle_manager import V71CandleManager
+        real_add = V71CandleManager.add_stock
+
+        def fake_add(self, code):
+            if code == "FAILME":
+                raise RuntimeError("simulated_per_stock_failure")
+            return real_add(self, code)
+
+        monkeypatch.setattr(V71CandleManager, "add_stock", fake_add)
+        from src.web.v71.trading_bridge import _build_candle_manager
+        handle = _make_candle_handle()
+        handle.tracked_stock_cache = {1: "FAILME", 2: "000660"}
+
+        with caplog.at_level(logging.WARNING):
+            await _build_candle_manager(handle)
+        try:
+            tracked = set(handle.candle_manager.tracked_stocks())
+            assert "000660" in tracked
+            assert "FAILME" not in tracked
+            assert "candle_manager.add_stock(FAILME) failed" in caplog.text
+        finally:
+            await _shutdown_candle_handle(handle)
+
+    async def test_history_priming_runs_in_background(self):
+        os.environ["V71_FF__V71__CANDLE_BUILDER"] = "true"
+        os.environ["V71_FF__V71__KIWOOM_EXCHANGE"] = "true"
+        os.environ["V71_FF__V71__KIWOOM_WEBSOCKET"] = "true"
+        ff.reload()
+        from src.web.v71.trading_bridge import _build_candle_manager
+        handle = _make_candle_handle()
+
+        await _build_candle_manager(handle)
+        try:
+            assert handle.candle_history_task is not None
+            assert isinstance(handle.candle_history_task, asyncio.Task)
+            # Empty cache -> task completes quickly. We cancel in cleanup
+            # rather than wait so the test stays fast and deterministic.
+        finally:
+            await _shutdown_candle_handle(handle)
+            assert handle.candle_history_task is None
+            assert handle.candle_manager is None
+
+    async def test_attach_failure_after_start_calls_manager_stop(
+        self, monkeypatch,
+    ):
+        """Security M1 -- start() registered the WS handler. If a later
+        step raises, manager.stop() must run so the handler is released
+        before the lifespan abort surfaces."""
+        os.environ["V71_FF__V71__CANDLE_BUILDER"] = "true"
+        os.environ["V71_FF__V71__KIWOOM_EXCHANGE"] = "true"
+        os.environ["V71_FF__V71__KIWOOM_WEBSOCKET"] = "true"
+        ff.reload()
+        from src.core.v71.candle.v71_candle_manager import V71CandleManager
+
+        async def boom(*_args, **_kwargs):
+            raise RuntimeError("simulated_eod_failure")
+
+        monkeypatch.setattr(
+            V71CandleManager, "start_eod_scheduler", boom,
+        )
+        stop_calls: list[str] = []
+        original_stop = V71CandleManager.stop
+
+        async def spy_stop(self):
+            stop_calls.append("stop")
+            await original_stop(self)
+
+        monkeypatch.setattr(V71CandleManager, "stop", spy_stop)
+        from src.web.v71.trading_bridge import _build_candle_manager
+        handle = _make_candle_handle()
+
+        with pytest.raises(RuntimeError, match="simulated_eod_failure"):
+            await _build_candle_manager(handle)
+        # Manager NOT attached to handle (rolled back)
+        assert handle.candle_manager is None
+        assert handle.candle_history_task is None
+        # But stop() was invoked for cleanup (security M1)
+        assert stop_calls == ["stop"]

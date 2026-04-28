@@ -30,6 +30,7 @@ import asyncio
 import contextlib
 import logging
 from collections.abc import Awaitable, Callable
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from src.core.v71.candle.types import V71Candle, V71Tick, message_to_tick
@@ -39,6 +40,12 @@ from src.core.v71.candle.v71_three_minute_builder import (
 )
 
 log = logging.getLogger(__name__)
+
+
+# KRX trades in KST. AWS Lightsail (operations target) typically runs UTC,
+# so EOD scheduling and base_date calculation must explicitly use KST to
+# avoid ka10081 fetching the wrong date or never firing the 15:35 trigger.
+_KST = timezone(timedelta(hours=9))
 
 
 OnCandleCompleteFn = Callable[[V71Candle], Awaitable[None]]
@@ -273,17 +280,26 @@ class V71CandleManager:
 
 
 def _default_eod_date() -> str:
-    """Default EOD base_date provider: today (system local) as YYYYMMDD."""
-    from datetime import datetime
-    return datetime.now().strftime("%Y%m%d")
+    """Default EOD base_date provider: today in KST as YYYYMMDD.
+
+    KRX market sessions and the ka10081 EOD endpoint are KST-anchored.
+    Hosts running UTC (default AWS Lightsail) must still emit KST-dated
+    ``base_date`` -- otherwise UTC midnight rolls the date 9h early and
+    the EOD fetch arrives at the wrong day during pre-market hours.
+    """
+    return datetime.now(_KST).strftime("%Y%m%d")
 
 
 def _is_after_hhmm(hhmm: str) -> bool:
-    """True if current local time >= hhmm. Format ``HH:MM``."""
-    from datetime import datetime
+    """True if current KST time >= hhmm. Format ``HH:MM``.
+
+    KST-anchored so the 15:35 EOD trigger fires correctly even when the
+    process runs in UTC. Without this fix a UTC host's local clock would
+    only reach 15:35 at 24:35 KST (post-midnight, wrong date).
+    """
     h, m = hhmm.split(":", 1)
     target_minutes = int(h) * 60 + int(m)
-    now = datetime.now()
+    now = datetime.now(_KST)
     current_minutes = now.hour * 60 + now.minute
     return current_minutes >= target_minutes
 

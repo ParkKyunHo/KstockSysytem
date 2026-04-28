@@ -189,3 +189,83 @@ async def test_fetch_history_for_all_sums_returned_counts():
     mgr.get_daily_builder("000660").fetch_history = AsyncMock(return_value=15)
     total = await mgr.fetch_history_for_all(base_date="20260427")
     assert total == 25
+
+
+# ---------------------------------------------------------------------------
+# KST timezone helpers (Phase A Step F P-Wire-12)
+# ---------------------------------------------------------------------------
+#
+# Purpose: prove that EOD scheduling and base_date calculation align with
+# the KST market clock even when the host OS runs UTC (the AWS Lightsail
+# default). Patches ``datetime`` inside the candle manager module so
+# ``datetime.now(_KST)`` resolves deterministically.
+
+
+class _FakeDateTime:
+    """``datetime`` stand-in returning a fixed UTC instant for ``now()``.
+
+    ``now(tz)`` honours ``tz.astimezone`` like the real class so callers
+    that pass ``_KST`` receive a KST-shifted clock.
+    """
+
+    _frozen_utc: datetime
+
+    @classmethod
+    def now(cls, tz=None):
+        utc = cls._frozen_utc
+        if tz is not None:
+            return utc.astimezone(tz)
+        return utc.replace(tzinfo=None)
+
+    def __new__(cls, *args, **kwargs):
+        return datetime(*args, **kwargs)
+
+
+def _patch_datetime(monkeypatch, frozen_utc: datetime) -> None:
+    import src.core.v71.candle.v71_candle_manager as candle_mod
+
+    fake = type(
+        "_FakeDateTimeBound",
+        (_FakeDateTime,),
+        {"_frozen_utc": frozen_utc},
+    )
+    monkeypatch.setattr(candle_mod, "datetime", fake)
+
+
+def test_default_eod_date_returns_kst_today_when_host_is_utc(monkeypatch):
+    # UTC 00:30 == KST 09:30 same day. Naive system local on a UTC host
+    # would also emit "20260428"; this test pins the OK case.
+    frozen = datetime(2026, 4, 28, 0, 30, 0, tzinfo=timezone.utc)
+    _patch_datetime(monkeypatch, frozen)
+    from src.core.v71.candle.v71_candle_manager import _default_eod_date
+    assert _default_eod_date() == "20260428"
+
+
+def test_default_eod_date_rolls_to_next_day_in_kst(monkeypatch):
+    # UTC 22:00 == KST 07:00 next day. Naive system local on UTC would
+    # emit "20260428" (the previous KST date). KST-aware path emits the
+    # next day -- this is the breaking case the patch fixes.
+    frozen = datetime(2026, 4, 28, 22, 0, 0, tzinfo=timezone.utc)
+    _patch_datetime(monkeypatch, frozen)
+    from src.core.v71.candle.v71_candle_manager import _default_eod_date
+    assert _default_eod_date() == "20260429"
+
+
+@pytest.mark.parametrize(
+    "utc_h,utc_m,target_hhmm,expected",
+    [
+        # KST 15:34 (UTC 06:34) < 15:35 -> False
+        (6, 34, "15:35", False),
+        # KST 15:35 (UTC 06:35) >= 15:35 -> True (boundary)
+        (6, 35, "15:35", True),
+        # KST 15:36 (UTC 06:36) >= 15:35 -> True
+        (6, 36, "15:35", True),
+    ],
+)
+def test_is_after_hhmm_boundary_at_kst_15_35(
+    monkeypatch, utc_h, utc_m, target_hhmm, expected,
+):
+    frozen = datetime(2026, 4, 28, utc_h, utc_m, 0, tzinfo=timezone.utc)
+    _patch_datetime(monkeypatch, frozen)
+    from src.core.v71.candle.v71_candle_manager import _is_after_hhmm
+    assert _is_after_hhmm(target_hhmm) is expected

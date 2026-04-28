@@ -4441,4 +4441,113 @@ V7.0 의존 제거에 맞춰 4 테스트 갱신:
 
 Step F — P-Wire-12 V71CandleManager wiring (`src/web/v71/trading_bridge.py` attach/detach + `v71.candle_builder` flag 가드 + `tracked_stock_cache` loop add_stock + `start_eod_scheduler` 60s + detach stop FIRST). **12단계 워크플로우 적용** (architect → 구현 → security + test 병렬 → 회귀 → harness → ruff → commit).
 
+### Step F: P-Wire-12 V71CandleManager wiring (2026-04-28, Phase A 완료)
+
+**Commit**: TBD-step-f
+**규모**: 4 files +518 -7
+
+#### 12단계 워크플로우 진행
+
+| 단계 | 도구 | 결과 |
+|------|------|------|
+| 1 | PRD + 코드 컨텍스트 로드 | V71CandleManager API + trading_bridge P-Wire-1~11 패턴 + tracked_stock_cache 의존 |
+| 2 | **v71-architect 에이전트** | WARNING 4 + 권고 8 + FAIL 0. Q1~Q8 모든 결정 (cross-flag invariant / wire 위치 P-Wire-5 직후 / cache=None 가드 / detach stop FIRST / register_on_complete X 후속 / fetch_history background Task / KST 정정 / raise on build failure) |
+| 3 | 구현 | V71CandleManager `_default_eod_date` + `_is_after_hhmm` KST 정정 + `_TradingEngineHandle` 슬롯 2개 (`candle_manager` + `candle_history_task`) + `_build_candle_manager(handle)` helper + attach/detach 흐름 통합 |
+| 4 | **security-reviewer + test-strategy 병렬** | security: HIGH 0 + MEDIUM 1 (M1 orphan manager) + LOW 2 / test: 12 케이스 권고 + Given-When-Then 골격 + freezegun 부재 → monkeypatch 패턴 |
+| 5 | 보안 패치 | M1 즉시 반영 — `await manager.start()` 후 try/except 래퍼 → 실패 시 `manager.stop()` 호출하여 WS handler leak 차단 |
+| 6 | 테스트 작성 | 16 신규 (T1~T11 wiring 11 + KST timezone 5 parametrize) |
+| 7 | 실행 + 회귀 디버그 | 11/11 + 5/5 PASS first try |
+| 8 | 6 harness 실행 | PASS |
+| 9 | ruff lint | 7 신규 issue → `ruff --fix` 5개 자동 수정 + ARG001 2개 수동 (`*_args, **_kwargs`) → baseline 163 동등 |
+| 10 | V7.1 전체 회귀 | 1295/1295 PASS (1279 + 16) |
+| 11 | commit (no push) | (이번 commit) |
+| 12 | WORK_LOG + work-context + memory 갱신 | (이 entry) |
+
+#### V7.1 timezone 정정 (`v71_candle_manager.py`)
+
+**Why**: AWS Lightsail 운영 환경은 보통 UTC. V7.0 시점의 system local time 기반 `_default_eod_date` / `_is_after_hhmm`은 UTC 호스트에서 ka10081 base_date 잘못 계산 + 15:35 KST EOD trigger 미발화 → NFR1 위반.
+
+```python
+_KST = timezone(timedelta(hours=9))
+
+def _default_eod_date() -> str:
+    return datetime.now(_KST).strftime("%Y%m%d")
+
+def _is_after_hhmm(hhmm: str) -> bool:
+    ...
+    now = datetime.now(_KST)
+    ...
+```
+
+#### `_build_candle_manager(handle)` helper
+
+```python
+async def _build_candle_manager(handle: _TradingEngineHandle) -> None:
+    # cross-flag invariant (architect Q1)
+    missing = [...]
+    if missing: raise RuntimeError(...)
+    if handle.kiwoom_client is None: raise RuntimeError(...)
+    if handle.kiwoom_websocket is None: raise RuntimeError(...)
+
+    manager = V71CandleManager(...)
+    await manager.start()
+    try:  # security M1 — orphan rollback
+        if handle.tracked_stock_cache is None:
+            logger.warning("...cache None ...")
+        else:
+            for _id, stock_code in handle.tracked_stock_cache.items():
+                try: manager.add_stock(stock_code)
+                except Exception: logger.warning(...)
+        await manager.start_eod_scheduler(interval_seconds=60.0)
+        handle.candle_manager = manager
+        base_date = datetime.now(_CANDLE_KST).strftime("%Y%m%d")
+        handle.candle_history_task = asyncio.create_task(
+            manager.fetch_history_for_all(base_date=base_date),
+            name="v71_candle_history_priming",
+        )
+    except BaseException:
+        with contextlib.suppress(Exception): await manager.stop()
+        raise
+```
+
+#### attach/detach 통합
+
+- attach: P-Wire-5 (kiwoom_websocket) 직후 + P-Wire-6 (exit_orchestrator) 이전
+- detach: orchestrator.stop() 직후 + buy_executor/exit_executor nullify 이전 — `candle_history_task.cancel()` FIRST + `manager.stop()` (flush 3분봉 dispatch) → notification.stop → ws.aclose → kiwoom_client.aclose
+
+#### 테스트 16 신규 (T1~T11 wiring + 5 KST)
+
+`tests/v71/web/test_trading_bridge_wiring.py` Group T (`TestCandleManagerWiring`):
+- T1 flag OFF → slots None
+- T2 kiwoom_exchange OFF → raise
+- T3 kiwoom_websocket OFF → raise
+- T4 kiwoom_client=None 직접 가드 → raise
+- T5 kiwoom_websocket=None 직접 가드 → raise
+- T6 cache=None → WARNING + skip
+- T7 cache={} → silent
+- T8 cache=정상 → add_stock 모두 호출
+- T9 add_stock per-call 격리 (1건 fail → 나머지 OK + WARNING)
+- T10 fetch_history_for_all background Task launched
+- T11 attach failure → manager.stop() rollback (security M1)
+
+`tests/v71/candle/test_candle_manager.py` KST timezone:
+- `_default_eod_date` UTC 00:30 → KST 09:30 same day
+- `_default_eod_date` UTC 22:00 → KST 07:00 next day (rollover)
+- `_is_after_hhmm` parametrize boundary at KST 15:35 (3 cases)
+
+#### 검증
+
+- 단위 테스트: 11 wiring + 5 KST = 16 신규 PASS
+- V7.1 전체 회귀: **1295/1295** PASS (1279 → 1295)
+- 6 harness: PASS
+- ruff: 163 errors (Step E baseline 동등, 신규 issue 0)
+
+#### 다음
+
+**Phase A 완료**. V7.0 → V7.1 단독 운영 전환 끝. 후속:
+- AWS Lightsail 정리 (배포 직전 사용자 위임 정책)
+- production .env 검증 + Telegram bot 재활성화
+- Phase 7 paper trade 또는 production 직접 진입 (사용자 결정: paper skip)
+- BoxEntryDetector subscriber wiring (`candle_manager.register_on_complete`) — 별도 단위로 추적
+
 ---
