@@ -376,6 +376,15 @@ class _TradingEngineHandle:
         # asyncio.Task background loop -- detach cancels + awaits.
         self.reconciler: Any = None
         self.reconciler_task: asyncio.Task[None] | None = None
+        # P-Wire-3: Notification stack (feature flag
+        # ``v71.notification_v71``). ``notification_service.stop()`` must
+        # run BEFORE ``kiwoom_client.aclose()`` so the worker drains
+        # cleanly. Repository / queue / circuit breaker are stateless
+        # references kept for handle inspection.
+        self.notification_repository: Any = None
+        self.notification_queue: Any = None
+        self.notification_circuit_breaker: Any = None
+        self.notification_service: Any = None
 
 
 # Default reconciliation cadence (PRD 02_TRADING_RULES.md §7.1 -- "매 5분마다").
@@ -466,6 +475,132 @@ def _build_reconciler(handle: _TradingEngineHandle) -> Any:
         db_session_factory=db.session,
         apply_mode=V71ReconciliationApplyMode.SIMPLE_APPLY,
     )
+
+
+class _AsyncioRealClock:
+    """Production :class:`Clock` impl wrapping ``asyncio.sleep`` + UTC ``now``.
+
+    Defined here so multiple V7.1 background services (notification
+    worker, daily summary scheduler, etc.) share a single concrete
+    clock. ``Clock`` Protocol lives at
+    ``src.core.v71.strategies.v71_buy_executor:Clock``; tests inject
+    fakes, production wires this class.
+    """
+
+    def now(self) -> datetime:
+        return datetime.now(timezone.utc)
+
+    async def sleep(self, seconds: float) -> None:
+        await asyncio.sleep(seconds)
+
+    async def sleep_until(self, target: datetime) -> None:
+        delta = (target - self.now()).total_seconds()
+        if delta > 0:
+            await asyncio.sleep(delta)
+
+
+async def _build_pg_notification_execute() -> Any:
+    """Adapter shim: SQLAlchemy ``AsyncSession.execute`` -> asyncpg-style
+    ``(sql, *params) -> rows | rowcount`` callable consumed by
+    :class:`PostgresNotificationRepository`.
+
+    Two transforms:
+
+      * ``$1, $2, ...`` placeholders -> SQLAlchemy named binds
+        (``:p1, :p2, ...``). The substitution is right-to-left so
+        ``$10`` does not collide with ``$1``.
+      * Result shape: returns ``list(result.mappings().all())`` for
+        SELECT, ``result.rowcount`` for INSERT/UPDATE/DELETE. The repo
+        only treats ``expire_stale`` as int; everything else either
+        ignores the return or expects rows.
+    """
+    from sqlalchemy import text
+
+    from src.database.connection import get_db_manager
+
+    db = get_db_manager()
+
+    async def execute(sql: str, *params: Any) -> Any:
+        named = {f"p{i}": v for i, v in enumerate(params, 1)}
+        rewritten = sql
+        for i in range(len(params), 0, -1):
+            rewritten = rewritten.replace(f"${i}", f":p{i}")
+        async with db.session() as session:
+            result = await session.execute(text(rewritten), named)
+            if result.returns_rows:
+                return list(result.mappings().all())
+            return result.rowcount
+
+    return execute
+
+
+def _build_telegram_send_fn() -> Any:
+    """Wrap V7.0 ``TelegramBot.send_message`` into the V7.1
+    ``TelegramSendFn`` callable contract.
+
+    Returns ``None`` when ``TELEGRAM_BOT_TOKEN`` / ``TELEGRAM_CHAT_ID``
+    are missing -- the notification service then operates in *queue
+    only* mode (records persisted, worker not started). This is the
+    fail-secure path used during paper smoke + early Phase 7 work
+    before the Telegram bot is reactivated.
+
+    parse_mode is intentionally not forwarded -- CLAUDE.md Part 1.1
+    forbids it, and V7.0 TelegramBot already guards (defence in depth).
+    """
+    import os
+
+    bot_token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
+    chat_id = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
+    if not bot_token or not chat_id:
+        logger.warning(
+            "trading_bridge: TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID missing "
+            "-- notification service runs in queue-only mode (no delivery)"
+        )
+        return None
+
+    from src.notification.telegram import TelegramBot
+
+    bot = TelegramBot()
+
+    async def send(text: str) -> bool:
+        return await bot.send_message(text)
+
+    return send
+
+
+def _build_notification_stack() -> dict[str, Any]:
+    """P-Wire-3: build the V71NotificationService and its dependencies.
+
+    No external dependency on kiwoom (independent of P-Wire-1). The
+    service worker is started by the caller after the stack is fully
+    assembled to avoid a half-built worker observing partial state.
+
+    Returns a dict so the caller can attach references onto
+    :class:`_TradingEngineHandle` after deciding whether to start the
+    worker (``service`` is ``None`` when ``telegram_send`` is missing).
+    """
+    from src.core.v71.notification.v71_circuit_breaker import V71CircuitBreaker
+    from src.core.v71.notification.v71_notification_queue import (
+        V71NotificationQueue,
+    )
+    from src.core.v71.notification.v71_notification_service import (
+        V71NotificationService,
+    )
+    from src.core.v71.notification.v71_postgres_notification_repository import (
+        PostgresNotificationRepository,
+    )
+
+    clock = _AsyncioRealClock()
+    telegram_send = _build_telegram_send_fn()
+
+    return {
+        "clock": clock,
+        "telegram_send": telegram_send,
+        "_PostgresNotificationRepository": PostgresNotificationRepository,
+        "_V71NotificationQueue": V71NotificationQueue,
+        "_V71CircuitBreaker": V71CircuitBreaker,
+        "_V71NotificationService": V71NotificationService,
+    }
 
 
 def _build_kiwoom_exchange() -> dict[str, Any]:
@@ -601,6 +736,56 @@ async def attach_trading_engine() -> _TradingEngineHandle:
             "position_manager not constructed",
         )
 
+    # P-Wire-3: Notification stack -- V71NotificationService + queue +
+    # circuit breaker + Postgres repository. Independent of kiwoom (any
+    # V7.1 module that imports the Notifier Protocol will resolve to
+    # ``handle.notification_service`` once Phase 6 wires executors).
+    if is_enabled("v71.notification_v71"):
+        try:
+            built = _build_notification_stack()
+            execute_fn = await _build_pg_notification_execute()
+            repository = built["_PostgresNotificationRepository"](
+                execute=execute_fn,
+            )
+            queue = built["_V71NotificationQueue"](
+                repository=repository, clock=built["clock"],
+            )
+            circuit_breaker = built["_V71CircuitBreaker"](clock=built["clock"])
+            handle.notification_repository = repository
+            handle.notification_queue = queue
+            handle.notification_circuit_breaker = circuit_breaker
+            if built["telegram_send"] is not None:
+                service = built["_V71NotificationService"](
+                    queue=queue,
+                    circuit_breaker=circuit_breaker,
+                    telegram_send=built["telegram_send"],
+                    clock=built["clock"],
+                )
+                await service.start()
+                handle.notification_service = service
+                mark_telegram_active(True)
+            else:
+                logger.warning(
+                    "trading_bridge: notification stack built but worker "
+                    "not started (telegram credentials absent) -- queue "
+                    "accepts records, delivery suspended"
+                )
+                # security-reviewer L1: surface degraded delivery to system
+                # state so the dashboard / health endpoint reflects it.
+                mark_telegram_active(False)
+        except Exception as exc:  # noqa: BLE001 -- boot failure surfaces
+            logger.error(
+                "trading_bridge: v71.notification_v71 enabled but "
+                "construction failed: %s",
+                type(exc).__name__,
+            )
+            raise
+    else:
+        logger.warning(
+            "trading_bridge: feature flag 'v71.notification_v71' disabled "
+            "-- notification stack not constructed",
+        )
+
     # P-Wire-2: V71Reconciler periodic task. Only spins up when the
     # exchange infrastructure is already wired -- there is nothing to
     # reconcile against without a kiwoom_client.
@@ -633,13 +818,16 @@ async def attach_trading_engine() -> _TradingEngineHandle:
 
     logger.info(
         "trading_bridge: V7.1 engine objects constructed "
-        "(kiwoom=%s, box=%s, position=%s, reconciler=%s)",
+        "(kiwoom=%s, box=%s, position=%s, reconciler=%s, notification=%s)",
         "yes" if handle.kiwoom_client else "no",
         type(handle.box_manager).__name__ if handle.box_manager else "none",
         type(handle.position_manager).__name__
         if handle.position_manager
         else "none",
         "running" if handle.reconciler_task else "off",
+        "running"
+        if handle.notification_service
+        else ("queue-only" if handle.notification_queue else "off"),
     )
     return handle
 
@@ -653,6 +841,23 @@ async def detach_trading_engine(handle: _TradingEngineHandle) -> None:
     """
     handle.box_manager = None
     handle.position_manager = None
+
+    # P-Wire-3: stop the notification worker first. Worker only depends
+    # on telegram_send + clock (not kiwoom), but stopping early ensures
+    # the queue stops draining before its consumer (telegram bot HTTP
+    # client) can be touched by other shutdown paths.
+    if handle.notification_service is not None:
+        try:
+            await handle.notification_service.stop()
+        except Exception as exc:  # noqa: BLE001 -- shutdown is best-effort
+            logger.warning(
+                "trading_bridge: notification_service.stop() failed: %s",
+                type(exc).__name__,
+            )
+        handle.notification_service = None
+    handle.notification_circuit_breaker = None
+    handle.notification_queue = None
+    handle.notification_repository = None
 
     # P-Wire-2: stop the reconciler loop before tearing down the client
     # it depends on. CancelledError propagates out of asyncio.sleep /
