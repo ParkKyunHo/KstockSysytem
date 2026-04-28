@@ -25,6 +25,7 @@ then the bridge is dormant and only carries publisher state.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import re
 import time
@@ -414,6 +415,14 @@ class _TradingEngineHandle:
         # subscription is wired in P-Wire-5 paper smoke alongside the WS
         # dispatcher.
         self.vi_monitor: Any = None
+        # P-Wire-5: V71KiwoomWebSocket realtime channels (PRICE_TICK /
+        # ORDER_EXECUTION / BALANCE / VI). The run loop is an
+        # ``asyncio.Task``; detach must cancel + await before
+        # ``kiwoom_client.aclose()`` so the active WS connection drains
+        # cleanly. The VI handler dispatches 9068 events to
+        # ``vi_monitor.on_vi_triggered`` / ``on_vi_resolved``.
+        self.kiwoom_websocket: Any = None
+        self.kiwoom_websocket_task: asyncio.Task[None] | None = None
 
 
 # Default reconciliation cadence (PRD 02_TRADING_RULES.md §7.1 -- "매 5분마다").
@@ -1008,6 +1017,174 @@ async def _build_buy_executor(handle: _TradingEngineHandle) -> dict[str, Any]:
     }
 
 
+# ---------------------------------------------------------------------------
+# P-Wire-5: V71KiwoomWebSocket wiring + VI dispatcher
+# ---------------------------------------------------------------------------
+#
+# Kiwoom realtime channels (PRICE_TICK / ORDER_EXECUTION / BALANCE / VI)
+# arrive on a dedicated WebSocket. Phase 5 wired the transport client; this
+# unit lifts it into the lifespan handle and registers a VI handler that
+# dispatches 9068 (TRIGGERED / RESOLVED) events to V71ViMonitor.
+#
+# Wire-level field names for VI 9068 are not authoritatively documented;
+# the handler tries common variants and falls back to a structured WARNING
+# + silent skip rather than dispatching with garbage prices (헌법 §1).
+
+# Common VI WS payload field aliases. Paper smoke (P7) will confirm the
+# canonical names; the handler is intentionally permissive at this stage.
+_VI_STATUS_KEYS = ("9068", "vi_kind", "vi_state")    # 1 = TRIGGERED, 2 = RESOLVED
+_VI_TRIGGER_PRICE_KEYS = ("10", "vi_prc", "trigger_price")
+_VI_PREV_CLOSE_KEYS = ("11", "prev_close", "last_close")
+_VI_FIRST_PRICE_KEYS = ("10", "vi_prc", "resume_price")
+
+
+def _make_vi_handler(vi_monitor: Any) -> Any:
+    """Return an async coroutine that translates VI WS messages into
+    ``vi_monitor.on_vi_triggered`` / ``on_vi_resolved`` calls.
+
+    Permissive parsing (multiple field aliases) + structured WARNING +
+    silent skip on unknown format. The handler must not raise -- the
+    WebSocket dispatcher already isolates handler errors per-channel,
+    but the bridge keeps the same fail-secure stance to avoid noisy
+    alerts during paper smoke validation.
+    """
+    async def vi_handler(message: Any) -> None:
+        try:
+            stock_code = (message.item or "").strip().upper()
+            if not _VALID_STOCK_CODE.match(stock_code):
+                logger.warning(
+                    "trading_bridge: VI WS message item is not a valid "
+                    "stock_code (length=%d) -- skipping",
+                    len(stock_code),
+                )
+                return
+            values = message.values or {}
+            status_raw = next(
+                (values[k] for k in _VI_STATUS_KEYS if k in values),
+                None,
+            )
+            if status_raw is None:
+                logger.warning(
+                    "trading_bridge: VI WS message for %s missing status "
+                    "(tried %s) -- skipping",
+                    stock_code, _VI_STATUS_KEYS,
+                )
+                return
+            status = str(status_raw).strip()
+            if status == "1":
+                trigger_price = _coerce_int(
+                    next(
+                        (values[k] for k in _VI_TRIGGER_PRICE_KEYS
+                         if k in values),
+                        0,
+                    ),
+                )
+                prev_close = _coerce_int(
+                    next(
+                        (values[k] for k in _VI_PREV_CLOSE_KEYS
+                         if k in values),
+                        0,
+                    ),
+                )
+                if trigger_price <= 0:
+                    logger.warning(
+                        "trading_bridge: VI TRIGGERED for %s but no "
+                        "trigger_price field -- skipping",
+                        stock_code,
+                    )
+                    return
+                await vi_monitor.on_vi_triggered(
+                    stock_code,
+                    trigger_price=trigger_price,
+                    last_close_before_vi=prev_close or trigger_price,
+                )
+            elif status == "2":
+                first_price = _coerce_int(
+                    next(
+                        (values[k] for k in _VI_FIRST_PRICE_KEYS
+                         if k in values),
+                        0,
+                    ),
+                )
+                if first_price <= 0:
+                    logger.warning(
+                        "trading_bridge: VI RESOLVED for %s but no "
+                        "first_price field -- skipping",
+                        stock_code,
+                    )
+                    return
+                await vi_monitor.on_vi_resolved(
+                    stock_code, first_price_after_resume=first_price,
+                )
+            else:
+                logger.warning(
+                    "trading_bridge: VI WS for %s -- unknown status %r "
+                    "(expected '1' or '2')",
+                    stock_code, status,
+                )
+        except BaseException:  # noqa: BLE001 -- handler must not raise
+            logger.exception(
+                "trading_bridge: VI handler leaked unexpected exception"
+            )
+
+    return vi_handler
+
+
+async def _build_kiwoom_websocket(
+    handle: _TradingEngineHandle,
+) -> dict[str, Any]:
+    """Construct V71KiwoomWebSocket + register VI handler + subscribe.
+
+    Cross-flag invariant: ``v71.kiwoom_exchange`` must be ON so the
+    token_manager (shared with V71KiwoomClient) is available. ViMonitor
+    is OPTIONAL -- the WebSocket can run without it (other channels
+    still feed downstream consumers in future units).
+    """
+    import os
+
+    from src.utils.feature_flags import is_enabled
+
+    if not is_enabled("v71.kiwoom_exchange"):
+        raise RuntimeError(
+            "trading_bridge: v71.kiwoom_websocket enabled but "
+            "v71.kiwoom_exchange is OFF -- WS depends on token_manager "
+            "from the exchange stack"
+        )
+    if handle.token_manager is None:
+        raise RuntimeError(
+            "trading_bridge: V71KiwoomWebSocket requires a built "
+            "token_manager (kiwoom_exchange flag built nothing)",
+        )
+
+    from src.core.v71.exchange.kiwoom_websocket import (
+        V71KiwoomChannelType,
+        V71KiwoomWebSocket,
+    )
+
+    is_paper = (
+        os.environ.get("KIWOOM_ENV", "PRODUCTION").strip().upper() == "SANDBOX"
+    )
+    ws = V71KiwoomWebSocket(
+        token_manager=handle.token_manager,
+        is_paper=is_paper,
+    )
+
+    if handle.vi_monitor is not None:
+        ws.register_handler(
+            V71KiwoomChannelType.VI, _make_vi_handler(handle.vi_monitor),
+        )
+        # Account-level subscription (item="" -> auto-routed by Kiwoom).
+        await ws.subscribe(V71KiwoomChannelType.VI)
+    else:
+        logger.warning(
+            "trading_bridge: V71KiwoomWebSocket built but VI handler not "
+            "registered (handle.vi_monitor=None) -- 9068 events will be "
+            "ignored",
+        )
+
+    return {"ws": ws, "is_paper": is_paper}
+
+
 def _build_vi_monitor(handle: _TradingEngineHandle) -> Any:
     """Construct V71ViMonitor (PRD 02 §10 VI state machine).
 
@@ -1364,6 +1541,37 @@ async def attach_trading_engine() -> _TradingEngineHandle:
             "-- exit_executor not constructed",
         )
 
+    # P-Wire-5: V71KiwoomWebSocket realtime channels. Background asyncio
+    # task is started after WS + handlers + subscriptions are in place so
+    # detach can cancel cleanly. VI handler dispatches to vi_monitor
+    # when wired (P-Wire-4c); other channels (PRICE_TICK, ORDER_EXECUTION,
+    # BALANCE) join in subsequent units.
+    if is_enabled("v71.kiwoom_websocket"):
+        try:
+            built = await _build_kiwoom_websocket(handle)
+        except Exception as exc:  # noqa: BLE001 -- boot failure surfaces
+            logger.error(
+                "trading_bridge: v71.kiwoom_websocket enabled but "
+                "construction failed: %s",
+                type(exc).__name__,
+            )
+            raise
+        handle.kiwoom_websocket = built["ws"]
+        handle.kiwoom_websocket_task = asyncio.create_task(
+            built["ws"].run(), name="v71_kiwoom_websocket",
+        )
+        logger.info(
+            "trading_bridge: V71KiwoomWebSocket started "
+            "(is_paper=%s, vi_handler=%s)",
+            built["is_paper"],
+            "wired" if handle.vi_monitor is not None else "off",
+        )
+    else:
+        logger.warning(
+            "trading_bridge: feature flag 'v71.kiwoom_websocket' disabled "
+            "-- realtime channels not subscribed",
+        )
+
     # P-Wire-2: V71Reconciler periodic task. Only spins up when the
     # exchange infrastructure is already wired -- there is nothing to
     # reconcile against without a kiwoom_client.
@@ -1471,6 +1679,26 @@ async def detach_trading_engine(handle: _TradingEngineHandle) -> None:
 
     handle.exchange_adapter = None
     handle.order_manager = None
+
+    # P-Wire-5: stop WebSocket BEFORE kiwoom_client (both depend on the
+    # token_manager; the WS owns its own connection). Cancel the run
+    # loop first so it stops fetching new tokens, then aclose the
+    # underlying socket.
+    if handle.kiwoom_websocket_task is not None:
+        if handle.kiwoom_websocket is not None:
+            try:
+                await handle.kiwoom_websocket.aclose()
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "trading_bridge: kiwoom_websocket.aclose() failed: %s",
+                    type(exc).__name__,
+                )
+        handle.kiwoom_websocket_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await handle.kiwoom_websocket_task
+        handle.kiwoom_websocket_task = None
+    handle.kiwoom_websocket = None
+
     if handle.kiwoom_client is not None:
         try:
             await handle.kiwoom_client.aclose()

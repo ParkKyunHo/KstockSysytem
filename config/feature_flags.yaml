@@ -48,6 +48,7 @@ v71:
   kiwoom_exchange: false       # P-Wire-1 — V71KiwoomClient + V71OrderManager + V71KiwoomExchangeAdapter
   buy_executor_v71: false      # P-Wire-4a — V71BuyExecutor + 4 callable deps + tracked_stock_resolver
   exit_executor_v71: false     # P-Wire-4b — V71ExitExecutor (stop loss / TS / partial profit-take)
+  kiwoom_websocket: false      # P-Wire-5 — V71KiwoomWebSocket realtime channels (PRICE / ORDER / BALANCE / VI)
 
   # 안전 장치 (역방향 비활성화)
   v70_box_fallback: true       # V7.1 박스 미활성 시 V7.0 동작 유지 보장

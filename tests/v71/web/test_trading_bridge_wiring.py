@@ -1523,3 +1523,152 @@ class TestViMonitorAttachDetach:
         await detach_trading_engine(handle)
         assert handle.vi_monitor is None
         assert system_state.degraded_vi is False
+
+
+# ---------------------------------------------------------------------------
+# Group R: P-Wire-5 V71KiwoomWebSocket + VI handler (8 cases)
+# ---------------------------------------------------------------------------
+
+
+class TestViHandler:
+    @staticmethod
+    def _make_message(item, values):
+        from datetime import datetime, timezone
+
+        from src.core.v71.exchange.kiwoom_websocket import (
+            V71KiwoomChannelType,
+            V71WebSocketMessage,
+        )
+
+        return V71WebSocketMessage(
+            channel=V71KiwoomChannelType.VI,
+            item=item, name="VI",
+            values=values,
+            received_at=datetime.now(timezone.utc),
+            raw={"type": "1h", "item": item, "values": values},
+        )
+
+    async def test_handler_dispatches_triggered(self):
+        from unittest.mock import MagicMock
+
+        from src.web.v71.trading_bridge import _make_vi_handler
+
+        vi_monitor = MagicMock()
+        vi_monitor.on_vi_triggered = AsyncMock()
+        handler = _make_vi_handler(vi_monitor)
+        msg = self._make_message(
+            "005930",
+            {"9068": "1", "10": "75000", "11": "73000"},
+        )
+        await handler(msg)
+        vi_monitor.on_vi_triggered.assert_awaited_once_with(
+            "005930", trigger_price=75000, last_close_before_vi=73000,
+        )
+
+    async def test_handler_dispatches_resolved(self):
+        from unittest.mock import MagicMock
+
+        from src.web.v71.trading_bridge import _make_vi_handler
+
+        vi_monitor = MagicMock()
+        vi_monitor.on_vi_resolved = AsyncMock()
+        handler = _make_vi_handler(vi_monitor)
+        msg = self._make_message(
+            "005930",
+            {"9068": "2", "10": "76000"},
+        )
+        await handler(msg)
+        vi_monitor.on_vi_resolved.assert_awaited_once_with(
+            "005930", first_price_after_resume=76000,
+        )
+
+    async def test_handler_invalid_stock_code_skipped(self, caplog):
+        from unittest.mock import MagicMock
+
+        from src.web.v71.trading_bridge import _make_vi_handler
+
+        vi_monitor = MagicMock()
+        vi_monitor.on_vi_triggered = AsyncMock()
+        handler = _make_vi_handler(vi_monitor)
+        msg = self._make_message(
+            "BAD-CODE",  # special char fails regex
+            {"9068": "1", "10": "75000"},
+        )
+        with caplog.at_level("WARNING"):
+            await handler(msg)
+        vi_monitor.on_vi_triggered.assert_not_awaited()
+        assert any(
+            "not a valid stock_code" in r.message for r in caplog.records
+        )
+
+    async def test_handler_missing_status_skipped(self, caplog):
+        from unittest.mock import MagicMock
+
+        from src.web.v71.trading_bridge import _make_vi_handler
+
+        vi_monitor = MagicMock()
+        vi_monitor.on_vi_triggered = AsyncMock()
+        handler = _make_vi_handler(vi_monitor)
+        msg = self._make_message("005930", {})
+        with caplog.at_level("WARNING"):
+            await handler(msg)
+        vi_monitor.on_vi_triggered.assert_not_awaited()
+        assert any("missing status" in r.message for r in caplog.records)
+
+    async def test_handler_unknown_status_logs_warning(self, caplog):
+        from unittest.mock import MagicMock
+
+        from src.web.v71.trading_bridge import _make_vi_handler
+
+        vi_monitor = MagicMock()
+        vi_monitor.on_vi_triggered = AsyncMock()
+        handler = _make_vi_handler(vi_monitor)
+        msg = self._make_message("005930", {"9068": "9"})
+        with caplog.at_level("WARNING"):
+            await handler(msg)
+        vi_monitor.on_vi_triggered.assert_not_awaited()
+        assert any("unknown status" in r.message for r in caplog.records)
+
+    async def test_handler_zero_trigger_price_skipped(self, caplog):
+        from unittest.mock import MagicMock
+
+        from src.web.v71.trading_bridge import _make_vi_handler
+
+        vi_monitor = MagicMock()
+        vi_monitor.on_vi_triggered = AsyncMock()
+        handler = _make_vi_handler(vi_monitor)
+        msg = self._make_message(
+            "005930",
+            {"9068": "1"},  # no price field
+        )
+        with caplog.at_level("WARNING"):
+            await handler(msg)
+        vi_monitor.on_vi_triggered.assert_not_awaited()
+        assert any("trigger_price" in r.message for r in caplog.records)
+
+
+class TestKiwoomWebsocketAttachDetach:
+    async def test_websocket_flag_off_leaves_slot_none(self):
+        os.environ["V71_FF__V71__KIWOOM_WEBSOCKET"] = "false"
+        ff.reload()
+        from src.web.v71.trading_bridge import (
+            attach_trading_engine,
+            detach_trading_engine,
+        )
+        handle = await attach_trading_engine()
+        try:
+            assert handle.kiwoom_websocket is None
+            assert handle.kiwoom_websocket_task is None
+        finally:
+            await detach_trading_engine(handle)
+
+    async def test_kiwoom_exchange_off_raises(self):
+        os.environ["V71_FF__V71__KIWOOM_WEBSOCKET"] = "true"
+        os.environ["V71_FF__V71__KIWOOM_EXCHANGE"] = "false"
+        ff.reload()
+        from src.web.v71.trading_bridge import attach_trading_engine
+
+        with pytest.raises(
+            RuntimeError, match="v71.kiwoom_exchange is OFF",
+        ):
+            await attach_trading_engine()
