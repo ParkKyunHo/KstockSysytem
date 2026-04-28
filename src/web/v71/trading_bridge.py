@@ -402,6 +402,11 @@ class _TradingEngineHandle:
         self.total_capital_refresh: Any = None
         self.prev_close_cache: Any = None
         self.tracked_stock_cache: Any = None
+        # P-Wire-4b: V71ExitExecutor (stop loss / TS / partial profit-take).
+        # Stateless wrapper around ExchangeAdapter + Notifier + Clock; the
+        # ``on_position_closed`` callback is wired in P-Wire-4c (ViMonitor)
+        # or by a future orchestrator. None in 4b → silent (OK for paper).
+        self.exit_executor: Any = None
 
 
 # Default reconciliation cadence (PRD 02_TRADING_RULES.md §7.1 -- "매 5분마다").
@@ -991,6 +996,64 @@ async def _build_buy_executor(handle: _TradingEngineHandle) -> dict[str, Any]:
     }
 
 
+async def _build_exit_executor(handle: _TradingEngineHandle) -> Any:
+    """Construct V71ExitExecutor.
+
+    Cross-flag invariant (mirrors P-Wire-4a Buy):
+    ``v71.exit_v71`` (used by V71ExitExecutor.__init__'s require_enabled)
+    AND ``v71.kiwoom_exchange`` AND ``v71.notification_v71`` must be ON.
+
+    Reuses ``handle.clock`` (V71RealClock instance) when P-Wire-4a is
+    also active; otherwise builds a fresh one (V71RealClock is stateless).
+    """
+    from src.utils.feature_flags import is_enabled
+
+    missing = [
+        flag
+        for flag in (
+            "v71.exit_v71",
+            "v71.kiwoom_exchange",
+            "v71.notification_v71",
+        )
+        if not is_enabled(flag)
+    ]
+    if missing:
+        raise RuntimeError(
+            "trading_bridge: v71.exit_executor_v71 enabled but required "
+            f"dependencies are OFF: {missing}"
+        )
+    if handle.exchange_adapter is None:
+        raise RuntimeError(
+            "trading_bridge: ExitExecutor requires exchange_adapter "
+            "(v71.kiwoom_exchange flag built no adapter)"
+        )
+    if handle.box_manager is None:
+        raise RuntimeError(
+            "trading_bridge: ExitExecutor requires box_manager",
+        )
+    if handle.notification_service is None:
+        raise RuntimeError(
+            "trading_bridge: ExitExecutor requires notification_service "
+            "(v71.notification_v71 ON but service is queue-only -- "
+            "ExitExecutor cannot accept Notifier=None)",
+        )
+
+    from src.core.v71.exit.exit_executor import (
+        ExitExecutorContext,
+        V71ExitExecutor,
+    )
+
+    clock = handle.clock if handle.clock is not None else V71RealClock()
+    ctx = ExitExecutorContext(
+        exchange=handle.exchange_adapter,
+        box_manager=handle.box_manager,
+        notifier=handle.notification_service,
+        clock=clock,
+        on_position_closed=None,  # P-Wire-4c (ViMonitor) wires this
+    )
+    return V71ExitExecutor(context=ctx)
+
+
 def _build_kiwoom_exchange() -> dict[str, Any]:
     """Construct the V7.1 Kiwoom transport stack from environment.
 
@@ -1203,6 +1266,31 @@ async def attach_trading_engine() -> _TradingEngineHandle:
             "-- buy_executor not constructed",
         )
 
+    # P-Wire-4b: V71ExitExecutor wiring. Mirrors P-Wire-4a invariants
+    # (cross-flag fail-loud); reuses handle.clock when available so Buy
+    # and Exit share the same Clock instance.
+    if is_enabled("v71.exit_executor_v71"):
+        try:
+            handle.exit_executor = await _build_exit_executor(handle)
+        except Exception as exc:  # noqa: BLE001 -- boot failure surfaces
+            logger.error(
+                "trading_bridge: v71.exit_executor_v71 enabled but "
+                "construction failed: %s",
+                type(exc).__name__,
+            )
+            raise
+        # If P-Wire-4a left handle.clock=None (Buy disabled), re-use the
+        # one ExitExecutor just built so future units (4c, P-Wire-5) see
+        # a single shared clock.
+        if handle.clock is None:
+            handle.clock = handle.exit_executor._ctx.clock
+        logger.info("trading_bridge: V71ExitExecutor wired")
+    else:
+        logger.warning(
+            "trading_bridge: feature flag 'v71.exit_executor_v71' disabled "
+            "-- exit_executor not constructed",
+        )
+
     # P-Wire-2: V71Reconciler periodic task. Only spins up when the
     # exchange infrastructure is already wired -- there is nothing to
     # reconcile against without a kiwoom_client.
@@ -1259,10 +1347,11 @@ async def detach_trading_engine(handle: _TradingEngineHandle) -> None:
     handle.box_manager = None
     handle.position_manager = None
 
-    # P-Wire-4a: drop executor + supporting closures. They are stateless
-    # (no aclose / cancel needed) -- the underlying caches die with the
-    # closures.
+    # P-Wire-4a/4b: drop executors + supporting closures. They are
+    # stateless (no aclose / cancel needed) -- the underlying caches die
+    # with the closures.
     handle.buy_executor = None
+    handle.exit_executor = None
     handle.clock = None
     handle.total_capital_refresh = None
     handle.prev_close_cache = None

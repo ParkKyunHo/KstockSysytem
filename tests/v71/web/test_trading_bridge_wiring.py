@@ -1359,3 +1359,78 @@ class TestBuyExecutorAttachDetach:
         await detach_trading_engine(handle)
         assert system_state.degraded_vi is False
         assert handle.buy_executor is None
+
+
+# ---------------------------------------------------------------------------
+# Group P: P-Wire-4b ExitExecutor wiring (6 cases)
+# ---------------------------------------------------------------------------
+
+
+class TestBuildExitExecutorCrossFlag:
+    @staticmethod
+    def _make_full_handle():
+        from unittest.mock import MagicMock
+
+        from src.web.v71.trading_bridge import _TradingEngineHandle
+
+        h = _TradingEngineHandle()
+        h.exchange_adapter = MagicMock()
+        h.box_manager = MagicMock()
+        h.notification_service = MagicMock()
+        return h
+
+    @pytest.mark.parametrize(
+        "flag_off",
+        ["v71.exit_v71", "v71.kiwoom_exchange", "v71.notification_v71"],
+    )
+    async def test_missing_flag_raises(self, flag_off):
+        # Set all 3 to true, then flip the parameterized one off.
+        for flag in (
+            "v71.exit_v71", "v71.kiwoom_exchange", "v71.notification_v71",
+        ):
+            env_key = f"V71_FF__V71__{flag.split('.')[-1].upper()}"
+            os.environ[env_key] = "false" if flag == flag_off else "true"
+        ff.reload()
+        from src.web.v71.trading_bridge import _build_exit_executor
+
+        handle = self._make_full_handle()
+        with pytest.raises(RuntimeError, match="dependencies are OFF"):
+            await _build_exit_executor(handle)
+
+    async def test_exchange_adapter_none_raises(self):
+        for flag in ("EXIT_V71", "KIWOOM_EXCHANGE", "NOTIFICATION_V71"):
+            os.environ[f"V71_FF__V71__{flag}"] = "true"
+        ff.reload()
+        from src.web.v71.trading_bridge import _build_exit_executor
+
+        handle = self._make_full_handle()
+        handle.exchange_adapter = None
+        with pytest.raises(RuntimeError, match="exchange_adapter"):
+            await _build_exit_executor(handle)
+
+
+class TestExitExecutorAttachDetach:
+    async def test_attach_exit_executor_flag_off_leaves_slot_none(self):
+        os.environ["V71_FF__V71__EXIT_EXECUTOR_V71"] = "false"
+        ff.reload()
+        from src.web.v71.trading_bridge import (
+            attach_trading_engine,
+            detach_trading_engine,
+        )
+        handle = await attach_trading_engine()
+        try:
+            assert handle.exit_executor is None
+        finally:
+            await detach_trading_engine(handle)
+
+    async def test_detach_clears_exit_executor_slot(self):
+        os.environ["V71_FF__V71__EXIT_EXECUTOR_V71"] = "false"
+        ff.reload()
+        from src.web.v71.trading_bridge import (
+            attach_trading_engine,
+            detach_trading_engine,
+        )
+        handle = await attach_trading_engine()
+        await detach_trading_engine(handle)
+        assert handle.exit_executor is None
+        assert handle.clock is None
