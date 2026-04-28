@@ -1,0 +1,57 @@
+[Unit]
+Description=K-Stock Trading System V7.1 (Box-Based)
+Documentation=https://github.com/ParkKyunHo/KstockSysytem
+After=network.target network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+
+# Working directory follows the V7.0 release symlink convention so
+# release rollbacks (V7.1 future) reuse the same systemd unit.
+WorkingDirectory=/home/ubuntu/K_stock_trading/current
+
+# PYTHONPATH covers src/ so ``uvicorn src.web.v71.main:app`` resolves.
+Environment=PYTHONPATH=/home/ubuntu/K_stock_trading/current
+EnvironmentFile=/home/ubuntu/K_stock_trading/shared/.env
+
+# V7.1 entry: FastAPI app under uvicorn. The lifespan in
+# ``src.web.v71.main`` calls trading_bridge.attach_trading_engine() so
+# this single ExecStart drives both the dashboard API and the trading
+# engine (controlled by V71_WEB_BOOT_TRADING_ENGINE).
+ExecStart=/home/ubuntu/K_stock_trading/current/venv/bin/python -m uvicorn src.web.v71.main:app --host 0.0.0.0 --port 8080 --log-level info --no-access-log
+ExecStop=/bin/kill -TERM $MAINPID
+
+# Uvicorn handles its own reload on SIGHUP for graceful restarts; we
+# rely on systemd Restart for crash recovery.
+Restart=on-failure
+RestartSec=10
+StartLimitIntervalSec=3600
+StartLimitBurst=5
+
+# Boot/stop windows give lifespan attach (DB seed + WS connect) time.
+TimeoutStartSec=60
+TimeoutStopSec=30
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=k-stock-trading
+
+# Resource limits -- V7.1 holds candle history + box state in memory;
+# 1G is comfortable for ~50 tracked stocks.
+MemoryMax=1G
+CPUQuota=80%
+
+# V7.0 hardening retained.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/ubuntu/K_stock_trading/shared/logs
+ReadWritePaths=/home/ubuntu/K_stock_trading/shared/data
+
+PrivateNetwork=false
+
+[Install]
+WantedBy=multi-user.target
