@@ -1798,3 +1798,67 @@ class TestExitOrchestratorWiring:
         await detach_trading_engine(handle)
         stop_mock.assert_awaited_once()
         assert handle.exit_orchestrator is None
+
+    async def test_orchestrator_wires_callbacks_into_executor_and_monitor(
+        self,
+    ):
+        """P-Wire-7 -- after _build_exit_orchestrator runs,
+        ExitExecutor._ctx.on_position_closed and ViMonitor._ctx.on_vi_resumed
+        must point at the orchestrator instance methods (frozen
+        dataclasses bypassed via dataclasses.replace + reassignment)."""
+        os.environ["V71_FF__V71__EXIT_V71"] = "true"
+        ff.reload()
+        from unittest.mock import MagicMock
+
+        from src.core.v71.exit.exit_executor import (
+            ExitExecutorContext,
+            V71ExitExecutor,
+        )
+        from src.core.v71.vi_monitor import V71ViMonitor, ViMonitorContext
+        from src.web.v71.trading_bridge import (
+            _build_exit_orchestrator,
+            _TradingEngineHandle,
+        )
+
+        # Build a real ExitExecutor + ViMonitor with None callbacks
+        notifier = MagicMock()
+        notifier.notify = AsyncMock()
+        clock = MagicMock()
+        from datetime import datetime, timezone
+        clock.now = MagicMock(return_value=datetime.now(timezone.utc))
+        exit_ctx = ExitExecutorContext(
+            exchange=MagicMock(),
+            box_manager=MagicMock(),
+            notifier=notifier, clock=clock,
+            on_position_closed=None,
+        )
+        executor = V71ExitExecutor(context=exit_ctx)
+        vi_ctx = ViMonitorContext(
+            notifier=notifier, clock=clock, on_vi_resumed=None,
+        )
+        os.environ["V71_FF__V71__VI_MONITOR"] = "true"
+        ff.reload()
+        monitor = V71ViMonitor(context=vi_ctx)
+
+        # Stub minimal handle so _build_exit_orchestrator passes invariants
+        ws = MagicMock()
+        ws.register_handler = MagicMock()
+        handle = _TradingEngineHandle()
+        handle.exit_executor = executor
+        handle.vi_monitor = monitor
+        handle.position_manager = MagicMock()
+        handle.kiwoom_websocket = ws
+        handle.exchange_adapter = MagicMock()
+
+        calc, orch = await _build_exit_orchestrator(handle)
+
+        # Frozen contexts were replaced with new instances containing
+        # orchestrator callbacks. Bound method identity is per-access,
+        # so compare ``__self__`` (orch instance) + ``__func__`` (method).
+        wired_pc = executor._ctx.on_position_closed
+        wired_vi = monitor._ctx.on_vi_resumed
+        assert wired_pc is not None and wired_vi is not None
+        assert wired_pc.__self__ is orch
+        assert wired_vi.__self__ is orch
+        assert wired_pc.__func__ is type(orch).on_position_closed
+        assert wired_vi.__func__ is type(orch).on_vi_resumed

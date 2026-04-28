@@ -106,6 +106,7 @@ class V71ExitOrchestrator:
         exit_calculator: V71ExitCalculator,
         exit_executor: V71ExitExecutor,
         websocket: Any,
+        exchange: Any | None = None,
         atr_cache: dict[str, float] | None = None,
     ) -> None:
         require_enabled("v71.exit_v71")
@@ -113,6 +114,9 @@ class V71ExitOrchestrator:
         self._calc = exit_calculator
         self._executor = exit_executor
         self._ws = websocket
+        # Optional exchange for VI resume current-price fetch (P-Wire-7).
+        # Tests can pass None and use the explicit-price reevaluate_stock.
+        self._exchange = exchange
         self._atr_cache: dict[str, float] = atr_cache if atr_cache is not None else {}
         self._subscribed: set[str] = set()
         self._stock_locks: dict[str, asyncio.Lock] = {}
@@ -206,10 +210,50 @@ class V71ExitOrchestrator:
     async def reevaluate_stock(
         self, stock_code: str, current_price: int,
     ) -> None:
-        """Wireable as :class:`ViMonitorContext.on_vi_resumed` -- forces
-        an immediate exit evaluation pass so PRD §10.4 1-second budget
-        is respected without waiting for the next tick.
+        """Direct entry point -- caller already has the price.
+
+        Used by tests + paper-smoke harnesses. Production callers
+        normally go through :meth:`on_vi_resumed` which fetches the
+        price first.
         """
+        await self._evaluate_stock(stock_code, current_price)
+
+    async def on_vi_resumed(
+        self, stock_code: str,
+        *, exchange: Any | None = None,
+    ) -> None:
+        """ViMonitorContext.on_vi_resumed-compatible signature.
+
+        PRD §10.4 mandates a 1-second window from VI 해제 to stop/TS
+        re-evaluation. ViMonitor passes only ``stock_code``; this method
+        fetches the resume-price via the injected ``exchange`` (or a
+        cached one captured at construction) and delegates to
+        :meth:`reevaluate_stock`. Failures fall through to the next
+        PRICE_TICK so a single transient kiwoom error does not break
+        the §4 always-running invariant.
+        """
+        ex = exchange if exchange is not None else self._exchange
+        if ex is None:
+            log.warning(
+                "v71_exit_orch_vi_resumed_no_exchange for %s -- next "
+                "PRICE_TICK will catch up",
+                stock_code,
+            )
+            return
+        try:
+            current_price = await ex.get_current_price(stock_code)
+        except Exception as exc:  # noqa: BLE001 -- next tick fallback
+            log.warning(
+                "v71_exit_orch_vi_resumed_fetch_failed for %s: %s",
+                stock_code, type(exc).__name__,
+            )
+            return
+        if not isinstance(current_price, int) or current_price <= 0:
+            log.warning(
+                "v71_exit_orch_vi_resumed_invalid_price for %s",
+                stock_code,
+            )
+            return
         await self._evaluate_stock(stock_code, current_price)
 
     # ------------------------------------------------------------------

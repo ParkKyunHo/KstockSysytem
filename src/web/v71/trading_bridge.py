@@ -1201,6 +1201,17 @@ async def _build_exit_orchestrator(
     Cross-flag invariant: depends on P-Wire-4b (exit_executor) +
     P-Wire-5 (kiwoom_websocket) being wired -- the orchestrator has
     nothing to drive without both.
+
+    P-Wire-7 callback wiring (best-effort): once the orchestrator is
+    built, mutate ExitExecutor / ViMonitor frozen contexts in place via
+    ``dataclasses.replace`` so that:
+
+      * ExitExecutor full-exit fires
+        ``orchestrator.on_position_closed(stock_code, position_id)``
+        -> price feed unsubscribes when no positions remain.
+      * ViMonitor RESUMED handler fires
+        ``orchestrator.on_vi_resumed(stock_code)`` -> immediate
+        re-evaluation pass (PRD §10.4 1초 budget).
     """
     if handle.exit_executor is None:
         raise RuntimeError(
@@ -1217,6 +1228,8 @@ async def _build_exit_orchestrator(
             "(v71.kiwoom_websocket must be ON)",
         )
 
+    import dataclasses
+
     from src.core.v71.exit.exit_calculator import V71ExitCalculator
     from src.core.v71.strategies.exit_orchestrator import V71ExitOrchestrator
 
@@ -1226,8 +1239,39 @@ async def _build_exit_orchestrator(
         exit_calculator=calculator,
         exit_executor=handle.exit_executor,
         websocket=handle.kiwoom_websocket,
+        exchange=handle.exchange_adapter,
     )
     await orchestrator.start()
+
+    # P-Wire-7 — wire orchestrator callbacks into existing executors.
+    # ExitExecutorContext / ViMonitorContext are frozen, so we use
+    # ``dataclasses.replace`` to build a fresh context with the callback
+    # populated and reassign the executor's ``_ctx`` slot. The instances
+    # themselves are not frozen so this is well-defined Python semantics.
+    try:
+        old_exit_ctx = handle.exit_executor._ctx
+        new_exit_ctx = dataclasses.replace(
+            old_exit_ctx, on_position_closed=orchestrator.on_position_closed,
+        )
+        handle.exit_executor._ctx = new_exit_ctx
+    except Exception as exc:  # noqa: BLE001 -- callback is opt-in
+        logger.warning(
+            "trading_bridge: P-Wire-7 on_position_closed wire failed: %s",
+            type(exc).__name__,
+        )
+    if handle.vi_monitor is not None:
+        try:
+            old_vi_ctx = handle.vi_monitor._ctx
+            new_vi_ctx = dataclasses.replace(
+                old_vi_ctx, on_vi_resumed=orchestrator.on_vi_resumed,
+            )
+            handle.vi_monitor._ctx = new_vi_ctx
+        except Exception as exc:  # noqa: BLE001 -- callback is opt-in
+            logger.warning(
+                "trading_bridge: P-Wire-7 on_vi_resumed wire failed: %s",
+                type(exc).__name__,
+            )
+
     return calculator, orchestrator
 
 

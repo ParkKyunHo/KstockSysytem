@@ -299,6 +299,70 @@ async def test_reevaluate_stock_runs_full_pipeline(orchestrator_factory):
 
 
 # ---------------------------------------------------------------------------
+# P-Wire-7: on_vi_resumed (signature adapter for ViMonitor callback)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_on_vi_resumed_fetches_price_then_evaluates(
+    orchestrator_factory,
+):
+    pos = _make_position(fixed_stop=66_500)
+    orch, _pm, executor, _ws, _Ch = orchestrator_factory(positions=[pos])
+    exchange = MagicMock()
+    exchange.get_current_price = AsyncMock(return_value=60_000)
+    orch._exchange = exchange
+    await orch.on_vi_resumed("005930")
+    exchange.get_current_price.assert_awaited_once_with("005930")
+    executor.execute_stop_loss.assert_awaited_once_with(pos)
+
+
+@pytest.mark.asyncio
+async def test_on_vi_resumed_no_exchange_logs_warning(
+    orchestrator_factory, caplog,
+):
+    pos = _make_position(fixed_stop=66_500)
+    orch, _pm, executor, _ws, _Ch = orchestrator_factory(positions=[pos])
+    orch._exchange = None  # explicit
+    with caplog.at_level("WARNING"):
+        await orch.on_vi_resumed("005930")
+    executor.execute_stop_loss.assert_not_awaited()
+    assert any("no_exchange" in r.message for r in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_on_vi_resumed_fetch_failure_falls_through(
+    orchestrator_factory, caplog,
+):
+    pos = _make_position(fixed_stop=66_500)
+    orch, _pm, executor, _ws, _Ch = orchestrator_factory(positions=[pos])
+    exchange = MagicMock()
+    exchange.get_current_price = AsyncMock(
+        side_effect=RuntimeError("kiwoom 5xx"),
+    )
+    orch._exchange = exchange
+    with caplog.at_level("WARNING"):
+        await orch.on_vi_resumed("005930")
+    executor.execute_stop_loss.assert_not_awaited()
+    assert any("fetch_failed" in r.message for r in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_on_vi_resumed_invalid_price_skipped(
+    orchestrator_factory, caplog,
+):
+    pos = _make_position(fixed_stop=66_500)
+    orch, _pm, executor, _ws, _Ch = orchestrator_factory(positions=[pos])
+    exchange = MagicMock()
+    exchange.get_current_price = AsyncMock(return_value=0)
+    orch._exchange = exchange
+    with caplog.at_level("WARNING"):
+        await orch.on_vi_resumed("005930")
+    executor.execute_stop_loss.assert_not_awaited()
+    assert any("invalid_price" in r.message for r in caplog.records)
+
+
+# ---------------------------------------------------------------------------
 # Isolation
 # ---------------------------------------------------------------------------
 
