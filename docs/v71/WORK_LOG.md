@@ -4346,4 +4346,59 @@ scripts/deploy/* (3개) → `scripts/archive/v70/deploy/`:
 
 **다음**: Step D — `src/core/`, `src/notification/`, `src/api/`, `tests/` V7.0 의존 파일 일괄 `git rm`. `src/main.py` V7.1 entry 갱신 또는 폐기 결정.
 
+### Step D: V7.0 모듈 일괄 git rm (2026-04-28)
+
+**규모**: 28 D (deletions) + 1 R (test_server.ps1 archive) + 4 M (modifications)
+
+#### 삭제 대상 (V7.0 모듈, 총 28개)
+
+`src/core/*.py` (13):
+- `trading_engine` / `candle_builder` / `market_schedule` / `realtime_data_manager` / `subscription_manager` / `websocket_manager` / `background_task_manager` / `system_health_monitor` / `market_monitor` / `risk_manager` / `universe` / `indicator_library` / `constants`
+
+`src/api/*` (9): `__init__` + `auth` + `client` + `websocket` + `endpoints/{__init__, account, condition, market, order}`
+
+`src/notification/*` V7.0 (3): `notification_queue` + `reporter` + `templates`
+
+`tests/*` V7.0 (3): `test_background_task_manager` + `test_websocket_manager` + `test_notification_queue`
+
+`src/core/{detectors,exit,signals,strategies}/` 빈 dir + `.pyc` cache (OS `rm -rf`).
+
+#### 갱신 (V7.0 → V7.1 잔재 끊기)
+
+| 파일 | 변경 |
+|------|------|
+| `src/notification/telegram.py` | line 16 `from src.notification.templates import format_help_message` 제거 + line 535 `/help` 핸들러 → V7.1 안내 string fallback (V71TelegramCommands 미등록 시에만 동작) |
+| `src/notification/__init__.py` | V7.0 templates / reporter / notification_queue export 제거 → `TelegramBot` + `get_telegram_bot`만 expose |
+| `src/core/__init__.py` | "Surviving V7.0 infrastructure" 주석 제거 → "V7.0 Purple-ReAbs has been fully retired" + V7.1 entry points 8개 (`box` / `strategies` / `exchange` / `notification` / `position` / `candle` / `market` / `skills`) |
+| `src/main.py` | Phase 1/2/3 in-progress 메시지 → "V7.0 fully retired (Phase A complete)" + V7.1 entry는 `uvicorn src.web.v71.main:app` |
+
+#### Archive
+
+- `scripts/deploy/test_server.ps1` → `scripts/archive/v70/deploy/` (src.main 호출 → V7.1 안내 fallback만 출력하므로 운영 가치 X)
+
+#### 보존
+
+- `src/notification/telegram.py` (P-Wire-3 fail-secure send 콜러블, V7.1 사용)
+- `src/database/`, `src/utils/`, `src/web/v71/`, `src/core/v71/`, `src/main.py` (V7.1 안내 stub)
+- `scripts/deploy/*` (test_server.ps1 외 운영 도구 모두 보존)
+
+#### 사전 검증 (V7.1 → V7.0 외부 import 0건 확인)
+
+- `src/core/v71/` 내부 V7.0 import: 0건
+- `src/web/v71/` 내부 V7.0 import: 0건
+- `src/web/v71/trading_bridge.py:607`: `from src.notification.telegram import TelegramBot` (보존 의도)
+- `src/notification/telegram.py:16`: `from src.notification.templates import format_help_message` → 끊음
+
+#### 검증
+
+- V7.1 회귀: 1279/1279 PASS
+- 6 harness: PASS
+- ruff: 163 errors (V7.0 ruff issue 391개 동시 제거 → baseline 554 → 163)
+- `python -c "import src.core.v71; import src.web.v71.main; from src.notification.telegram import TelegramBot"` 모두 OK
+- `python -m src.main` → V7.1 안내 메시지 + exit code 1
+
+#### 다음
+
+Step E — PRD 문서 (04_ARCHITECTURE / 05_MIGRATION_PLAN / 07_SKILLS_SPEC / 08_HARNESS_SPEC / 00_CLAUDE_CODE_GENERATION_PROMPT) + `config/feature_flags.yaml` (v70_box_fallback 제거 + v71.candle_builder 추가).
+
 ---

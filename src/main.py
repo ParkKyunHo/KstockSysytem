@@ -1,14 +1,18 @@
 """V7.1 entry-point stub.
 
-V7.0 Purple-ReAbs has been retired (preserved at git tag
-``v7.0-final-stable``). The V7.1 box-based trading system is being
-constructed under ``src/core/v71/`` per ``docs/v71/01_PRD_MAIN.md`` and
-``docs/v71/05_MIGRATION_PLAN.md``.
+V7.0 has been fully retired (preserved at git tag ``v7.0-final-stable``).
+The V7.1 box-based trading system now runs as a FastAPI app under
+``src.web.v71.main:app``. The trading engine is wired via
+``src.web.v71.trading_bridge`` (P-Wire-1 .. P-Wire-12) and started/stopped
+from the FastAPI lifespan.
 
-Until Phase 2/3 of the migration, this entry point intentionally fails
-fast rather than silently launching incomplete code. Operations should
-continue to use the deployed V7.0 build (server-side, separate from this
-working tree).
+Run V7.1 with::
+
+    uvicorn src.web.v71.main:app --host 0.0.0.0 --port 8080
+
+This stub only emits an instruction message and exits non-zero so that any
+``python -m src.main`` callers fail loudly instead of silently launching
+nothing.
 """
 
 from __future__ import annotations
@@ -22,21 +26,15 @@ def main() -> int:
         textwrap.dedent(
             """
             -----------------------------------------------------------------
-            K_stock_trading -- V7.1 (Box-Based Trading System) is in build.
+            K_stock_trading -- V7.1 (Box-Based Trading System)
             -----------------------------------------------------------------
 
-            The V7.0 entry point has been removed during Phase 1 of the
-            V7.0 -> V7.1 migration. The V7.1 trading engine will be wired
-            here in Phase 3 once the box system, strategies, exit rules,
-            and reconciler land under src/core/v71/.
+            V7.0 has been fully retired (Phase A complete).
+            V7.1 runs as a FastAPI application:
 
-            Status:
-              - Phase 0:  complete (env separation, feature flags, harnesses)
-              - Phase 1:  in progress (legacy code removal)
-              - Phase 2:  pending (V7.1 skeletons + DB migrations)
-              - Phase 3:  pending (V7.1 trading rules)
+                uvicorn src.web.v71.main:app --host 0.0.0.0 --port 8080
 
-            See:
+            Documentation:
               - docs/v71/01_PRD_MAIN.md
               - docs/v71/05_MIGRATION_PLAN.md
               - docs/v71/WORK_LOG.md

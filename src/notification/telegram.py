@@ -13,7 +13,6 @@ import httpx
 
 from src.utils.config import get_telegram_settings, TelegramSettings
 from src.utils.logger import get_logger
-from src.notification.templates import format_help_message
 
 
 # 콜백 타입
@@ -532,7 +531,11 @@ class TelegramBot:
                 await self.send_message(f"명령어 처리 중 에러가 발생했습니다: {e}", chat_id)
 
         elif command == "help":
-            await self.send_message(format_help_message(), chat_id)
+            await self.send_message(
+                "K_stock_trading V7.1 — V71TelegramCommands에서 명령어를 처리합니다. "
+                "V71TelegramCommands가 등록되지 않은 경우 이 fallback이 응답합니다.",
+                chat_id,
+            )
 
         else:
             await self.send_message(
