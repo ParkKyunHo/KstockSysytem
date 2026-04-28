@@ -1344,15 +1344,32 @@ def _build_kiwoom_exchange() -> dict[str, Any]:
     from src.core.v71.exchange.token_manager import V71TokenManager
     from src.core.v71.v71_constants import V71Constants
 
-    app_key = os.environ.get("KIWOOM_APP_KEY", "").strip()
-    app_secret = os.environ.get("KIWOOM_SECRET", "").strip()
+    is_paper = os.environ.get("KIWOOM_ENV", "PRODUCTION").strip().upper() == "SANDBOX"
+    # Production = real funds (사용자 결정 2026-04-28: paper 단계 건너뜀).
+    # Paper variant of KIWOOM_PAPER_APP_* keys is supported for harness /
+    # smoke runs but production deployment uses KIWOOM_APP_* directly.
+    if is_paper:
+        app_key = os.environ.get("KIWOOM_PAPER_APP_KEY", "").strip()
+        app_secret = os.environ.get("KIWOOM_PAPER_APP_SECRET", "").strip()
+        key_label = "KIWOOM_PAPER_APP_KEY / KIWOOM_PAPER_APP_SECRET"
+    else:
+        app_key = os.environ.get("KIWOOM_APP_KEY", "").strip()
+        app_secret = os.environ.get("KIWOOM_APP_SECRET", "").strip()
+        key_label = "KIWOOM_APP_KEY / KIWOOM_APP_SECRET"
     if not app_key or not app_secret:
         raise RuntimeError(
             "trading_bridge: v71.kiwoom_exchange enabled but "
-            "KIWOOM_APP_KEY / KIWOOM_SECRET are not set in environment"
+            f"{key_label} are not set in environment"
         )
-
-    is_paper = os.environ.get("KIWOOM_ENV", "PRODUCTION").strip().upper() == "SANDBOX"
+    if not is_paper:
+        # 실전 자금이 들어가는 경로 -- 부팅 시 운영자에게 명시적으로 보이도록
+        # WARNING 레벨로 한 번 흘려준다 (lifespan 로그에 단일 진입점).
+        logger.warning(
+            "trading_bridge: kiwoom exchange wiring in PRODUCTION mode "
+            "(real funds at risk -- KIWOOM_ENV=%s, app_key_prefix=%s)",
+            os.environ.get("KIWOOM_ENV", "PRODUCTION"),
+            app_key[:4] + "***",
+        )
 
     token_manager = V71TokenManager(
         app_key=app_key, app_secret=app_secret, is_paper=is_paper,

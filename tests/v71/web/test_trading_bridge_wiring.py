@@ -20,7 +20,10 @@ def _isolate_flags():
     saved = {k: v for k, v in os.environ.items() if k.startswith("V71_FF__")}
     saved_kiwoom = {
         k: os.environ.get(k)
-        for k in ("KIWOOM_APP_KEY", "KIWOOM_SECRET", "KIWOOM_ENV")
+        for k in (
+            "KIWOOM_APP_KEY", "KIWOOM_APP_SECRET", "KIWOOM_ENV",
+            "KIWOOM_PAPER_APP_KEY", "KIWOOM_PAPER_APP_SECRET",
+        )
     }
     saved_telegram = {
         k: os.environ.get(k)
@@ -119,7 +122,7 @@ class TestKiwoomExchangeFlagOnEnvMissing:
     async def test_missing_app_key_raises(self):
         os.environ["V71_FF__V71__KIWOOM_EXCHANGE"] = "true"
         os.environ.pop("KIWOOM_APP_KEY", None)
-        os.environ["KIWOOM_SECRET"] = "test_secret"
+        os.environ["KIWOOM_APP_SECRET"] = "test_secret"
         ff.reload()
         from src.web.v71.trading_bridge import attach_trading_engine
 
@@ -129,7 +132,7 @@ class TestKiwoomExchangeFlagOnEnvMissing:
     async def test_missing_secret_raises(self):
         os.environ["V71_FF__V71__KIWOOM_EXCHANGE"] = "true"
         os.environ["KIWOOM_APP_KEY"] = "test_key"
-        os.environ.pop("KIWOOM_SECRET", None)
+        os.environ.pop("KIWOOM_APP_SECRET", None)
         ff.reload()
         from src.web.v71.trading_bridge import attach_trading_engine
 
@@ -139,7 +142,7 @@ class TestKiwoomExchangeFlagOnEnvMissing:
     async def test_empty_string_env_raises(self):
         os.environ["V71_FF__V71__KIWOOM_EXCHANGE"] = "true"
         os.environ["KIWOOM_APP_KEY"] = "   "
-        os.environ["KIWOOM_SECRET"] = "   "
+        os.environ["KIWOOM_APP_SECRET"] = "   "
         ff.reload()
         from src.web.v71.trading_bridge import attach_trading_engine
 
@@ -153,10 +156,61 @@ class TestKiwoomExchangeFlagOnEnvMissing:
 
 
 class TestKiwoomExchangeWiring:
-    async def test_paper_env_constructs_paper_client(self):
+    async def test_paper_env_uses_paper_key_label_in_error(self):
+        """Paper mode must report missing KIWOOM_PAPER_APP_* keys, not
+        production keys."""
         os.environ["V71_FF__V71__KIWOOM_EXCHANGE"] = "true"
-        os.environ["KIWOOM_APP_KEY"] = "test_key"
-        os.environ["KIWOOM_SECRET"] = "test_secret"
+        os.environ["KIWOOM_ENV"] = "SANDBOX"
+        os.environ.pop("KIWOOM_PAPER_APP_KEY", None)
+        os.environ.pop("KIWOOM_PAPER_APP_SECRET", None)
+        ff.reload()
+        from src.web.v71.trading_bridge import attach_trading_engine
+
+        with pytest.raises(
+            RuntimeError,
+            match="KIWOOM_PAPER_APP_KEY / KIWOOM_PAPER_APP_SECRET",
+        ):
+            await attach_trading_engine()
+
+    async def test_production_mode_logs_warning_with_masked_key_prefix(
+        self, caplog,
+    ):
+        """Production wiring must log a WARNING that real funds are at
+        risk + emit the first 4 chars of app_key (no full secret)."""
+        os.environ["V71_FF__V71__KIWOOM_EXCHANGE"] = "true"
+        os.environ["KIWOOM_APP_KEY"] = "PRODKEY_abcd1234"
+        os.environ["KIWOOM_APP_SECRET"] = "production_secret"
+        os.environ.pop("KIWOOM_ENV", None)
+        ff.reload()
+
+        with patch(
+            "src.database.connection.get_db_manager",
+        ) as get_db_mock:
+            get_db_mock.return_value.session = lambda: None
+            from src.web.v71.trading_bridge import (
+                attach_trading_engine,
+                detach_trading_engine,
+            )
+            with caplog.at_level("WARNING"):
+                handle = await attach_trading_engine()
+            try:
+                # WARNING fired with PRODUCTION mode + masked prefix
+                assert any(
+                    "PRODUCTION" in r.message
+                    and "PROD" in r.message
+                    and "production_secret" not in r.message
+                    for r in caplog.records
+                )
+            finally:
+                await detach_trading_engine(handle)
+
+    async def test_paper_env_constructs_paper_client(self):
+        # Paper path uses dedicated KIWOOM_PAPER_APP_* keys
+        # (사용자 결정 2026-04-28: production 모드가 default; paper 키는
+        # harness/smoke 한정).
+        os.environ["V71_FF__V71__KIWOOM_EXCHANGE"] = "true"
+        os.environ["KIWOOM_PAPER_APP_KEY"] = "test_paper_key"
+        os.environ["KIWOOM_PAPER_APP_SECRET"] = "test_paper_secret"
         os.environ["KIWOOM_ENV"] = "SANDBOX"
         ff.reload()
 
@@ -180,7 +234,7 @@ class TestKiwoomExchangeWiring:
     async def test_production_env_default(self):
         os.environ["V71_FF__V71__KIWOOM_EXCHANGE"] = "true"
         os.environ["KIWOOM_APP_KEY"] = "test_key"
-        os.environ["KIWOOM_SECRET"] = "test_secret"
+        os.environ["KIWOOM_APP_SECRET"] = "test_secret"
         os.environ.pop("KIWOOM_ENV", None)  # default = PRODUCTION
         ff.reload()
 
@@ -203,7 +257,7 @@ class TestKiwoomExchangeWiring:
         # the order_manager owns (P5-Kiwoom-Adapter same-instance rule).
         os.environ["V71_FF__V71__KIWOOM_EXCHANGE"] = "true"
         os.environ["KIWOOM_APP_KEY"] = "test_key"
-        os.environ["KIWOOM_SECRET"] = "test_secret"
+        os.environ["KIWOOM_APP_SECRET"] = "test_secret"
         ff.reload()
 
         with patch(
@@ -224,7 +278,7 @@ class TestKiwoomExchangeWiring:
     async def test_detach_calls_kiwoom_aclose(self):
         os.environ["V71_FF__V71__KIWOOM_EXCHANGE"] = "true"
         os.environ["KIWOOM_APP_KEY"] = "test_key"
-        os.environ["KIWOOM_SECRET"] = "test_secret"
+        os.environ["KIWOOM_APP_SECRET"] = "test_secret"
         ff.reload()
 
         with patch(
@@ -258,7 +312,7 @@ class TestReconcilerWiring:
         os.environ["V71_FF__V71__KIWOOM_EXCHANGE"] = "true"
         os.environ["V71_FF__V71__RECONCILIATION_V71"] = "false"
         os.environ["KIWOOM_APP_KEY"] = "test_key"
-        os.environ["KIWOOM_SECRET"] = "test_secret"
+        os.environ["KIWOOM_APP_SECRET"] = "test_secret"
         ff.reload()
         with patch("src.database.connection.get_db_manager") as get_db_mock:
             get_db_mock.return_value.session = lambda: None
@@ -287,7 +341,7 @@ class TestReconcilerWiring:
         os.environ["V71_FF__V71__KIWOOM_EXCHANGE"] = "true"
         os.environ["V71_FF__V71__RECONCILIATION_V71"] = "true"
         os.environ["KIWOOM_APP_KEY"] = "test_key"
-        os.environ["KIWOOM_SECRET"] = "test_secret"
+        os.environ["KIWOOM_APP_SECRET"] = "test_secret"
         os.environ.pop("V71_RECONCILER_INTERVAL_SECONDS", None)
         ff.reload()
         with patch("src.database.connection.get_db_manager") as get_db_mock:
@@ -313,7 +367,7 @@ class TestReconcilerWiring:
         os.environ["V71_FF__V71__KIWOOM_EXCHANGE"] = "true"
         os.environ["V71_FF__V71__RECONCILIATION_V71"] = "true"
         os.environ["KIWOOM_APP_KEY"] = "test_key"
-        os.environ["KIWOOM_SECRET"] = "test_secret"
+        os.environ["KIWOOM_APP_SECRET"] = "test_secret"
         os.environ["V71_RECONCILER_INTERVAL_SECONDS"] = "0.01"
         ff.reload()
         with patch("src.database.connection.get_db_manager") as get_db_mock:
@@ -348,7 +402,7 @@ class TestReconcilerWiring:
         os.environ["V71_FF__V71__KIWOOM_EXCHANGE"] = "true"
         os.environ["V71_FF__V71__RECONCILIATION_V71"] = "true"
         os.environ["KIWOOM_APP_KEY"] = "test_key"
-        os.environ["KIWOOM_SECRET"] = "test_secret"
+        os.environ["KIWOOM_APP_SECRET"] = "test_secret"
         os.environ["V71_RECONCILER_INTERVAL_SECONDS"] = "0.01"
         ff.reload()
         with patch("src.database.connection.get_db_manager") as get_db_mock:
