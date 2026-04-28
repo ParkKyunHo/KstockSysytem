@@ -945,3 +945,417 @@ class TestNotificationDetach:
         assert handle.notification_queue is None
         assert handle.notification_circuit_breaker is None
         assert handle.notification_repository is None
+
+
+# ---------------------------------------------------------------------------
+# Group J: P-Wire-4a `_coerce_int` (5 cases parametrized)
+# ---------------------------------------------------------------------------
+
+
+class TestCoerceInt:
+    @pytest.mark.parametrize(
+        "raw,expected",
+        [
+            (None, 0),
+            ("", 0),
+            ("00012345", 12345),
+            ("abc", 0),
+            ("-100", 0),  # security L2: negatives clamped
+            (12345, 12345),
+        ],
+    )
+    def test_coerce_int_cases(self, raw, expected):
+        from src.web.v71.trading_bridge import _coerce_int
+        assert _coerce_int(raw) == expected
+
+
+# ---------------------------------------------------------------------------
+# Group K: `_build_total_capital_cache` (H1/M4 + TTL)
+# ---------------------------------------------------------------------------
+
+
+class TestTotalCapitalCache:
+    @staticmethod
+    def _make_kiwoom_client(body):
+        from unittest.mock import MagicMock
+        client = MagicMock()
+        response = MagicMock()
+        response.body = body
+        client.get_account_balance = AsyncMock(return_value=response)
+        return client
+
+    async def test_first_refresh_populates_cache(self):
+        from src.web.v71.trading_bridge import _build_total_capital_cache
+
+        client = self._make_kiwoom_client(
+            {"prsm_dpst_aset_amt": "0001000000"},
+        )
+        get_total, refresh = _build_total_capital_cache(client)
+        assert get_total() == 0  # before refresh
+        await refresh()
+        assert get_total() == 1000000
+
+    async def test_kiwoom_error_falls_back_to_zero(self):
+        from unittest.mock import MagicMock
+
+        from src.web.v71.trading_bridge import _build_total_capital_cache
+
+        client = MagicMock()
+        client.get_account_balance = AsyncMock(
+            side_effect=RuntimeError("kt00018 down"),
+        )
+        _, refresh = _build_total_capital_cache(client)
+        await refresh()
+        get_total, _ = _build_total_capital_cache(client)
+        assert get_total() == 0  # fail-secure
+
+    async def test_body_not_dict_returns_zero(self):
+        # M4 form check: body is a string -> caching 0 + WARNING
+        from unittest.mock import MagicMock
+
+        from src.web.v71.trading_bridge import _build_total_capital_cache
+
+        client = MagicMock()
+        response = MagicMock()
+        response.body = "ERROR_STRING"
+        client.get_account_balance = AsyncMock(return_value=response)
+        get_total, refresh = _build_total_capital_cache(client)
+        await refresh()
+        assert get_total() == 0
+
+    async def test_missing_keys_returns_zero(self):
+        from src.web.v71.trading_bridge import _build_total_capital_cache
+
+        client = self._make_kiwoom_client({"unrelated_key": "12345"})
+        get_total, refresh = _build_total_capital_cache(client)
+        await refresh()
+        assert get_total() == 0
+
+    async def test_inflight_guard_blocks_concurrent_refreshes(self):
+        # H1 inflight: simulate burst of sync get_total_capital() calls;
+        # each schedules at most one refresh.
+        from src.web.v71.trading_bridge import _build_total_capital_cache
+
+        client = self._make_kiwoom_client(
+            {"prsm_dpst_aset_amt": "0001000000"},
+        )
+        get_total, _ = _build_total_capital_cache(client)
+        # Drain prior value so first sync call expires TTL
+        # 100 sync calls before any task gets a chance to run
+        for _ in range(100):
+            get_total()
+        # Yield once so the create_task can drain
+        await asyncio.sleep(0)
+        # Wait briefly for the refresh to land
+        for _ in range(5):
+            if client.get_account_balance.await_count >= 1:
+                break
+            await asyncio.sleep(0.01)
+        assert client.get_account_balance.await_count == 1
+
+
+# ---------------------------------------------------------------------------
+# Group L: `_build_invested_pct_factory` (4 cases)
+# ---------------------------------------------------------------------------
+
+
+class TestInvestedPctFactory:
+    @staticmethod
+    def _pos(stock, qty, price, status="OPEN"):
+        from types import SimpleNamespace
+        return SimpleNamespace(
+            stock_code=stock,
+            weighted_avg_price=price,
+            total_quantity=qty,
+            status=status,
+        )
+
+    def test_capital_zero_returns_zero(self):
+        from unittest.mock import MagicMock
+
+        from src.web.v71.trading_bridge import _build_invested_pct_factory
+
+        pm = MagicMock()
+        pm.list_for_stock.return_value = [self._pos("005930", 10, 70000)]
+        factory = _build_invested_pct_factory(pm, lambda: 0)
+        assert factory("005930") == 0.0
+
+    def test_empty_positions_returns_zero(self):
+        from unittest.mock import MagicMock
+
+        from src.web.v71.trading_bridge import _build_invested_pct_factory
+
+        pm = MagicMock()
+        pm.list_for_stock.return_value = []
+        factory = _build_invested_pct_factory(pm, lambda: 1000000)
+        assert factory("005930") == 0.0
+
+    def test_open_and_partial_summed(self):
+        from unittest.mock import MagicMock
+
+        from src.web.v71.trading_bridge import _build_invested_pct_factory
+
+        pm = MagicMock()
+        pm.list_for_stock.return_value = [
+            self._pos("005930", 10, 50000, "OPEN"),         # 500,000
+            self._pos("005930", 5, 60000, "PARTIAL_CLOSED"),  # 300,000
+        ]
+        factory = _build_invested_pct_factory(pm, lambda: 2000000)
+        # (500_000 + 300_000) / 2_000_000 * 100 = 40.0
+        assert factory("005930") == 40.0
+
+    def test_closed_excluded(self):
+        from unittest.mock import MagicMock
+
+        from src.web.v71.trading_bridge import _build_invested_pct_factory
+
+        pm = MagicMock()
+        pm.list_for_stock.return_value = [
+            self._pos("005930", 10, 50000, "OPEN"),       # included 500k
+            self._pos("005930", 20, 50000, "CLOSED"),     # excluded 1M
+        ]
+        factory = _build_invested_pct_factory(pm, lambda: 1000000)
+        assert factory("005930") == 50.0
+
+
+# ---------------------------------------------------------------------------
+# Group M: `_build_prev_close_cache` + `_build_tracked_stock_lookup` +
+#          `_load_tracked_stocks_cache`
+# ---------------------------------------------------------------------------
+
+
+class TestPrevCloseCache:
+    async def test_cache_miss_returns_zero(self):
+        from unittest.mock import MagicMock
+
+        from src.web.v71.trading_bridge import _build_prev_close_cache
+
+        client = MagicMock()
+        get_prev, _cache = _build_prev_close_cache(client)
+        assert get_prev("005930") == 0
+        # Drain orphan task
+        await asyncio.sleep(0)
+
+    async def test_cache_hit_returns_value(self):
+        from unittest.mock import MagicMock
+
+        from src.web.v71.trading_bridge import _build_prev_close_cache
+
+        client = MagicMock()
+        get_prev, cache = _build_prev_close_cache(client)
+        cache["005930"] = ("20260427", 75000)
+        assert get_prev("005930") == 75000
+
+
+class TestTrackedStockLookup:
+    def test_hit_returns_stock_code(self):
+        from src.web.v71.trading_bridge import _build_tracked_stock_lookup
+
+        lookup, _ = _build_tracked_stock_lookup({"uuid-1": "005930"})
+        assert lookup("uuid-1") == "005930"
+
+    def test_miss_raises_keyerror(self):
+        from src.web.v71.trading_bridge import _build_tracked_stock_lookup
+
+        lookup, _ = _build_tracked_stock_lookup({})
+        with pytest.raises(KeyError):
+            lookup("nonexistent")
+
+
+class TestLoadTrackedStocksCache:
+    async def test_normal_select_returns_dict(self):
+        from contextlib import asynccontextmanager
+        from unittest.mock import MagicMock
+
+        # Build a mock that yields (id, "005930"), (id2, "012345")
+        rows = [("uuid-1", "005930"), ("uuid-2", "012345")]
+        result_mock = MagicMock()
+        result_mock.all.return_value = rows
+        session = AsyncMock()
+        session.execute = AsyncMock(return_value=result_mock)
+
+        @asynccontextmanager
+        async def _session_cm():
+            yield session
+
+        db = MagicMock()
+        db.session = _session_cm
+
+        with patch(
+            "src.database.connection.get_db_manager", return_value=db,
+        ):
+            from src.web.v71.trading_bridge import _load_tracked_stocks_cache
+            cache = await _load_tracked_stocks_cache()
+        assert cache == {"uuid-1": "005930", "uuid-2": "012345"}
+
+    async def test_invalid_stock_codes_filtered(self, caplog):
+        # M1 regex: empty / 4-digit / special chars all skipped
+        from contextlib import asynccontextmanager
+        from unittest.mock import MagicMock
+
+        rows = [
+            ("uuid-1", "005930"),    # valid 6-digit
+            ("uuid-2", ""),          # invalid (empty)
+            ("uuid-3", "1234"),      # invalid (4 digits)
+            ("uuid-4", "12-345"),    # invalid (special char)
+            ("uuid-5", "abcdefghi"), # invalid (>8 chars)
+        ]
+        result_mock = MagicMock()
+        result_mock.all.return_value = rows
+        session = AsyncMock()
+        session.execute = AsyncMock(return_value=result_mock)
+
+        @asynccontextmanager
+        async def _session_cm():
+            yield session
+
+        db = MagicMock()
+        db.session = _session_cm
+
+        with patch(
+            "src.database.connection.get_db_manager", return_value=db,
+        ):
+            from src.web.v71.trading_bridge import _load_tracked_stocks_cache
+            with caplog.at_level("WARNING"):
+                cache = await _load_tracked_stocks_cache()
+        assert cache == {"uuid-1": "005930"}
+        assert any("invalid stock_code" in r.message for r in caplog.records)
+
+    async def test_db_exception_returns_empty(self, caplog):
+        from contextlib import asynccontextmanager
+        from unittest.mock import MagicMock
+
+        session = AsyncMock()
+        session.execute = AsyncMock(side_effect=RuntimeError("conn dropped"))
+
+        @asynccontextmanager
+        async def _session_cm():
+            yield session
+
+        db = MagicMock()
+        db.session = _session_cm
+
+        with patch(
+            "src.database.connection.get_db_manager", return_value=db,
+        ):
+            from src.web.v71.trading_bridge import _load_tracked_stocks_cache
+            with caplog.at_level("WARNING"):
+                cache = await _load_tracked_stocks_cache()
+        assert cache == {}
+        assert any(
+            "tracked_stocks cache prime failed" in r.message
+            for r in caplog.records
+        )
+
+
+# ---------------------------------------------------------------------------
+# Group N: `_build_buy_executor` cross-flag invariant (4 cases)
+# ---------------------------------------------------------------------------
+
+
+class TestBuildBuyExecutorCrossFlag:
+    @staticmethod
+    def _make_full_handle():
+        """Construct a handle with all required attrs set to mocks."""
+        from unittest.mock import MagicMock
+
+        from src.web.v71.trading_bridge import _TradingEngineHandle
+
+        h = _TradingEngineHandle()
+        h.kiwoom_client = MagicMock()
+        h.kiwoom_client.get_account_balance = AsyncMock(
+            return_value=MagicMock(body={"prsm_dpst_aset_amt": "1000000"}),
+        )
+        h.exchange_adapter = MagicMock()
+        h.box_manager = MagicMock()
+        h.position_manager = MagicMock()
+        h.position_manager.list_for_stock = MagicMock(return_value=[])
+        h.notification_service = MagicMock()
+        return h
+
+    @pytest.mark.parametrize(
+        "flag_off",
+        ["v71.box_system", "v71.kiwoom_exchange", "v71.notification_v71"],
+    )
+    async def test_missing_flag_raises(self, flag_off):
+        for flag in (
+            "v71.box_system", "v71.kiwoom_exchange", "v71.notification_v71",
+        ):
+            os.environ[
+                f"V71_FF__V71__{flag.split('.')[-1].upper()}"
+            ] = "false" if flag == flag_off else "true"
+        ff.reload()
+        from contextlib import asynccontextmanager
+        from unittest.mock import MagicMock
+
+        # Stub DB so the function reaches the cross-flag check
+        rows_result = MagicMock()
+        rows_result.all.return_value = []
+        session = AsyncMock()
+        session.execute = AsyncMock(return_value=rows_result)
+
+        @asynccontextmanager
+        async def _session_cm():
+            yield session
+
+        db = MagicMock()
+        db.session = _session_cm
+        with patch(
+            "src.database.connection.get_db_manager", return_value=db,
+        ):
+            from src.web.v71.trading_bridge import _build_buy_executor
+            handle = self._make_full_handle()
+            with pytest.raises(RuntimeError, match="dependencies are OFF"):
+                await _build_buy_executor(handle)
+
+    async def test_notification_service_none_raises(self):
+        for flag in (
+            "box_system", "kiwoom_exchange", "notification_v71",
+        ):
+            os.environ[f"V71_FF__V71__{flag.upper()}"] = "true"
+        ff.reload()
+        from src.web.v71.trading_bridge import _build_buy_executor
+        handle = self._make_full_handle()
+        handle.notification_service = None
+        with pytest.raises(RuntimeError, match="notification_service"):
+            await _build_buy_executor(handle)
+
+
+# ---------------------------------------------------------------------------
+# Group O: attach/detach integration with feature flag
+# ---------------------------------------------------------------------------
+
+
+class TestBuyExecutorAttachDetach:
+    async def test_attach_buy_executor_flag_off_leaves_slots_none(self):
+        os.environ["V71_FF__V71__BUY_EXECUTOR_V71"] = "false"
+        ff.reload()
+        from src.web.v71.trading_bridge import (
+            attach_trading_engine,
+            detach_trading_engine,
+        )
+        handle = await attach_trading_engine()
+        try:
+            assert handle.buy_executor is None
+            assert handle.clock is None
+            assert handle.total_capital_refresh is None
+            assert handle.prev_close_cache is None
+            assert handle.tracked_stock_cache is None
+        finally:
+            await detach_trading_engine(handle)
+
+    async def test_detach_clears_all_p_wire_4_slots(self):
+        # Even when flag was off, detach must reset degraded_vi defensively
+        os.environ["V71_FF__V71__BUY_EXECUTOR_V71"] = "false"
+        ff.reload()
+        from src.web.v71.api.system.state import system_state
+        from src.web.v71.trading_bridge import (
+            attach_trading_engine,
+            detach_trading_engine,
+        )
+        # Force degraded_vi True to verify reset
+        system_state.degraded_vi = True
+        handle = await attach_trading_engine()
+        await detach_trading_engine(handle)
+        assert system_state.degraded_vi is False
+        assert handle.buy_executor is None

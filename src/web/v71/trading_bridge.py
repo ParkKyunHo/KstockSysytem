@@ -26,9 +26,18 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
+import time
 from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID
+
+# P-Wire-4 extraction: ``V71RealClock`` is the production Clock impl
+# shared by every V7.1 background service (NotificationService worker,
+# BuyExecutor, ExitExecutor, ViMonitor). The local alias below keeps
+# downstream tests that read ``_AsyncioRealClock`` from this module
+# functional during the Phase 6/7 transition.
+from src.core.v71.v71_realclock import V71RealClock
 
 from .api.system.state import feature_flags, system_state
 from .ws.event_bus import event_bus
@@ -385,6 +394,14 @@ class _TradingEngineHandle:
         self.notification_queue: Any = None
         self.notification_circuit_breaker: Any = None
         self.notification_service: Any = None
+        # P-Wire-4a: V71BuyExecutor + supporting callables. The executor
+        # itself is stateless, but the cache/closure references are
+        # retained on the handle for visibility (paper smoke + tests).
+        self.clock: Any = None
+        self.buy_executor: Any = None
+        self.total_capital_refresh: Any = None
+        self.prev_close_cache: Any = None
+        self.tracked_stock_cache: Any = None
 
 
 # Default reconciliation cadence (PRD 02_TRADING_RULES.md §7.1 -- "매 5분마다").
@@ -477,26 +494,7 @@ def _build_reconciler(handle: _TradingEngineHandle) -> Any:
     )
 
 
-class _AsyncioRealClock:
-    """Production :class:`Clock` impl wrapping ``asyncio.sleep`` + UTC ``now``.
-
-    Defined here so multiple V7.1 background services (notification
-    worker, daily summary scheduler, etc.) share a single concrete
-    clock. ``Clock`` Protocol lives at
-    ``src.core.v71.strategies.v71_buy_executor:Clock``; tests inject
-    fakes, production wires this class.
-    """
-
-    def now(self) -> datetime:
-        return datetime.now(timezone.utc)
-
-    async def sleep(self, seconds: float) -> None:
-        await asyncio.sleep(seconds)
-
-    async def sleep_until(self, target: datetime) -> None:
-        delta = (target - self.now()).total_seconds()
-        if delta > 0:
-            await asyncio.sleep(delta)
+_AsyncioRealClock = V71RealClock  # backwards-compatible alias for tests
 
 
 async def _build_pg_notification_execute() -> Any:
@@ -600,6 +598,396 @@ def _build_notification_stack() -> dict[str, Any]:
         "_V71NotificationQueue": V71NotificationQueue,
         "_V71CircuitBreaker": V71CircuitBreaker,
         "_V71NotificationService": V71NotificationService,
+    }
+
+
+# ---------------------------------------------------------------------------
+# P-Wire-4: V71BuyExecutor wiring helpers
+# ---------------------------------------------------------------------------
+#
+# BuyExecutor needs four callables that the strategies module captures as
+# closures (BuyExecutorContext is frozen). Two are kt00018-backed with a
+# 5 minute TTL cache (PRD 02_TRADING_RULES.md §3.4 cap check tolerates
+# minute-level staleness; per-call kt00018 burns one of the 4.5/sec slots
+# during regular session). One is a per-trading-day cache for previous
+# close (PATH_B 09:01 gap-up). One is a tracked_stocks DB lookup.
+#
+# Architect Q3: VI is wired in P-Wire-4c. P-Wire-4a uses a stub
+# ``is_vi_active = lambda code: False`` + system_state.degraded_vi=True
+# so the dashboard reflects the gap.
+
+_TOTAL_CAPITAL_TTL_SECONDS = 300.0  # PRD §6.2 / §3.4: 5분 단위 평가
+_TRACKED_CACHE_DB_TIMEOUT_SECONDS = 10.0  # security M3: bound boot blocking
+# Top-level kt00018 keys (KIWOOM_API_ANALYSIS.md). Wire-level field
+# correction may land in P-Wire-5 paper smoke; the cache falls back to
+# 0 + WARNING when neither key resolves so PATH_A naturally abandons
+# (헌법 §1: 자본금 추정 실패는 매수 차단).
+_KT00018_TOTAL_EVAL_KEYS = ("tot_evlt_amt", "prsm_dpst_aset_amt", "tot_pur_amt")
+# security M1: KRX (6 digits) + NXT (5-8 alphanumeric) whitelist. Mirrors
+# ``src/core/v71/exchange/reconciler.py:140``.
+_VALID_STOCK_CODE = re.compile(r"^[A-Z0-9]{5,8}$")
+
+
+def _coerce_int(raw: Any) -> int:
+    """Robust string→int that accepts kiwoom's zero-padded numeric strings.
+
+    security L2: clamp negatives to 0 -- a negative ``total_capital`` would
+    invert the §3.4 cap check and let buys through against the user's
+    intent (헌법 §1).
+    """
+    if raw is None:
+        return 0
+    try:
+        value = int(str(raw).strip().lstrip("0") or "0")
+    except (TypeError, ValueError):
+        return 0
+    return max(0, value)
+
+
+def _build_total_capital_cache(kiwoom_client: Any) -> Any:
+    """Return a sync ``Callable[[], int]`` backed by a 5-min TTL cache.
+
+    security H1: ``_refresh`` is wrapped in ``BaseException`` catch-all
+    so an orphan ``asyncio.create_task(...)`` cannot leak unhandled
+    exceptions into the default loop handler. ``inflight`` guards against
+    a burst of TTL-expired sync calls each scheduling their own refresh
+    (memory + rate-limit slot exhaustion).
+
+    security M4: ``response.body`` shape is validated -- non-dict bodies
+    fall through to the fallback path (cache 0 + WARNING).
+    """
+    state: dict[str, Any] = {
+        "value": 0,
+        "fetched_at": 0.0,    # time.monotonic timestamp of last fetch
+        "inflight": False,
+    }
+
+    async def _refresh_inner() -> None:
+        try:
+            response = await kiwoom_client.get_account_balance()
+        except Exception as exc:  # noqa: BLE001 -- callable must not raise
+            logger.warning(
+                "trading_bridge: get_total_capital refresh failed: %s",
+                type(exc).__name__,
+            )
+            return
+        body = getattr(response, "body", response)
+        if not isinstance(body, dict):
+            logger.warning(
+                "trading_bridge: get_total_capital response shape "
+                "unexpected: %s -- caching 0",
+                type(body).__name__,
+            )
+            state["value"] = 0
+            state["fetched_at"] = time.monotonic()
+            return
+        for key in _KT00018_TOTAL_EVAL_KEYS:
+            if key in body:
+                state["value"] = _coerce_int(body[key])
+                state["fetched_at"] = time.monotonic()
+                return
+        logger.warning(
+            "trading_bridge: get_total_capital response missing all of %s "
+            "-- caching 0 (PATH_A buys will abandon via cap check)",
+            _KT00018_TOTAL_EVAL_KEYS,
+        )
+        state["value"] = 0
+        state["fetched_at"] = time.monotonic()
+
+    async def _refresh() -> None:
+        # Outer wrapper guards orphan tasks from leaking BaseException
+        # (e.g., KeyboardInterrupt during shutdown) into the default loop
+        # handler.
+        state["inflight"] = True
+        try:
+            await _refresh_inner()
+        except BaseException:  # noqa: BLE001 -- orphan task must not raise
+            logger.exception(
+                "trading_bridge: _refresh leaked unexpected exception"
+            )
+        finally:
+            state["inflight"] = False
+
+    def get_total_capital() -> int:
+        if (
+            not state["inflight"]
+            and time.monotonic() - state["fetched_at"]
+            > _TOTAL_CAPITAL_TTL_SECONDS
+        ):
+            # Mark inflight synchronously so a burst of sync callers all
+            # see the guard and stop scheduling duplicate refreshes.
+            state["inflight"] = True
+            try:
+                loop = asyncio.get_event_loop()
+                loop.create_task(_refresh())
+            except RuntimeError:
+                # No running loop (sync test) -- release the guard so
+                # caller can prime synchronously by awaiting _refresh().
+                state["inflight"] = False
+        return int(state["value"])
+
+    return get_total_capital, _refresh
+
+
+def _build_invested_pct_factory(
+    position_manager: Any, get_total_capital: Any,
+) -> Any:
+    """Return ``Callable[[str], float]`` computing per-stock invested
+    percentage of total capital.
+
+    Formula: ``sum(weighted_avg_price * total_quantity for OPEN/PARTIAL_CLOSED
+    positions on stock_code) / total_capital * 100``.
+
+    Returns ``0.0`` when total_capital is 0 (cache uninitialised) -- this
+    feeds straight into PATH_A cap check, which then trips on
+    ``box.position_size_pct`` alone.
+    """
+    def get_invested_pct_for_stock(stock_code: str) -> float:
+        capital = get_total_capital()
+        if capital <= 0:
+            return 0.0
+        positions = position_manager.list_for_stock(stock_code)
+        cost = sum(
+            int(getattr(p, "weighted_avg_price", 0))
+            * int(getattr(p, "total_quantity", 0))
+            for p in positions
+            if getattr(p, "status", "OPEN") != "CLOSED"
+        )
+        return (cost / capital) * 100.0
+
+    return get_invested_pct_for_stock
+
+
+def _build_prev_close_cache(kiwoom_client: Any) -> Any:  # noqa: ARG001
+    """Return ``Callable[[str], int]`` backed by a per-trading-day cache.
+
+    PATH_B 1차 매수 (PRD §3.10) only needs the previous close, fetched
+    once per day. The sync callable performs a dict lookup; cache misses
+    schedule an async fetch (kiwoom_client.request ka10081) and return 0.
+    Returning 0 makes ``check_gap_up_for_path_b`` interpret as
+    ``ABANDONED_GAP``-equivalent (defensive; the priming task should
+    have run before 09:01).
+
+    security H1: ``inflight`` set guards against duplicate fetches for
+    the same stock_code within the same fetch window.
+    """
+    cache: dict[str, tuple[str, int]] = {}  # stock -> (yyyymmdd, prev_close)
+    inflight: set[str] = set()
+
+    async def _fetch_inner(stock_code: str) -> None:
+        # ka10081 daily chart -- last completed bar's close.
+        # The wire-level call is in P-Wire-5; here we only stub the
+        # sync surface so BuyExecutor wiring lands. Tests inject the
+        # cache contents directly via the returned `cache` dict.
+        logger.warning(
+            "trading_bridge: prev_close cache miss for %s -- "
+            "P-Wire-5 paper smoke must pre-warm via ka10081",
+            stock_code,
+        )
+
+    async def _fetch(stock_code: str) -> None:
+        try:
+            await _fetch_inner(stock_code)
+        except BaseException:  # noqa: BLE001 -- orphan task must not raise
+            logger.exception(
+                "trading_bridge: prev_close fetch leaked exception"
+            )
+        finally:
+            inflight.discard(stock_code)
+
+    def get_previous_close(stock_code: str) -> int:
+        entry = cache.get(stock_code)
+        if entry is None:
+            if stock_code not in inflight:
+                inflight.add(stock_code)
+                try:
+                    loop = asyncio.get_event_loop()
+                    loop.create_task(_fetch(stock_code))
+                except RuntimeError:
+                    inflight.discard(stock_code)
+            return 0
+        return int(entry[1])
+
+    return get_previous_close, cache
+
+
+def _build_tracked_stock_lookup(initial: dict[str, str] | None = None) -> Any:
+    """Return ``Callable[[str], str]`` mapping
+    ``tracked_stock_id -> stock_code``.
+
+    Lifespan-time wiring loads the current ``tracked_stocks`` table once
+    so BuyExecutor can resolve ``BoxRecord.tracked_stock_id`` to the
+    six-digit Kiwoom stock_code without touching the DB on the hot path.
+    Cache misses raise KeyError (BuyExecutor abandons the box).
+    """
+    cache: dict[str, str] = dict(initial or {})
+
+    def lookup(tracked_stock_id: str) -> str:
+        try:
+            return cache[tracked_stock_id]
+        except KeyError as exc:
+            raise KeyError(
+                f"tracked_stock_id={tracked_stock_id!r} not in cache "
+                "(re-prime via DB SELECT or restart)"
+            ) from exc
+
+    return lookup, cache
+
+
+async def _load_tracked_stocks_cache() -> dict[str, str]:
+    """Load tracked_stocks (id, stock_code) once at lifespan start.
+
+    security M1: stock_code values from the DB are validated against
+    ``_VALID_STOCK_CODE`` -- malformed rows (data corruption, malicious
+    inputs) are skipped so they cannot reach the kiwoom wire.
+
+    security M3: the SELECT is bounded by
+    ``_TRACKED_CACHE_DB_TIMEOUT_SECONDS`` so a hung Supabase pooler
+    cannot block lifespan boot indefinitely (PRD §13 boot budget).
+    """
+    from sqlalchemy import select
+
+    from src.database.connection import get_db_manager
+    from src.database.models_v71 import TrackedStock
+
+    db = get_db_manager()
+    cache: dict[str, str] = {}
+    skipped = 0
+    try:
+        async with asyncio.timeout(_TRACKED_CACHE_DB_TIMEOUT_SECONDS), \
+                db.session() as session:
+            result = await session.execute(
+                select(TrackedStock.id, TrackedStock.stock_code),
+            )
+            for tid, stock_code in result.all():
+                code = str(stock_code).strip().upper()
+                if not _VALID_STOCK_CODE.match(code):
+                    skipped += 1
+                    continue  # value itself never logged (M1 PII rule)
+                cache[str(tid)] = code
+    except asyncio.TimeoutError:
+        logger.warning(
+            "trading_bridge: tracked_stocks cache prime timed out (>%.0fs) "
+            "-- BuyExecutor will abandon every PATH_A box until restart",
+            _TRACKED_CACHE_DB_TIMEOUT_SECONDS,
+        )
+    except Exception as exc:  # noqa: BLE001 -- cache miss path is safe
+        logger.warning(
+            "trading_bridge: tracked_stocks cache prime failed: %s",
+            type(exc).__name__,
+        )
+    if skipped:
+        logger.warning(
+            "trading_bridge: tracked_stocks cache primed with %d valid "
+            "rows; %d invalid stock_code rows skipped",
+            len(cache), skipped,
+        )
+    return cache
+
+
+async def _build_buy_executor(handle: _TradingEngineHandle) -> dict[str, Any]:
+    """Construct V71BuyExecutor + supporting callables.
+
+    Cross-flag invariant (architect Q8): all of
+    ``v71.box_system`` / ``v71.kiwoom_exchange`` / ``v71.notification_v71``
+    must be ON. Otherwise raise so lifespan surfaces the misconfig.
+    """
+    from src.utils.feature_flags import is_enabled
+
+    missing = [
+        flag
+        for flag in (
+            "v71.box_system",
+            "v71.kiwoom_exchange",
+            "v71.notification_v71",
+        )
+        if not is_enabled(flag)
+    ]
+    if missing:
+        raise RuntimeError(
+            "trading_bridge: v71.buy_executor_v71 enabled but required "
+            f"dependencies are OFF: {missing}"
+        )
+    if handle.exchange_adapter is None:
+        raise RuntimeError(
+            "trading_bridge: BuyExecutor requires exchange_adapter "
+            "(v71.kiwoom_exchange flag built no adapter)"
+        )
+    if handle.box_manager is None:
+        raise RuntimeError(
+            "trading_bridge: BuyExecutor requires box_manager",
+        )
+    if handle.position_manager is None:
+        raise RuntimeError(
+            "trading_bridge: BuyExecutor requires position_manager",
+        )
+    if handle.notification_service is None:
+        raise RuntimeError(
+            "trading_bridge: BuyExecutor requires notification_service "
+            "(v71.notification_v71 ON but service is queue-only -- "
+            "BuyExecutor cannot accept Notifier=None)",
+        )
+
+    from src.core.v71.strategies.v71_buy_executor import (
+        BuyExecutorContext,
+        V71BuyExecutor,
+    )
+
+    clock = V71RealClock()
+    get_total_capital, refresh_total = _build_total_capital_cache(
+        handle.kiwoom_client,
+    )
+    # Prime the capital cache once so the first PATH_A buy doesn't fall
+    # through to fallback 0.
+    await refresh_total()
+    get_invested_pct = _build_invested_pct_factory(
+        handle.position_manager, get_total_capital,
+    )
+    get_previous_close, prev_close_cache = _build_prev_close_cache(
+        handle.kiwoom_client,
+    )
+    tracked_seed = await _load_tracked_stocks_cache()
+    tracked_lookup, tracked_cache = _build_tracked_stock_lookup(tracked_seed)
+
+    # Architect Q3 stub: VI wiring is P-Wire-4c. Surface the gap on
+    # every call so PATH_A buy decisions land in operational logs and
+    # mark system_state.degraded_vi so the dashboard sees the gap
+    # (security M2).
+    def is_vi_active_stub(stock_code: str) -> bool:
+        logger.warning(
+            "trading_bridge: VI stub returned False for %s "
+            "(P-Wire-4c not yet wired)",
+            stock_code,
+        )
+        return False
+
+    system_state.degraded_vi = True
+    logger.warning(
+        "trading_bridge: VI monitor not wired (P-Wire-4c TODO) -- "
+        "is_vi_active stub returns False; PATH_A entries will not "
+        "be blocked by VI state (system_state.degraded_vi=True)",
+    )
+
+    ctx = BuyExecutorContext(
+        exchange=handle.exchange_adapter,
+        box_manager=handle.box_manager,
+        position_store=handle.position_manager,
+        notifier=handle.notification_service,
+        clock=clock,
+        is_vi_active=is_vi_active_stub,
+        get_previous_close=get_previous_close,
+        get_total_capital=get_total_capital,
+        get_invested_pct_for_stock=get_invested_pct,
+    )
+    buy_executor = V71BuyExecutor(
+        context=ctx, tracked_stock_resolver=tracked_lookup,
+    )
+    return {
+        "buy_executor": buy_executor,
+        "clock": clock,
+        "total_capital_refresh": refresh_total,
+        "prev_close_cache": prev_close_cache,
+        "tracked_stock_cache": tracked_cache,
     }
 
 
@@ -786,6 +1174,35 @@ async def attach_trading_engine() -> _TradingEngineHandle:
             "-- notification stack not constructed",
         )
 
+    # P-Wire-4a: V71BuyExecutor wiring. Cross-flag invariant requires
+    # box_system + kiwoom_exchange + notification_v71 all ON; missing
+    # any of those raises (handled by lifespan).
+    if is_enabled("v71.buy_executor_v71"):
+        try:
+            built = await _build_buy_executor(handle)
+        except Exception as exc:  # noqa: BLE001 -- boot failure surfaces
+            logger.error(
+                "trading_bridge: v71.buy_executor_v71 enabled but "
+                "construction failed: %s",
+                type(exc).__name__,
+            )
+            raise
+        handle.buy_executor = built["buy_executor"]
+        handle.clock = built["clock"]
+        handle.total_capital_refresh = built["total_capital_refresh"]
+        handle.prev_close_cache = built["prev_close_cache"]
+        handle.tracked_stock_cache = built["tracked_stock_cache"]
+        logger.info(
+            "trading_bridge: V71BuyExecutor wired "
+            "(tracked_stocks_cached=%d, vi_stub=true)",
+            len(built["tracked_stock_cache"]),
+        )
+    else:
+        logger.warning(
+            "trading_bridge: feature flag 'v71.buy_executor_v71' disabled "
+            "-- buy_executor not constructed",
+        )
+
     # P-Wire-2: V71Reconciler periodic task. Only spins up when the
     # exchange infrastructure is already wired -- there is nothing to
     # reconcile against without a kiwoom_client.
@@ -841,6 +1258,18 @@ async def detach_trading_engine(handle: _TradingEngineHandle) -> None:
     """
     handle.box_manager = None
     handle.position_manager = None
+
+    # P-Wire-4a: drop executor + supporting closures. They are stateless
+    # (no aclose / cancel needed) -- the underlying caches die with the
+    # closures.
+    handle.buy_executor = None
+    handle.clock = None
+    handle.total_capital_refresh = None
+    handle.prev_close_cache = None
+    handle.tracked_stock_cache = None
+    # Reset M2 degraded flag so a clean detach + re-attach doesn't leak
+    # the prior session's mode into the dashboard.
+    system_state.degraded_vi = False
 
     # P-Wire-3: stop the notification worker first. Worker only depends
     # on telegram_send + clock (not kiwoom), but stopping early ensures

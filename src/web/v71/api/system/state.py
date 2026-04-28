@@ -24,6 +24,12 @@ class SystemState:
     websocket_connected: bool = True
     kiwoom_available: bool = True
     telegram_active: bool = True
+    # P-Wire-4a degraded mode flag: VI monitor is wired in P-Wire-4c. Until
+    # then, V71BuyExecutor receives an ``is_vi_active`` stub that returns
+    # ``False`` for every code. ``True`` here means PATH_A entries are NOT
+    # blocked by VI state; surfaced to the dashboard so operators can see
+    # the gap.
+    degraded_vi: bool = False
 
     def uptime_seconds(self) -> int:
         return int(time.time() - self.started_at)
