@@ -44,5 +44,8 @@ v71:
   report_pdf_export: false
   report_excel_export: false
 
+  # Phase 5 후속 / Phase 7 wiring: 키움 거래 인프라
+  kiwoom_exchange: false       # P-Wire-1 — V71KiwoomClient + V71OrderManager + V71KiwoomExchangeAdapter
+
   # 안전 장치 (역방향 비활성화)
   v70_box_fallback: true       # V7.1 박스 미활성 시 V7.0 동작 유지 보장

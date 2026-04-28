@@ -353,11 +353,95 @@ def set_feature_flag(key: str, value: bool) -> None:
 
 
 class _TradingEngineHandle:
-    """Opaque handle returned to lifespan; lets detach run cleanly."""
+    """Opaque handle returned to lifespan; lets detach run cleanly.
+
+    Holds references to every long-lived V7.1 trading object so the
+    teardown path can release them in reverse order (kiwoom client owns
+    a network connection -- it must close after everything that uses it).
+    """
 
     def __init__(self) -> None:
         self.box_manager: Any = None
         self.position_manager: Any = None
+        # P-Wire-1: Kiwoom exchange infrastructure (feature flag
+        # ``v71.kiwoom_exchange``). ``aclose()`` must run on detach.
+        self.token_manager: Any = None
+        self.rate_limiter: Any = None
+        self.kiwoom_client: Any = None
+        self.order_manager: Any = None
+        self.exchange_adapter: Any = None
+
+
+def _build_kiwoom_exchange() -> dict[str, Any]:
+    """Construct the V7.1 Kiwoom transport stack from environment.
+
+    Returns the freshly-built objects in a dict so the caller can attach
+    them onto the handle after deciding (via feature flag) whether to
+    keep them. The same V71KiwoomClient instance is shared between
+    V71OrderManager and V71KiwoomExchangeAdapter (P5-Kiwoom-Adapter
+    same-instance invariant).
+    """
+    import os
+
+    from src.core.v71.exchange.exchange_adapter import V71KiwoomExchangeAdapter
+    from src.core.v71.exchange.kiwoom_client import V71KiwoomClient
+    from src.core.v71.exchange.order_manager import V71OrderManager
+    from src.core.v71.exchange.rate_limiter import V71RateLimiter
+    from src.core.v71.exchange.token_manager import V71TokenManager
+    from src.core.v71.v71_constants import V71Constants
+
+    app_key = os.environ.get("KIWOOM_APP_KEY", "").strip()
+    app_secret = os.environ.get("KIWOOM_SECRET", "").strip()
+    if not app_key or not app_secret:
+        raise RuntimeError(
+            "trading_bridge: v71.kiwoom_exchange enabled but "
+            "KIWOOM_APP_KEY / KIWOOM_SECRET are not set in environment"
+        )
+
+    is_paper = os.environ.get("KIWOOM_ENV", "PRODUCTION").strip().upper() == "SANDBOX"
+
+    token_manager = V71TokenManager(
+        app_key=app_key, app_secret=app_secret, is_paper=is_paper,
+    )
+    rate_limiter = V71RateLimiter(
+        rate_per_second=(
+            V71Constants.API_RATE_LIMIT_PAPER_PER_SECOND
+            if is_paper
+            else V71Constants.API_RATE_LIMIT_PER_SECOND
+        ),
+    )
+    kiwoom_client = V71KiwoomClient(
+        token_manager=token_manager,
+        rate_limiter=rate_limiter,
+        is_paper=is_paper,
+    )
+
+    # V71OrderManager needs a DB session factory. Lifespan owns the
+    # database manager; the bridge reaches it through the established
+    # publisher state surface so we don't double-import.
+    from src.database.connection import get_db_manager
+
+    db = get_db_manager()
+    order_manager = V71OrderManager(
+        kiwoom_client=kiwoom_client,
+        db_session_factory=db.session,
+    )
+    exchange_adapter = V71KiwoomExchangeAdapter(
+        kiwoom_client=kiwoom_client,
+        order_manager=order_manager,
+    )
+
+    logger.info(
+        "trading_bridge: kiwoom exchange constructed (is_paper=%s)",
+        is_paper,
+    )
+    return {
+        "token_manager": token_manager,
+        "rate_limiter": rate_limiter,
+        "kiwoom_client": kiwoom_client,
+        "order_manager": order_manager,
+        "exchange_adapter": exchange_adapter,
+    }
 
 
 async def attach_trading_engine() -> _TradingEngineHandle:
@@ -375,6 +459,29 @@ async def attach_trading_engine() -> _TradingEngineHandle:
     from src.utils.feature_flags import is_enabled
 
     handle = _TradingEngineHandle()
+
+    # P-Wire-1: Kiwoom exchange infrastructure -- shared by V71OrderManager
+    # and V71KiwoomExchangeAdapter.
+    if is_enabled("v71.kiwoom_exchange"):
+        try:
+            built = _build_kiwoom_exchange()
+        except Exception as exc:  # noqa: BLE001 -- boot failure must surface
+            logger.error(
+                "trading_bridge: v71.kiwoom_exchange enabled but "
+                "construction failed: %s",
+                type(exc).__name__,
+            )
+            raise
+        handle.token_manager = built["token_manager"]
+        handle.rate_limiter = built["rate_limiter"]
+        handle.kiwoom_client = built["kiwoom_client"]
+        handle.order_manager = built["order_manager"]
+        handle.exchange_adapter = built["exchange_adapter"]
+    else:
+        logger.warning(
+            "trading_bridge: feature flag 'v71.kiwoom_exchange' disabled "
+            "-- kiwoom_client / order_manager / exchange_adapter not built",
+        )
 
     if is_enabled("v71.box_system"):
         from src.core.v71.box.box_manager import V71BoxManager
@@ -400,7 +507,8 @@ async def attach_trading_engine() -> _TradingEngineHandle:
 
     logger.info(
         "trading_bridge: V7.1 engine objects constructed "
-        "(box=%s, position=%s)",
+        "(kiwoom=%s, box=%s, position=%s)",
+        "yes" if handle.kiwoom_client else "no",
         type(handle.box_manager).__name__ if handle.box_manager else "none",
         type(handle.position_manager).__name__
         if handle.position_manager
@@ -410,9 +518,27 @@ async def attach_trading_engine() -> _TradingEngineHandle:
 
 
 async def detach_trading_engine(handle: _TradingEngineHandle) -> None:
-    """Release the engine handle. Currently no async resources to drain."""
+    """Release the engine handle in reverse construction order.
+
+    The Kiwoom client owns an httpx.AsyncClient connection pool -- close
+    it last (after the order_manager / exchange_adapter that use it).
+    """
     handle.box_manager = None
     handle.position_manager = None
+
+    handle.exchange_adapter = None
+    handle.order_manager = None
+    if handle.kiwoom_client is not None:
+        try:
+            await handle.kiwoom_client.aclose()
+        except Exception as exc:  # noqa: BLE001 -- shutdown is best-effort
+            logger.warning(
+                "trading_bridge: kiwoom_client.aclose() failed: %s",
+                type(exc).__name__,
+            )
+        handle.kiwoom_client = None
+    handle.rate_limiter = None
+    handle.token_manager = None
 
 
 __all__ = [
