@@ -36,7 +36,13 @@ $REMOTE_CURRENT = "$REMOTE_BASE/current"
 $REMOTE_SHARED_ENV = "$REMOTE_BASE/shared/.env"
 $DATE_TAG = Get-Date -Format "yyyyMMdd"
 
-$SSH_OPTS = "-o StrictHostKeyChecking=no -o UserKnownHostsFile=NUL"
+$SSH_OPTS = "-o StrictHostKeyChecking=no -o UserKnownHostsFile=NUL -o LogLevel=ERROR"
+# Inline arg list for direct `& ssh ...` / `& scp ...` calls (avoids
+# PowerShell 5.1 NativeCommandError from native-cmd stderr wrapping).
+$SSH_ARGS = @("-i", $LIGHTSAIL_KEY,
+              "-o", "StrictHostKeyChecking=no",
+              "-o", "UserKnownHostsFile=NUL",
+              "-o", "LogLevel=ERROR")
 
 Write-Host "============================================================" -ForegroundColor Cyan
 Write-Host " K_stock_trading V7.1 hotfix" -ForegroundColor Cyan
@@ -95,36 +101,49 @@ Write-Host "      OK (src.web.v71.main + trading_bridge)" -ForegroundColor Green
 # [3/6] Code transfer (src/ + .env + requirements.txt + scripts/harness)
 # ------------------------------------------------------------
 Write-Host "[3/6] code transfer..." -ForegroundColor Yellow
-$scp_src = "scp -i `"$LIGHTSAIL_KEY`" $SSH_OPTS -r `"$LOCAL_PROJECT\src`" `"${LIGHTSAIL_USER}@${LIGHTSAIL_HOST}:$REMOTE_CURRENT/`""
-Invoke-Expression $scp_src 2>$null
-$scp_req = "scp -i `"$LIGHTSAIL_KEY`" $SSH_OPTS `"$LOCAL_PROJECT\requirements.txt`" `"${LIGHTSAIL_USER}@${LIGHTSAIL_HOST}:$REMOTE_CURRENT/`""
-Invoke-Expression $scp_req 2>$null
+$dest = "${LIGHTSAIL_USER}@${LIGHTSAIL_HOST}"
+& scp @SSH_ARGS -r "$LOCAL_PROJECT\src" "${dest}:$REMOTE_CURRENT/"
+if ($LASTEXITCODE -ne 0) { Write-Host "[ERROR] scp src failed" -ForegroundColor Red; exit 1 }
+& scp @SSH_ARGS "$LOCAL_PROJECT\requirements.txt" "${dest}:$REMOTE_CURRENT/"
+if ($LASTEXITCODE -ne 0) { Write-Host "[ERROR] scp requirements failed" -ForegroundColor Red; exit 1 }
 # .env: send to current/ first (working ref), then mirror to shared/.env
 # (systemd EnvironmentFile reads shared/.env). CLAUDE.md Part 5.1 root cause
 # (V7.0 inline-comment incident) is the reason we always mirror.
-$scp_env = "scp -i `"$LIGHTSAIL_KEY`" $SSH_OPTS `"$envFile`" `"${LIGHTSAIL_USER}@${LIGHTSAIL_HOST}:$REMOTE_CURRENT/.env`""
-Invoke-Expression $scp_env 2>$null
-$scp_envtmp = "scp -i `"$LIGHTSAIL_KEY`" $SSH_OPTS `"$envFile`" `"${LIGHTSAIL_USER}@${LIGHTSAIL_HOST}:/tmp/.env.v71.staging`""
-Invoke-Expression $scp_envtmp 2>$null
-$scp_harness = "scp -i `"$LIGHTSAIL_KEY`" $SSH_OPTS -r `"$LOCAL_PROJECT\scripts\harness`" `"${LIGHTSAIL_USER}@${LIGHTSAIL_HOST}:$REMOTE_CURRENT/scripts/`""
-Invoke-Expression $scp_harness 2>$null
+& scp @SSH_ARGS "$envFile" "${dest}:$REMOTE_CURRENT/.env"
+if ($LASTEXITCODE -ne 0) { Write-Host "[ERROR] scp .env failed" -ForegroundColor Red; exit 1 }
+& scp @SSH_ARGS "$envFile" "${dest}:/tmp/.env.v71.staging"
+if ($LASTEXITCODE -ne 0) { Write-Host "[ERROR] scp .env staging failed" -ForegroundColor Red; exit 1 }
+# V7.0 current/ 에는 scripts/ 폴더 없으므로 (V7.1 첫 배포) mkdir 먼저
+& ssh @SSH_ARGS $dest "mkdir -p $REMOTE_CURRENT/scripts"
+if ($LASTEXITCODE -ne 0) { Write-Host "[ERROR] mkdir scripts failed" -ForegroundColor Red; exit 1 }
+& scp @SSH_ARGS -r "$LOCAL_PROJECT\scripts\harness" "${dest}:$REMOTE_CURRENT/scripts/"
+if ($LASTEXITCODE -ne 0) { Write-Host "[ERROR] scp harness failed" -ForegroundColor Red; exit 1 }
 Write-Host "      OK (src + requirements + .env + harness)" -ForegroundColor Green
 
 # ------------------------------------------------------------
 # [4/6] shared/.env mirror (with backup + perm 600)
 # ------------------------------------------------------------
 Write-Host "[4/6] shared/.env mirror..." -ForegroundColor Yellow
-$shared_mirror = @"
+# Single-quoted here-string so PowerShell does not evaluate bash $().
+$shared_template = @'
 set -e
-sudo cp -f $REMOTE_SHARED_ENV $REMOTE_BASE/shared/.env.bak.$DATE_TAG 2>/dev/null || true
-sudo cp -f /tmp/.env.v71.staging $REMOTE_SHARED_ENV
-sudo chown ubuntu:ubuntu $REMOTE_SHARED_ENV
-sudo chmod 600 $REMOTE_SHARED_ENV
+sudo cp -f REMOTE_SHARED_ENV REMOTE_BASE/shared/.env.bak.DATE_TAG 2>/dev/null || true
+sudo cp -f /tmp/.env.v71.staging REMOTE_SHARED_ENV
+sudo chown ubuntu:ubuntu REMOTE_SHARED_ENV
+sudo chmod 600 REMOTE_SHARED_ENV
 rm -f /tmp/.env.v71.staging
-echo "shared/.env updated (perm $(stat -c %a $REMOTE_SHARED_ENV))"
-"@
-$ssh_mirror = "ssh -i `"$LIGHTSAIL_KEY`" $SSH_OPTS `"${LIGHTSAIL_USER}@${LIGHTSAIL_HOST}`" `"$shared_mirror`""
-Invoke-Expression $ssh_mirror
+echo "shared/.env updated (perm $(stat -c %a REMOTE_SHARED_ENV))"
+'@
+$shared_mirror = $shared_template `
+    -replace 'REMOTE_SHARED_ENV', $REMOTE_SHARED_ENV `
+    -replace 'REMOTE_BASE', $REMOTE_BASE `
+    -replace 'DATE_TAG', $DATE_TAG
+# bash via stdin (newline-safe, avoids PowerShell arg flattening)
+$shared_mirror | & ssh @SSH_ARGS "${LIGHTSAIL_USER}@${LIGHTSAIL_HOST}" "bash"
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "[ERROR] shared/.env mirror failed (exit=$LASTEXITCODE)" -ForegroundColor Red
+    exit 1
+}
 Write-Host "      OK" -ForegroundColor Green
 
 # ------------------------------------------------------------
@@ -132,15 +151,19 @@ Write-Host "      OK" -ForegroundColor Green
 # ------------------------------------------------------------
 if ($InitialDeploy) {
     Write-Host "[5a/6] venv package install (V7.1 deps)..." -ForegroundColor Yellow
-    $pip_cmd = @"
+    $pip_template = @'
 set -e
-cd $REMOTE_CURRENT
+cd REMOTE_CURRENT
 ./venv/bin/pip install --upgrade pip 2>&1 | tail -2
 ./venv/bin/pip install -r requirements.txt 2>&1 | tail -10
 ./venv/bin/python -c "import uvicorn, fastapi, asyncpg, psycopg, pyotp; print('V7.1 deps OK')"
-"@
-    $ssh_pip = "ssh -i `"$LIGHTSAIL_KEY`" $SSH_OPTS `"${LIGHTSAIL_USER}@${LIGHTSAIL_HOST}`" `"$pip_cmd`""
-    Invoke-Expression $ssh_pip
+'@
+    $pip_cmd = $pip_template -replace 'REMOTE_CURRENT', $REMOTE_CURRENT
+    $pip_cmd | & ssh @SSH_ARGS "${LIGHTSAIL_USER}@${LIGHTSAIL_HOST}" "bash"
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "[ERROR] pip install failed (exit=$LASTEXITCODE)" -ForegroundColor Red
+        exit 1
+    }
     Write-Host "      OK" -ForegroundColor Green
 }
 
@@ -149,19 +172,23 @@ cd $REMOTE_CURRENT
 # ------------------------------------------------------------
 if ($WithSystemd) {
     Write-Host "[5b/6] systemd unit update..." -ForegroundColor Yellow
-    $scp_unit = "scp -i `"$LIGHTSAIL_KEY`" $SSH_OPTS `"$LOCAL_PROJECT\scripts\deploy\v71.service`" `"${LIGHTSAIL_USER}@${LIGHTSAIL_HOST}:/tmp/v71.service`""
-    Invoke-Expression $scp_unit 2>$null
-    $unit_apply = @"
+    & scp @SSH_ARGS "$LOCAL_PROJECT\scripts\deploy\v71.service" "${LIGHTSAIL_USER}@${LIGHTSAIL_HOST}:/tmp/v71.service"
+    if ($LASTEXITCODE -ne 0) { Write-Host "[ERROR] scp v71.service failed" -ForegroundColor Red; exit 1 }
+    $unit_template = @'
 set -e
-sudo cp -f /etc/systemd/system/k-stock-trading.service /etc/systemd/system/k-stock-trading.service.bak.$DATE_TAG 2>/dev/null || true
+sudo cp -f /etc/systemd/system/k-stock-trading.service /etc/systemd/system/k-stock-trading.service.bak.DATE_TAG 2>/dev/null || true
 sudo cp -f /tmp/v71.service /etc/systemd/system/k-stock-trading.service
 sudo chmod 644 /etc/systemd/system/k-stock-trading.service
 sudo systemctl daemon-reload
 rm -f /tmp/v71.service
 echo "systemd unit updated"
-"@
-    $ssh_unit = "ssh -i `"$LIGHTSAIL_KEY`" $SSH_OPTS `"${LIGHTSAIL_USER}@${LIGHTSAIL_HOST}`" `"$unit_apply`""
-    Invoke-Expression $ssh_unit
+'@
+    $unit_apply = $unit_template -replace 'DATE_TAG', $DATE_TAG
+    $unit_apply | & ssh @SSH_ARGS "${LIGHTSAIL_USER}@${LIGHTSAIL_HOST}" "bash"
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "[ERROR] systemd unit apply failed (exit=$LASTEXITCODE)" -ForegroundColor Red
+        exit 1
+    }
     Write-Host "      OK" -ForegroundColor Green
 }
 
@@ -172,10 +199,9 @@ if ($NoRestart) {
     Write-Host "[6/6] service restart skipped (-NoRestart)" -ForegroundColor Yellow
 } else {
     Write-Host "[6/6] service restart..." -ForegroundColor Yellow
-    $ssh_restart = "ssh -i `"$LIGHTSAIL_KEY`" $SSH_OPTS `"${LIGHTSAIL_USER}@${LIGHTSAIL_HOST}`" `"sudo systemctl restart k-stock-trading`""
-    Invoke-Expression $ssh_restart
+    & ssh @SSH_ARGS "${LIGHTSAIL_USER}@${LIGHTSAIL_HOST}" "sudo systemctl restart k-stock-trading"
     Start-Sleep -Seconds 5
-    $status = & ssh -i $LIGHTSAIL_KEY -o StrictHostKeyChecking=no -o UserKnownHostsFile=NUL "${LIGHTSAIL_USER}@${LIGHTSAIL_HOST}" "sudo systemctl is-active k-stock-trading"
+    $status = & ssh @SSH_ARGS "${LIGHTSAIL_USER}@${LIGHTSAIL_HOST}" "sudo systemctl is-active k-stock-trading"
     if ($status -eq "active") {
         Write-Host "      OK (active)" -ForegroundColor Green
     } else {

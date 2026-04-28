@@ -32,7 +32,11 @@ $LIGHTSAIL_HOST = "43.200.235.74"
 $LIGHTSAIL_USER = "ubuntu"
 $LIGHTSAIL_KEY = "$env:USERPROFILE\.ssh\k-stock-trading-key.pem"
 
-$SSH_OPTS = "-o StrictHostKeyChecking=no -o UserKnownHostsFile=NUL"
+$SSH_OPTS = "-o StrictHostKeyChecking=no -o UserKnownHostsFile=NUL -o LogLevel=ERROR"
+$SSH_ARGS = @("-i", $LIGHTSAIL_KEY,
+              "-o", "StrictHostKeyChecking=no",
+              "-o", "UserKnownHostsFile=NUL",
+              "-o", "LogLevel=ERROR")
 
 Write-Host "============================================================" -ForegroundColor Cyan
 Write-Host " V7.1 first-time deploy master" -ForegroundColor Cyan
@@ -79,7 +83,7 @@ if (-not $SkipArchive) {
 # ------------------------------------------------------------
 Write-Host ""
 Write-Host "[3/6] service stop (safety)..." -ForegroundColor Yellow
-& ssh -i $LIGHTSAIL_KEY -o StrictHostKeyChecking=no -o UserKnownHostsFile=NUL "${LIGHTSAIL_USER}@${LIGHTSAIL_HOST}" "sudo systemctl stop k-stock-trading 2>&1 || true"
+& ssh @SSH_ARGS "${LIGHTSAIL_USER}@${LIGHTSAIL_HOST}" "sudo systemctl stop k-stock-trading || true"
 Write-Host "      OK" -ForegroundColor Green
 
 # ------------------------------------------------------------
@@ -105,7 +109,7 @@ if ($NoStart) {
 
 Write-Host ""
 Write-Host "[5/6] service start..." -ForegroundColor Yellow
-& ssh -i $LIGHTSAIL_KEY -o StrictHostKeyChecking=no -o UserKnownHostsFile=NUL "${LIGHTSAIL_USER}@${LIGHTSAIL_HOST}" "sudo systemctl start k-stock-trading"
+& ssh @SSH_ARGS "${LIGHTSAIL_USER}@${LIGHTSAIL_HOST}" "sudo systemctl start k-stock-trading"
 Start-Sleep -Seconds 8
 
 # ------------------------------------------------------------

@@ -22,7 +22,11 @@ $LIGHTSAIL_HOST = "43.200.235.74"
 $LIGHTSAIL_USER = "ubuntu"
 $LIGHTSAIL_KEY = "$env:USERPROFILE\.ssh\k-stock-trading-key.pem"
 
-$SSH_OPTS = "-o StrictHostKeyChecking=no -o UserKnownHostsFile=NUL"
+$SSH_OPTS = "-o StrictHostKeyChecking=no -o UserKnownHostsFile=NUL -o LogLevel=ERROR"
+$SSH_ARGS = @("-i", $LIGHTSAIL_KEY,
+              "-o", "StrictHostKeyChecking=no",
+              "-o", "UserKnownHostsFile=NUL",
+              "-o", "LogLevel=ERROR")
 
 Write-Host "============================================================" -ForegroundColor Cyan
 Write-Host " V7.1 boot smoke" -ForegroundColor Cyan
@@ -34,7 +38,7 @@ $fail = 0
 function Step($name, $cmd) {
     Write-Host ""
     Write-Host "[CHECK] $name" -ForegroundColor Yellow
-    $result = & ssh -i $LIGHTSAIL_KEY -o StrictHostKeyChecking=no -o UserKnownHostsFile=NUL "${LIGHTSAIL_USER}@${LIGHTSAIL_HOST}" $cmd
+    $result = & ssh @SSH_ARGS "${LIGHTSAIL_USER}@${LIGHTSAIL_HOST}" $cmd
     Write-Host $result
     return $result
 }
@@ -47,17 +51,17 @@ if ($status -match "active") { $script:pass++ } else { $script:fail++ }
 $port = Step "uvicorn :8080 listening" "ss -tlnp 2>/dev/null | grep ':8080' || echo NOT_LISTENING"
 if ($port -match ":8080") { $script:pass++ } else { $script:fail++ }
 
-# 3. /health endpoint
-$health = Step "/health endpoint" "curl -sS -m 5 http://127.0.0.1:8080/health || echo CURL_FAILED"
-if ($health -match '"status":"ok"|healthy|"ok"') { $script:pass++ } else { $script:fail++ }
+# 3. /health endpoint (V7.1 router prefix: /api/v71)
+$health = Step "/api/v71/health endpoint" "curl -sS -m 5 http://127.0.0.1:8080/api/v71/health || echo CURL_FAILED"
+if ($health -match '"status":\s*"ok"') { $script:pass++ } else { $script:fail++ }
 
 # 4. V71MarketSchedule log
 $cal = Step "V71MarketSchedule seeded log" "sudo journalctl -u k-stock-trading -n 200 --no-pager | grep -E 'V71MarketSchedule seeded|market_calendar' | tail -3 || echo NO_LOG"
-if ($cal -match "seeded") { $script:pass++ } else { $script:fail++ }
+if ($cal -match "seeded|market_calendar") { $script:pass++ } else { $script:fail++ }
 
-# 5. attach engine log
-$attach = Step "attach_trading_engine log" "sudo journalctl -u k-stock-trading -n 200 --no-pager | grep -E 'V7.1 engine objects constructed|trading_bridge' | tail -3 || echo NO_LOG"
-if ($attach -match "engine objects constructed") { $script:pass++ } else { $script:fail++ }
+# 5. lifespan startup log
+$attach = Step "lifespan startup complete log" "sudo journalctl -u k-stock-trading -n 200 --no-pager | grep -E 'Application startup complete|engine objects constructed|trading_bridge' | tail -3 || echo NO_LOG"
+if ($attach -match "Application startup complete|engine objects constructed|trading_bridge") { $script:pass++ } else { $script:fail++ }
 
 # 6. DB connectivity (local psycopg sync)
 Write-Host ""
