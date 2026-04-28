@@ -2957,6 +2957,78 @@ uvicorn.run('src.web.v71.main:app', host='127.0.0.1', port=8001, log_level='info
 
 ---
 
+### Phase 5 후속 P5-Kiwoom-5: V71OrderManager (2026-04-28)
+
+**Commit `ba0c287`**: `feat(v71): exchange P5-Kiwoom-5 — V71OrderManager (kt10000~10003 + v71_orders + WS reconcile)`
+**규모**: 4 files +2529 / -7
+
+#### 신규 모듈
+
+**V71OrderManager** (~700 LOC):
+- 주문 lifecycle 단일 진입점 (submit / cancel / modify / WebSocket reconcile)
+- DI 슬롯: kiwoom_client / db_session_factory / clock / on_manual_order / on_position_fill
+- V71OrderRequest frozen dataclass + __post_init__ 검증 (qty>0 / LIMIT 가격 / MARKET no price / trade_type 화이트리스트 / exchange 화이트리스트)
+- V71OrderError 계층 (V71OrderSubmissionFailed / V71OrderNotFoundError / V71OrderUnsupportedError) + cause 보존
+- V71OrderFillEvent — 체결 이벤트의 정규화된 표현 (V71PositionManager 위임용)
+- WS_FIELD MappingProxyType (KIWOOM_API_ANALYSIS.md §9 wire codes — 9203/913/910/911/902/904/919/9001)
+- VALID_EXCHANGES (KRX/NXT/SOR) + _FORBIDDEN_RESPONSE_KEYS frozenset (deep copy + redaction)
+
+#### 핵심 동작
+
+- **submit_order**: kiwoom REST 호출 *후* INSERT (kiwoom_order_no NOT NULL UNIQUE 충돌 회피). transport / business / IntegrityError 모두 V71OrderSubmissionFailed로 wrap, DB 미변경. retry orchestration은 caller 책임 (지정가 5초 × 3회 → 시장가는 BoxEntryExecutor 후속).
+- **cancel_order / modify_order**: 키움이 새 ord_no 반환 → 새 row INSERT (kiwoom_orig_order_no=원주문, direction=원주문 복제). 02 §12 룰 부합. modify는 항상 LIMIT.
+- **on_websocket_order_event**: 9203 (ord_no) 매칭 → atomic UPDATE (filled_quantity 누적 + filled_avg_price 가중평균 + state). per-order asyncio.Lock으로 부분 체결 race 방지. terminal state(FILLED/CANCELLED/REJECTED) 시 lock 해제 후 cleanup. 매칭 실패 → on_manual_order 콜백 (선택).
+- **V71OrderFillEvent → on_position_fill 콜백**: V71PositionManager 위임. 평단가 + 이벤트 리셋 + 손절선 단계는 후속 단위 책임.
+- **한글 상태 매핑**: 접수 (no-op) / 체결 (잔량 기반 FILLED|PARTIAL) / 확인 (정정/취소 ack) / 취소 / 거부. 미지의 상태 → logger.warning + skip.
+- **콜백 isolation**: try/except + logger.error + raise 안 함 (PII 미노출).
+
+#### 워크플로우 (12단계)
+
+| 에이전트 | 발견 | 반영 |
+|---------|-----|-----|
+| v71-architect | P0 4/4 PASS / P1 5/7 PASS + 2 WARNING (atomic UPDATE / forbidden keys) / 6 개선안 / V71Order export 누락 / Q1~Q4 동의 + Q5 추가 | 전부 반영 |
+| security-reviewer | CRITICAL 0 / HIGH 1 (lock 누수) / MEDIUM 2 (deep copy + exchange whitelist) / LOW 5 | H1+M1+M2+L1+L3 즉시 |
+| test-strategy | 78 케이스 도출 (그룹 A~P) | 79 케이스 구현 |
+| trading-logic-verifier | PASS (거래 룰 위반 0건, 매직 넘버 0건, 격리 우수) + MINOR 1 (CONFIRMED state docstring) | docstring 보강 |
+
+#### 보안 패치
+
+- **H1** _fill_locks cleanup (terminal state 후 lock 해제 → pop). 운영 1년 ~3MB 누적 방지
+- **M1** _sanitize_response deep copy + forbidden keys redaction (kt00018 후속 helper 재사용 시 PII 누출 방지)
+- **M2** exchange whitelist (V71OrderRequest + cancel/modify exchange) — 8030/8031 silent 전파 차단
+- **L1** _coerce_int 실패 시 logger.warning (silent drop 방지)
+- **L3** cancel_reason 100자 truncate 시 logger.info
+- **MINOR (verifier)** CONFIRMED state docstring 보강 (PARTIAL row의 cancelled_at 의미 명시)
+- V71Order / OrderDirection / OrderState / OrderTradeType — models_v71 __all__ export 추가
+
+#### 검증
+
+- 단위 테스트: 79/79 PASS in 1.69s (in-memory SQLite + V71Order ORM + parametrize)
+  * 정상 4 / 검증 16 / 키움 에러 4 / cancel 6 / modify 5 / WS 12 / 매칭 실패 3 / 동시성 2 / position_fill 3 / 잘못된 메시지 4 / 가중평균 5 / coerce_int 8 / extract_ord_no 3 / 보안 회귀 4
+- exchange 누적: 287/287 PASS (66 + 42 + 72 + 28 + 79)
+- V7.1 회귀: 872/872 PASS (이전 793 + 79, 회귀 0건)
+- 6 harness: 1/2/3/4/6 PASS, 5 WARN
+- ruff: 0 errors after auto-fix + manual cleanup (ARG002 / F841 / SIM117 / SIM102)
+- 보안 회귀: caplog token 평문 미노출 / repr 안전 / kiwoom_raw_request 토큰 미포함 / kiwoom_raw_response forbidden keys redact / deep copy 검증
+
+#### 함정 / 학습
+
+- **`async with await self._lock_for(order_id)`**: `_lock_for`가 coroutine을 반환하므로 await 후 with. SIM117 (단일 with) 권고는 lock + session lifecycle이 의도적으로 분리되어 noqa.
+- **terminal state lock cleanup 위치**: lock release 후에 `_fill_locks.pop` 해야 deadlock 회피 (held 중 cleanup은 다른 acquire와 경합).
+- **CONFIRMED state branching**: SUBMITTED → CANCELLED 전환만 하고 PARTIAL은 그대로 유지 (cancelled_at만 stamp). 02 §12.2 부분 체결 + 정정 시나리오에 정합.
+- **fixture 의존성 vs ARG002**: order_manager fixture가 이미 kiwoom_client_mock + session_factory를 의존하므로 테스트 함수에서 직접 받지 않아도 wired됨. 사용 안 하는 fixture 인자는 시그니처에서 제거 (ARG002 회피).
+- **SQLite + V71Order**: PRD JSONB/UUID/ENUM 모두 `with_variant` 또는 cross-DB 호환되어 in-memory 테스트 가능. CHECK constraint는 적용 안 됨 (Python 측 `__post_init__`로 동등 검증).
+- **OrderTradeType 매핑**: domain enum (LIMIT/MARKET/CONDITIONAL/...)과 V71KiwoomTradeType (wire 0/3) 분리. unsupported 4종은 `__post_init__`에서 `V71OrderUnsupportedError` 즉시 raise.
+
+#### 다음 단위
+
+- **P5-Kiwoom-6**: reconciler (kt00018 ↔ DB 정합성 시나리오 A/B/C/D/E, reconciliation_skill 통합) — security-reviewer + migration-strategy 필수
+- **P5-Kiwoom-Notify**: notify_error + notification_skill EventType 5개 (KIWOOM_RATE_LIMIT_EXCEEDED / KIWOOM_TOKEN_INVALID / KIWOOM_IP_MISMATCH / KIWOOM_ENV_MISMATCH / KIWOOM_SERVER_ERROR) — error_mapper 정책 hint 사용
+- **P5-Kiwoom-Wire (선택)**: kiwoom_api_skill.py NotImpl 4개를 V71KiwoomClient + error_mapper + V71OrderManager 위임으로 채우기
+- Phase 5 후속 완료 후: `v71-phase5-kiwoom-complete` tag
+
+---
+
 ### Phase 5 후속 P5-Kiwoom-4: V71KiwoomWebSocket (2026-04-28)
 
 **Commit `1744f6b`**: `feat(v71): exchange P5-Kiwoom-4 — V71KiwoomWebSocket (5 채널 + Phase 1/2 재연결)`
