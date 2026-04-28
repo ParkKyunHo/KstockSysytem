@@ -32,7 +32,6 @@ from sqlalchemy import (
     JSON,
     Boolean,
     DateTime,
-    Enum as SQLEnum,
     ForeignKey,
     Numeric,
     String,
@@ -41,11 +40,14 @@ from sqlalchemy import (
     Uuid,
     func,
 )
-from sqlalchemy.dialects.postgresql import INET as PG_INET, JSONB as PG_JSONB
+from sqlalchemy import (
+    Enum as SQLEnum,
+)
+from sqlalchemy.dialects.postgresql import INET as PG_INET
+from sqlalchemy.dialects.postgresql import JSONB as PG_JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.database.models import Base
-
 
 # Cross-database type aliases. PostgreSQL uses native INET/JSONB/UUID;
 # SQLite (test/fallback) gets sane VARCHAR/JSON equivalents so the
@@ -114,11 +116,11 @@ class User(Base):
         nullable=False,
     )
 
-    sessions: Mapped[list["UserSession"]] = relationship(
+    sessions: Mapped[list[UserSession]] = relationship(
         back_populates="user",
         cascade="all, delete-orphan",
     )
-    settings: Mapped["UserSettings | None"] = relationship(
+    settings: Mapped[UserSettings | None] = relationship(
         back_populates="user",
         uselist=False,
         cascade="all, delete-orphan",
@@ -374,11 +376,11 @@ class TrackedStock(Base):
         DateTime(timezone=True), server_default=func.now(), nullable=False,
     )
 
-    boxes: Mapped[list["SupportBox"]] = relationship(
+    boxes: Mapped[list[SupportBox]] = relationship(
         back_populates="tracked_stock",
         cascade="all, delete-orphan",
     )
-    positions: Mapped[list["V71Position"]] = relationship(
+    positions: Mapped[list[V71Position]] = relationship(
         back_populates="tracked_stock",
     )
 
@@ -940,7 +942,11 @@ __all__ = [
     "NotificationChannel",
     "NotificationSeverity",
     "NotificationStatus",
+    "OrderDirection",
+    "OrderState",
+    "OrderTradeType",
     "PathType",
+    "V71Order",
     "V71Position",
     "PositionSource",
     "PositionStatus",
