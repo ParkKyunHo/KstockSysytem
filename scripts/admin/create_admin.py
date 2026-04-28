@@ -1,22 +1,23 @@
 """Create the first V7.1 dashboard admin user.
 
-Reads ``{"username": "...", "password": "..."}`` JSON from stdin so the
-plaintext password never lands in argv / env / shell history. PowerShell
-wrapper (``create_admin.ps1``) prompts via ``Read-Host -AsSecureString``
-so the password is also never visible on screen.
+Username comes via argv (not PII). Password is read via
+``getpass.getpass`` so it never echoes to the terminal, never lands in
+argv / env / shell history, and never travels through a PowerShell pipe
+(PowerShell 5.1 stdin object pipe is unreliable for native exes).
 
 Steps:
   1. Validate username (3-32 chars, [A-Za-z0-9_-])
-  2. Generate bcrypt hash via the V7.1 ``hash_password`` (rounds=12)
-  3. INSERT into ``users`` (role=OWNER, is_active=true, totp_enabled=false)
-  4. Print the new user's UUID
+  2. Prompt password twice (hidden) -- abort if mismatch
+  3. Generate bcrypt hash via the V7.1 ``hash_password`` (rounds=12)
+  4. INSERT into ``users`` (role=OWNER, is_active=true, totp_enabled=false)
+  5. Print the new user's UUID
 
 Re-runnable: if username already exists, prints message and exits.
 """
 
 from __future__ import annotations
 
-import json
+import getpass
 import os
 import re
 import sys
@@ -35,24 +36,32 @@ load_dotenv(ROOT / ".env", override=True)
 _USERNAME_RE = re.compile(r"^[A-Za-z0-9_-]{3,32}$")
 
 
-def _read_payload() -> tuple[str, str]:
-    raw = sys.stdin.read().strip()
-    if not raw:
-        print("ERROR: empty stdin payload", file=sys.stderr)
+def _prompt_inputs() -> tuple[str, str]:
+    if len(sys.argv) < 2:
+        print(
+            "ERROR: username missing -- run via create_admin.ps1 or "
+            "pass username as first argument",
+            file=sys.stderr,
+        )
         sys.exit(1)
-    try:
-        data = json.loads(raw)
-    except json.JSONDecodeError as exc:
-        print(f"ERROR: invalid JSON on stdin: {exc}", file=sys.stderr)
-        sys.exit(1)
-    username = (data.get("username") or "").strip()
-    password = data.get("password") or ""
+    username = sys.argv[1].strip()
     if not _USERNAME_RE.match(username):
         print(
             f"ERROR: username must be 3-32 chars [A-Za-z0-9_-], got "
             f"{len(username)} chars",
             file=sys.stderr,
         )
+        sys.exit(1)
+
+    try:
+        password = getpass.getpass("password (hidden): ")
+        password2 = getpass.getpass("password (re-enter): ")
+    except (EOFError, KeyboardInterrupt):
+        print("\nERROR: input aborted", file=sys.stderr)
+        sys.exit(1)
+
+    if password != password2:
+        print("ERROR: passwords do not match", file=sys.stderr)
         sys.exit(1)
     if len(password) < 8:
         print(
@@ -70,7 +79,7 @@ def _read_payload() -> tuple[str, str]:
 
 
 def main() -> int:
-    username, password = _read_payload()
+    username, password = _prompt_inputs()
 
     # Build a minimal WebSettings stub for hash_password (rounds only).
     class _StubSettings:
