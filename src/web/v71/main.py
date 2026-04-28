@@ -10,8 +10,12 @@ Production runs ``uvicorn src.web.v71.main:app`` after binding the
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 
 from .api.middleware import RequestIdMiddleware
 from .api.router import api_router
@@ -24,6 +28,11 @@ from .rate_limit import (
     rate_limit_exceeded_handler,
 )
 from .ws.router import router as ws_router
+
+# repo root: src/web/v71/main.py -> ../../../.. -> K_stock_trading/
+_FRONTEND_DIST = (
+    Path(__file__).resolve().parent.parent.parent.parent / "frontend" / "dist"
+)
 
 
 def create_app(settings: WebSettings | None = None) -> FastAPI:
@@ -63,7 +72,37 @@ def create_app(settings: WebSettings | None = None) -> FastAPI:
     app.include_router(api_router)
     app.include_router(ws_router)
 
+    # SPA static frontend. Mount AFTER api/ws routers so /api/v71/* keeps
+    # precedence. dist may be missing on CI / test workers -- skip silently.
+    if _FRONTEND_DIST.is_dir():
+        _mount_spa(app, _FRONTEND_DIST)
+
     return app
+
+
+def _mount_spa(app: FastAPI, dist_dir: Path) -> None:
+    assets_dir = dist_dir / "assets"
+    if assets_dir.is_dir():
+        app.mount(
+            "/assets",
+            StaticFiles(directory=assets_dir),
+            name="assets",
+        )
+
+    index_html = dist_dir / "index.html"
+    dist_root = dist_dir.resolve()
+
+    @app.get("/{full_path:path}", include_in_schema=False)
+    async def spa_fallback(full_path: str) -> FileResponse:
+        if full_path:
+            candidate = (dist_dir / full_path).resolve()
+            try:
+                candidate.relative_to(dist_root)
+            except ValueError:
+                return FileResponse(index_html)
+            if candidate.is_file():
+                return FileResponse(candidate)
+        return FileResponse(index_html)
 
 
 # Module-level instance for ``uvicorn src.web.v71.main:app``.

@@ -118,7 +118,21 @@ if ($LASTEXITCODE -ne 0) { Write-Host "[ERROR] scp .env staging failed" -Foregro
 if ($LASTEXITCODE -ne 0) { Write-Host "[ERROR] mkdir scripts failed" -ForegroundColor Red; exit 1 }
 & scp @SSH_ARGS -r "$LOCAL_PROJECT\scripts\harness" "${dest}:$REMOTE_CURRENT/scripts/"
 if ($LASTEXITCODE -ne 0) { Write-Host "[ERROR] scp harness failed" -ForegroundColor Red; exit 1 }
-Write-Host "      OK (src + requirements + .env + harness)" -ForegroundColor Green
+
+# Frontend dist (Vite + React build artifacts). main.py serves it as
+# StaticFiles + SPA catch-all. Skip with warning if dist is absent so the
+# code-only hotfix path keeps working.
+$frontend_dist = "$LOCAL_PROJECT\frontend\dist"
+if (Test-Path $frontend_dist) {
+    & ssh @SSH_ARGS $dest "mkdir -p $REMOTE_CURRENT/frontend"
+    if ($LASTEXITCODE -ne 0) { Write-Host "[ERROR] mkdir frontend failed" -ForegroundColor Red; exit 1 }
+    & scp @SSH_ARGS -r "$frontend_dist" "${dest}:$REMOTE_CURRENT/frontend/"
+    if ($LASTEXITCODE -ne 0) { Write-Host "[ERROR] scp frontend/dist failed" -ForegroundColor Red; exit 1 }
+    Write-Host "      OK (src + requirements + .env + harness + frontend/dist)" -ForegroundColor Green
+} else {
+    Write-Host "      WARN: frontend/dist not found -- run 'cd frontend; npm run build' first" -ForegroundColor Yellow
+    Write-Host "      OK (src + requirements + .env + harness; frontend skipped)" -ForegroundColor Green
+}
 
 # ------------------------------------------------------------
 # [4/6] shared/.env mirror (with backup + perm 600)

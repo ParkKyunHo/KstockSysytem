@@ -4854,3 +4854,91 @@ setup_v71.ps1 실행 중 발견된 4가지 이슈 일괄 정정:
 각 단계 service restart + boot_smoke_v71.ps1 권장.
 
 ---
+
+## 2026-04-29 (수) — 옵션 A 완료: Frontend 배포 (핸드폰 접근 가능)
+
+> V7.1 운영 진입 후속. 사용자 컨텍스트 권장 흐름 (A → B → ...) 자율 진행.
+
+### 결정
+
+| 선택지 | 채택 | 이유 |
+|--------|------|------|
+| 옵션 1 — FastAPI StaticFiles 같은 :8080 | ✅ | 도메인 X, 빌드 결과 1.9MB로 부담 X, 1번 배포로 모바일 접근 완성 |
+| 옵션 2 — nginx + Let's Encrypt HTTPS | 후속 | 도메인 + DNS 설정 사용자 결정 영역 (옵션 E로 분리) |
+
+### 변경 사항
+
+| 파일 | 변경 |
+|------|------|
+| `src/web/v71/main.py` | `Path` + `StaticFiles` + `FileResponse` import / `_FRONTEND_DIST` 상수 / `_mount_spa()` helper (api/ws router 이후 등록, dist 부재 silent skip, `/assets` Mount + `/{full_path:path}` catch-all + `relative_to()` path traversal 방어, `include_in_schema=False`) |
+| `scripts/deploy/hotfix.ps1` | `[3/6] code transfer`에 `mkdir -p current/frontend` + `scp -r frontend/dist` 추가 (Test-Path 가드, dist 부재 시 WARN, 차단 X) |
+
+### 검증
+
+#### 1. 로컬 import smoke + 라우트 등록 순서
+
+```
+IMPORT_OK module= src.web.v71.main
+FRONTEND_DIST= C:\K_stock_trading\frontend\dist exists= True
+---ROUTES (last 5)---
+/api/v71/system/audit/box_entry_miss -> APIRoute
+/api/v71/ws -> APIWebSocketRoute
+/assets -> Mount
+/{full_path:path} -> APIRoute
+total= 61
+```
+
+api_router → ws_router → /assets → catch-all 순서 (last-match precedence).
+
+#### 2. 로컬 minimal SPA TestClient
+
+| 케이스 | 결과 |
+|--------|------|
+| `/` | 200 + html + `<!doctype html>` |
+| `/dashboard` (SPA history) | 200 + index.html (`<title>V7.1`) |
+| `/assets/index-CTLKF0Br.js` | 200 + 382550B + application/javascript |
+| `/some/nonexistent/route` | 200 SPA fallback |
+| `/../../../etc/passwd` | 200 (relative_to ValueError → fallback) |
+
+#### 3. AWS 배포 + boot smoke
+
+```
+[3/6] code transfer... OK (src + requirements + .env + harness + frontend/dist)
+[6/6] service restart... OK (active)
+
+boot smoke RESULT: 6 pass / 0 fail
+```
+
+#### 4. AWS curl 5종
+
+| 요청 | 응답 |
+|------|------|
+| `GET /` | 200 / 995B / text/html — index.html |
+| `GET /api/v71/health` | 200 / envelope JSON (regression 없음) |
+| `GET /assets/index-CTLKF0Br.js` | 200 / 382550B / text/javascript |
+| `GET /dashboard` | 200 / 995B / text/html (SPA fallback) |
+| `GET /api/v71/openapi.json` | 200 / application/json (catch-all bypass 정확) |
+
+### 핸드폰 접근
+
+- URL: `http://43.200.235.74:8080/`
+- 로그인: `rbsgh4` (admin OWNER)
+- 대시보드 → 8 페이지 (Carbon Design System + React Router)
+
+### 알려진 잔여 노이즈 (배포 차단 X)
+
+1. `shared/.env mirror` 시 `bash: line 1: ﻿﻿set: command not found` BOM 흔적 — 동작 OK, hotfix.ps1 후속 정리
+2. PowerShell 5.1 콘솔 한글 mojibake — 출력만 (실제 HTTP 응답은 UTF-8 정상)
+3. rate limit 비활성 (commit `ba44b03`) — 옵션 D에서 재구현
+
+### 다음 후보
+
+| 옵션 | 비고 |
+|------|------|
+| B — `v71.kiwoom_websocket` flag ON | 매매 wire 아직 X, 검증 단계 |
+| D — rate limit 재구현 | brute-force 방어, production 본격 운영 전 필수 |
+| E — HTTPS (nginx + Let's Encrypt 또는 self-signed) | 도메인 보유 시 |
+| F — market_calendar DB seed | KRX 2026 휴장일 정확화 (현재 hardcoded fallback) |
+| C — 자동 박스 진입 (자금 위험) | **사용자 명시 결정 필수** |
+
+---
