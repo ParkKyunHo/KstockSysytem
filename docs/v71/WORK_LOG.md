@@ -2957,6 +2957,57 @@ uvicorn.run('src.web.v71.main:app', host='127.0.0.1', port=8001, log_level='info
 
 ---
 
+### Phase 6/7 wiring P-Wire-4b: V71ExitExecutor wiring (2026-04-28)
+
+**Commit `e8af26b`**: `feat(v71): web P-Wire-4b — V71ExitExecutor wiring (Clock + cross-flag 재사용)`
+**규모**: 3 files +168 / -3
+
+#### 신규 / 변경
+
+- **trading_bridge.py 확장**:
+  * `_build_exit_executor(handle)` async helper (~+95 LOC):
+    - Cross-flag invariant: v71.exit_v71 + v71.kiwoom_exchange + v71.notification_v71 모두 ON
+    - handle invariant: exchange_adapter + box_manager + notification_service None 검증
+    - V71ExitExecutor + ExitExecutorContext 빌드, `on_position_closed=None` (P-Wire-4c TODO)
+    - `handle.clock` 재사용 (P-Wire-4a active 시) 또는 new V71RealClock 인스턴스
+  * `_TradingEngineHandle.exit_executor` 슬롯 추가
+  * attach: `is_enabled('v71.exit_executor_v71')` 가드 + try/except + raise + handle.clock fallback 할당
+  * detach: exit_executor=None (P-Wire-4a/4b 통합 cleanup)
+
+- **`config/feature_flags.yaml`**: `v71.exit_executor_v71: false` 추가
+
+- **테스트 6 케이스 추가** (1150 → 1156):
+  * Group P `TestBuildExitExecutorCrossFlag` (4):
+    - `test_missing_flag_raises` (3-flag parametrize: v71.exit_v71 / v71.kiwoom_exchange / v71.notification_v71)
+    - `test_exchange_adapter_none_raises`
+  * Group P `TestExitExecutorAttachDetach` (2):
+    - `test_attach_exit_executor_flag_off_leaves_slot_none`
+    - `test_detach_clears_exit_executor_slot`
+
+#### 패턴
+
+- P-Wire-4a 직접 mirror — architect Q1 옵션 B 분리 결정에 따라 별도 architect 호출 생략 (Buy 패턴 정확 복제)
+- security/test 에이전트 생략 (이미 P-Wire-4a에서 같은 패턴 검증 완료, ExitExecutor는 추가 callable 없음)
+
+#### 검증
+
+- 단위 테스트: 83/83 PASS in 1.34s (P-Wire-4b 6 + P-Wire-4a 32 + 기존 45)
+- V7.1 회귀: **1156/1156 PASS** in 8.70s (1150 → 1156, +6 신규)
+- 6 harness: 1/2/3/4/6 PASS, 5 WARN
+- ruff: clean
+
+#### 다음 단계
+
+- **P-Wire-4c**: V71ViMonitor wiring
+  * `v71.vi_monitor` flag ON
+  * WebSocket 9068 (VI 발동/해제) dispatcher 등록 (V71KiwoomWebSocket.register_handler)
+  * is_vi_active stub 제거 → V71ViMonitor.is_vi_active 콜러블
+  * `system_state.degraded_vi=False` 복귀
+- **P-Wire-5**: paper smoke (`KIWOOM_ENV=SANDBOX`) + ka10004/ka10001/ka10081 wire-level 보정 + total_capital prime + tracked_stocks seed
+- **Phase 7 P7.1**: paper trade
+
+---
+
 ### Phase 6/7 wiring P-Wire-4a: V71BuyExecutor wiring + V71RealClock 추출 (2026-04-28)
 
 **Commit `385b7d1`**: `feat(v71): web P-Wire-4a — V71BuyExecutor wiring + V71RealClock 추출 + 4 callable factory`
