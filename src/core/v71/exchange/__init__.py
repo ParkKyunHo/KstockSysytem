@@ -59,6 +59,10 @@ from .kiwoom_websocket import (
     V71WebSocketSubscription,
     V71WebSocketTransportError,
 )
+from .notify_kiwoom_error import (
+    build_kiwoom_error_request,
+    notify_kiwoom_error,
+)
 from .order_manager import (
     V71OrderError,
     V71OrderFillEvent,
@@ -124,6 +128,8 @@ __all__ = [
     "V71ReconciliationReport",
     "V71StockNotFoundError",
     "V71TrackingTerminated",
+    "build_kiwoom_error_request",
+    "notify_kiwoom_error",
     "V71TokenAuthError",
     "V71TokenError",
     "V71TokenInfo",

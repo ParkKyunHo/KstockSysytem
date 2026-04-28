@@ -32,6 +32,7 @@ Severity policy (§9.1):
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
@@ -90,6 +91,12 @@ class EventType(Enum):
     DAILY_SUMMARY = "DAILY_SUMMARY"
     MONTHLY_REVIEW = "MONTHLY_REVIEW"
     HEALTH_CHECK = "HEALTH_CHECK"
+    # Kiwoom error events (P5-Kiwoom-Notify, error_mapper severity policy)
+    KIWOOM_RATE_LIMIT_EXCEEDED = "KIWOOM_RATE_LIMIT_EXCEEDED"   # 1700, HIGH
+    KIWOOM_TOKEN_INVALID = "KIWOOM_TOKEN_INVALID"               # 8005, MEDIUM
+    KIWOOM_IP_MISMATCH = "KIWOOM_IP_MISMATCH"                    # 8010, CRITICAL
+    KIWOOM_ENV_MISMATCH = "KIWOOM_ENV_MISMATCH"                  # 8030/8031, CRITICAL
+    KIWOOM_SERVER_ERROR = "KIWOOM_SERVER_ERROR"                  # 1999, HIGH
 
 
 @dataclass(frozen=True)
@@ -351,6 +358,93 @@ def format_system_restart_message(
     return title, "\n".join(lines)
 
 
+# Maps the Kiwoom-error EventType values to a Korean title fragment.
+# Severity is rendered in the leading bracket (caller supplies it) so
+# operators can scan severity at a glance even when they don't read the
+# Korean line.
+_KIWOOM_EVENT_TYPE_TITLE_KR: dict[str, str] = {
+    "KIWOOM_RATE_LIMIT_EXCEEDED": "키움 API 요청 한도 초과",
+    "KIWOOM_TOKEN_INVALID": "키움 토큰 무효",
+    "KIWOOM_IP_MISMATCH": "키움 발급 IP 불일치",
+    "KIWOOM_ENV_MISMATCH": "키움 실전/모의 환경 불일치",
+    "KIWOOM_SERVER_ERROR": "키움 서버 오류",
+}
+
+# Truncation cap for Kiwoom-supplied messages echoed into the body
+# (defence in depth -- broker payloads should never carry credentials,
+# but keep the audit body short anyway).
+_KIWOOM_MESSAGE_MAX_LEN = 200
+
+# Security H1 (Step 4 review): defensive Bearer-token redaction in case
+# Kiwoom's gateway ever echoes the inbound Authorization header into a
+# 200/return_code!=0 body. ``kiwoom_client._scrub_response`` already
+# handles the 4xx path; this helper covers the 200/business path that
+# reaches notification text + DB payload.
+_BEARER_TOKEN_RE = re.compile(r"Bearer\s+[A-Za-z0-9._\-]+", re.IGNORECASE)
+_AUTH_HEADER_RE = re.compile(
+    r"[Aa]uthorization\s*[:=]\s*[A-Za-z0-9._\-]+",
+)
+_REDACTED_TOKEN = "[REDACTED]"
+
+
+def _redact_kiwoom_msg(value: str) -> str:
+    """Strip any echoed Bearer token / Authorization header from a
+    Kiwoom-supplied error message before it reaches Telegram + DB."""
+    redacted = _BEARER_TOKEN_RE.sub(_REDACTED_TOKEN, value)
+    redacted = _AUTH_HEADER_RE.sub(_REDACTED_TOKEN, redacted)
+    return redacted
+
+
+def format_kiwoom_error_message(
+    *,
+    severity: Severity,
+    event_type: EventType,
+    return_code: int,
+    api_id: str | None,
+    return_msg: str | None,
+    timestamp: datetime,
+    is_fatal: bool = False,
+    should_force_token_refresh: bool = False,
+    should_retry_with_backoff: bool = False,
+) -> tuple[str, str]:
+    """Standard Kiwoom-error telegram body (02 §9.6 + error_mapper policy).
+
+    The action hint at the bottom mirrors error_mapper's three policy
+    booleans so the operator can decide whether to wait, intervene, or
+    leave the system to its own retry/refresh logic. ``return_msg`` is
+    truncated to ``_KIWOOM_MESSAGE_MAX_LEN`` chars to avoid log/payload
+    bloat from unexpectedly long broker responses.
+    """
+    severity_str = severity.value if isinstance(severity, Severity) else severity
+    event_value = event_type.value if isinstance(event_type, EventType) else event_type
+    title_kr = _KIWOOM_EVENT_TYPE_TITLE_KR.get(event_value, "키움 API 에러")
+    title = f"[{severity_str}] {title_kr}"
+    lines = [
+        f"코드: {return_code}",
+        f"API: {api_id or '-'}",
+        f"시각: {_fmt_time(timestamp)}",
+    ]
+    msg = (return_msg or "").strip()
+    if msg:
+        # Security H1: redact any echoed Authorization / Bearer token
+        # before truncate so the cap can't slice the redaction marker.
+        msg = _redact_kiwoom_msg(msg)
+        if len(msg) > _KIWOOM_MESSAGE_MAX_LEN:
+            msg = msg[:_KIWOOM_MESSAGE_MAX_LEN] + "..."
+        lines.append("")
+        lines.append(f"메시지: {msg}")
+    if is_fatal:
+        lines.append("")
+        lines.append("자동 복구 불가 — 운영자 개입 필요 (인증 / 환경 점검)")
+    elif should_force_token_refresh:
+        lines.append("")
+        lines.append("토큰 자동 재발급 후 재시도 중")
+    elif should_retry_with_backoff:
+        lines.append("")
+        lines.append("백오프 후 재시도 중")
+    return title, "\n".join(lines)
+
+
 def format_websocket_disconnected_message(
     *,
     timestamp: datetime,
@@ -437,6 +531,7 @@ __all__ = [
     "Severity",
     "format_box_entry_imminent_message",
     "format_buy_message",
+    "format_kiwoom_error_message",
     "format_manual_trade_message",
     "format_profit_take_message",
     "format_stop_loss_message",
