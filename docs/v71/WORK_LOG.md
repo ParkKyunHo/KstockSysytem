@@ -2957,6 +2957,59 @@ uvicorn.run('src.web.v71.main:app', host='127.0.0.1', port=8001, log_level='info
 
 ---
 
+### Phase 7 진입 직전 production env 보정 + boot smoke (2026-04-28)
+
+**Commit `7e70bc4`** (P-Wire-1 production env 보정), **Commit `840df16`** (production boot smoke).
+
+#### 사용자 자원 확인 결과 (2026-04-28)
+
+- **`.env`** — 모든 시크릿 존재 (KIWOOM_APP_KEY/SECRET 43chars + 별도 PAPER 키 + TELEGRAM_BOT_TOKEN/CHAT_ID + DATABASE_URL Pooler + SUPABASE 키 4개)
+- **AWS Lightsail (43.200.235.74)** — SSH 정상, `k-stock-trading.service inactive since 2026-02-25 03:11:27 KST`, V7.0 `current/v2025.12.14.002 + releases/v001+v002 (725M) + shared/.env (5KB)`. Python 3.10.12 + 3.11. **AWS 정리는 사용자 지시: 배포 전에 진행**.
+- **Telegram bot** — 활성 (@stock_Albra_bot, ID 7973680656, getMe 200 OK). **사용자 지시: 동작 테스트는 배포 후**.
+
+#### 발견된 이슈 — 즉시 수정
+
+**P-Wire-1 환경변수 이름 불일치**: `src/web/v71/trading_bridge.py:1348`이 `KIWOOM_SECRET`를 읽고 있었지만 .env / `src/utils/config.py` / `src/web/v71/api/settings/router.py` 정식 이름은 **`KIWOOM_APP_SECRET`**. 본 단위 fix 안 했다면 `v71.kiwoom_exchange` flag ON 즉시 attach 실패 = 실전 운용 불가.
+
+**사용자 결정 반영**: paper 트레이딩 단계 건너뛰고 production 키로 직접 자금 투입.
+
+#### 변경 (commit `7e70bc4`)
+
+- `_build_kiwoom_exchange()` 환경 변수 분기:
+  * `KIWOOM_ENV=SANDBOX` → `KIWOOM_PAPER_APP_KEY` / `KIWOOM_PAPER_APP_SECRET`
+  * 그 외 (PRODUCTION default) → `KIWOOM_APP_KEY` / `KIWOOM_APP_SECRET`
+  * 누락 시 정확한 키 라벨로 fail-loud
+- Production 모드 부팅 시 `logger.warning("real funds at risk -- KIWOOM_ENV=%s, app_key_prefix=%s")` 마스킹 4 chars + ***
+- 11개 KIWOOM_SECRET 참조 일괄 변경 (테스트 + 모든 호출처)
+- 기존 paper 테스트는 KIWOOM_PAPER_APP_KEY/SECRET로 분리
+
+#### 신규 boot smoke (commit `840df16`)
+
+`tests/v71/web/test_production_boot_smoke.py` — 2 케이스:
+- `test_attach_with_all_flags_on_production_succeeds`:
+  * 11개 P-Wire 플래그 ON + KIWOOM_ENV=PRODUCTION
+  * 모든 핸들 슬롯 (kiwoom + box + position + notification + buy/exit/vi + ws + reconciler + orchestrator) 채움 검증
+  * is_paper=False / degraded_vi=False / telegram_active=True invariant
+- `test_attach_production_keys_used_not_paper`:
+  * paper 키 설정돼 있어도 production 모드는 절대 paper 키를 읽지 않는다는 보장 (`V71TokenManager.__init__` 호출 인자 검증)
+
+#### 검증
+
+- 단위 테스트: 1196/1196 PASS in 8.59s (1192 → 1196, +4 신규)
+- 6 harness PASS, ruff clean
+- FastAPI app: 59 routes, import 정상
+
+#### Phase 7 진입 직전 status
+
+- ✓ Production env var 정합 (즉시 attach 실패 회귀 방지)
+- ✓ 11 P-Wire 플래그 ON 시 boot smoke PASS
+- ✓ FastAPI app 부팅 정상 (59 routes)
+- 사용자 자원 작업: AWS 정리(배포 전), Telegram 테스트(배포 후), `KIWOOM_APP_KEY/SECRET` 환경 주입(배포 시점)
+
+**기본값**: `config/feature_flags.yaml` 모두 false. 운영자가 점진적으로 활성화. v70_box_fallback=true로 V7.0 동작 유지 보장.
+
+---
+
 ### Phase 6/7 wiring P-Wire-6: V71ExitOrchestrator (PRICE_TICK → Exit 파이프라인) (2026-04-28)
 
 **Commit `ad32d67`**: `feat(v71): web P-Wire-6 — V71ExitOrchestrator (PRICE_TICK → ExitCalculator → ExitExecutor)`
