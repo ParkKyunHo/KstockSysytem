@@ -2957,6 +2957,79 @@ uvicorn.run('src.web.v71.main:app', host='127.0.0.1', port=8001, log_level='info
 
 ---
 
+### Phase 5 후속 P5-Kiwoom-6: V71Reconciler (2026-04-28)
+
+**Commit `c6fb195`**: `feat(v71): exchange P5-Kiwoom-6 — V71Reconciler (kt00018 ↔ DB + 시나리오 A/B/C/D/E)`
+**규모**: 3 files +2313 / -0
+
+#### 신규 모듈
+
+**V71Reconciler** (~700 LOC):
+- 키움 잔고(kt00018) ↔ V7.1 DB(positions + tracked_stocks) 정합성 엔진
+- SIMPLE_APPLY 모드 (default): B/D/E 직접 적용 + A/C 콜백 위임
+- DETECT_ONLY 모드: 테스트/감사용, DB 변경 없음
+- DI: kiwoom_client / db_session_factory / clock / apply_mode / on_pyramid_buy_detected / on_tracking_terminated
+- V71ReconciliationDecision (종목별 결과) + V71ReconciliationReport (전체 리포트)
+- V71PyramidBuyDetected / V71TrackingTerminated — 콜백 페이로드
+- _KiwoomBalanceExt wrapper (skill의 KiwoomBalance + stock_name 결합)
+- _orm_to_position_state helper (V71Position → PositionState)
+
+#### 시나리오별 동작 (PRD §7)
+
+- **E_FULL_MATCH**: no-op (trade_events 미기록, 소음 방지)
+- **A**: V71PyramidBuyDetected + 콜백 (DB 미변경, V71PositionManager 후속 책임)
+- **B**: with_for_update + MANUAL 우선 차감 → 단일/이중 비례 차감 (compute_proportional_split, 큰 경로 우선 반올림). avg_price_skill.update_position_after_sell 사용 (positions.weighted_avg_price 직접 변경 X). total=0 → CLOSED, OPEN→PARTIAL_CLOSED 전이. UNAPPLIED_REMAINING audit marker (race 감지)
+- **C**: V71TrackingTerminated + 콜백 (V71BoxManager 후속 책임). production-safe (assert 제거)
+- **D**: V71Position INSERT (source=MANUAL, fixed_stop_price=avg×0.95 V71Constants 사용). stock_name=kiwoom.stk_nm (Trading D1 / Security H1 fix). trade_event position_id FK 명시
+
+#### 워크플로우 (12단계 + 4 에이전트 병렬)
+
+| 에이전트 | 발견 | 반영 |
+|---------|-----|-----|
+| v71-architect | PASS (조건부) / Q1~Q5 동의 / 권고 N1~N10 (10건) | 모두 반영 |
+| security-reviewer | HIGH 1 + MEDIUM 4 + LOW 3 | H1+M2+M3+M4+M5 즉시 + L1 테스트 회귀 |
+| test-strategy | 78 케이스 가이드 (14 그룹) | 64 케이스 구현 (parametrize 압축) |
+| trading-logic-verifier | WARNING (D1 FAIL = H1 / B1 PARTIAL_CLOSED / B2 close_reason / G1 minor) | D1+B1 즉시. B2는 docstring + 50자 미만 |
+| migration-strategy | PASS (신규 마이그레이션 불필요) / 작은 이슈 2건 | 모두 반영 |
+
+#### 보안 패치 (5건 즉시)
+
+- **H1/D1** stock_name 버그: _KiwoomBalanceExt wrapper + stk_nm 파싱 + 100자 cap
+- **M2** stock_code 화이트리스트: regex `^[A-Z0-9]{5,8}$` + reconcile_stock public API에도 적용 + length-only logging (log injection 방어)
+- **M3** stale snapshot 명시: _load_system_positions docstring + cadence self-heal 정책 (PRD §7.1 5분 주기)
+- **M4** UNAPPLIED_REMAINING audit marker: B 시나리오 차감 후 remaining > 0 시 명시적 audit + logger.warning
+- **M5** assert → graceful: case C에서 tracking is None 시 production-safe (Python -O 안전)
+- **B1** PARTIAL_CLOSED 전이: total>0 + status=OPEN 시 PARTIAL_CLOSED로 (V71PositionManager 일관)
+- **Migration 작은 이슈 2** position_id FK: case D에서 trade_event.position_id 명시
+
+#### 검증
+
+- 단위 테스트: 64/64 PASS in 2.01s
+  * kt00018 fetch 6 / case dispatch 5 / case B 8 / case D 4 / case A pyramid 5 / case C 3 / DETECT_ONLY 3 / trade_events 4 / failure isolation 3 / whitelist parametrize 5 / reconcile_stock 4 / helpers 10 / security 4
+- exchange 누적: 351/351 PASS (66+42+72+28+79+64)
+- V7.1 회귀: 936/936 PASS (이전 872 + 64 신규)
+- 6 harness: 1/2/3/4/6 PASS, 5 WARN
+- ruff: 0 errors after auto-fix + manual cleanup
+- 보안 회귀: caplog acnt_no/tot_evlt_amt PII 미노출 / log injection 방어 / repr 안전 / case C contract violation graceful / 콜백 frame locals 미노출
+
+#### 함정 / 학습
+
+- **kt00018 응답에 PII 다수**: acnt_no / tot_evlt_amt / pur_amt 등 → trade_event payload에 저장 안 함, logger 메시지에 stock_code만 노출
+- **with_for_update + per-stock 트랜잭션**: PostgreSQL row lock + READ COMMITTED isolation에서 cross-module race (V71OrderManager fill 이벤트) 방지. SQLite는 FOR UPDATE no-op이지만 dev 환경만 영향
+- **OPEN→PARTIAL_CLOSED 전이 누락**: 본 단위 첫 구현에서 누락 (B1) — V71PositionManager는 정확히 함. trading-logic-verifier가 발견
+- **stock_name 버그**: KiwoomBalance dataclass에 stock_name 없음 → _KiwoomBalanceExt wrapper로 우회 (skill 변경 회피)
+- **classify_case에 음수 입력**: defensive ValueError → decision.error 격리. 종목별 try/except가 잡음
+- **assert in production**: Python -O로 strip되므로 graceful return으로 변경 (Security M5)
+
+#### 다음 단위
+
+- **P5-Kiwoom-Notify**: notification_skill EventType 5개 추가 (KIWOOM_RATE_LIMIT_EXCEEDED / KIWOOM_TOKEN_INVALID / KIWOOM_IP_MISMATCH / KIWOOM_ENV_MISMATCH / KIWOOM_SERVER_ERROR) + notify_error helper. error_mapper.severity_for + is_fatal 정책 hint 사용
+- **P5-Kiwoom-Wire (선택)**: kiwoom_api_skill.py NotImpl 4개 채우기 (V71KiwoomClient + error_mapper + V71OrderManager + V71Reconciler 위임)
+- Phase 5 후속 완료 후: `v71-phase5-kiwoom-complete` tag
+- Phase 7 직전 wiring: in-memory `v71/position/v71_reconciler.py` vs `exchange/reconciler.py` (DB) 공존 결정 — 단일 활성 + 다른 deprecated
+
+---
+
 ### Phase 5 후속 P5-Kiwoom-5: V71OrderManager (2026-04-28)
 
 **Commit `ba0c287`**: `feat(v71): exchange P5-Kiwoom-5 — V71OrderManager (kt10000~10003 + v71_orders + WS reconcile)`
