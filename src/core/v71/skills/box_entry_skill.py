@@ -28,7 +28,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
 from typing import Literal
 
-from src.core.candle_builder import Candle
+from src.core.v71.candle.types import V71Candle as Candle
 from src.core.v71.v71_constants import V71Constants
 from src.utils.feature_flags import require_enabled
 
@@ -331,7 +331,9 @@ def _calculate_next_trading_day_at(
 
 def _get_holiday_checker() -> Callable[[date], bool]:
     """V7.0 holiday checker; tests monkey-patch this indirection."""
-    from src.core.market_schedule import get_market_schedule
+    from src.core.v71.market.v71_market_schedule import (
+        get_v71_market_schedule as get_market_schedule,
+    )
     schedule = get_market_schedule()
     return schedule.is_holiday
 

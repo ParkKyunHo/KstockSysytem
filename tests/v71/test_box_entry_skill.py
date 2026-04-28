@@ -40,9 +40,14 @@ def _enable_box_system():
 # Imports below the fixture so feature flag is set when the skill module
 # loads. The flag is checked inside functions, not at import, so this is
 # defensive only.
-from src.core.candle_builder import Candle, Timeframe  # noqa: E402
+from src.core.v71.candle.types import V71Candle as Candle  # noqa: E402
 from src.core.v71.skills import box_entry_skill as bes  # noqa: E402
 from src.core.v71.v71_constants import V71Constants  # noqa: E402
+from src.core.v71.v71_constants import V71Timeframe as Timeframe  # noqa: E402
+
+# V71 Timeframe.M3 → V71Timeframe.THREE_MINUTE compatibility shim for
+# legacy V7.0 test fixtures.
+Timeframe.M3 = Timeframe.THREE_MINUTE  # type: ignore[attr-defined]
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -61,13 +66,12 @@ def make_candle(
     return Candle(
         stock_code="005930",
         timeframe=timeframe,
-        time=when or datetime(2026, 4, 27, 14, 30),
+        timestamp=when or datetime(2026, 4, 27, 14, 30),
         open=open_,
         high=high,
         low=low,
         close=close,
         volume=1000,
-        is_complete=True,
     )
 
 

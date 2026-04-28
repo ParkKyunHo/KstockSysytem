@@ -29,8 +29,8 @@ import logging
 from collections.abc import Awaitable, Callable
 from typing import Protocol
 
-from src.core.candle_builder import Candle
 from src.core.v71.box.box_manager import BoxRecord, V71BoxManager
+from src.core.v71.candle.types import V71Candle as Candle
 from src.core.v71.skills.box_entry_skill import (
     Box,
     EntryDecision,

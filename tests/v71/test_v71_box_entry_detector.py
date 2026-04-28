@@ -29,7 +29,11 @@ def _enable_box_system():
     ff.reload()
 
 
-from src.core.candle_builder import Candle, Timeframe  # noqa: E402
+from src.core.v71.candle.types import V71Candle as Candle  # noqa: E402
+from src.core.v71.v71_constants import V71Timeframe as Timeframe  # noqa: E402
+
+# V7.0 Timeframe.M3 → V71Timeframe.THREE_MINUTE compatibility shim
+Timeframe.M3 = Timeframe.THREE_MINUTE  # type: ignore[attr-defined]
 from src.core.v71.box.box_entry_detector import V71BoxEntryDetector  # noqa: E402
 from src.core.v71.box.box_manager import V71BoxManager  # noqa: E402
 from src.core.v71.skills.box_entry_skill import (  # noqa: E402
@@ -65,13 +69,12 @@ def _make_candle(
     return Candle(
         stock_code=stock_code,
         timeframe=timeframe,
-        time=when or datetime(2026, 4, 27, 14, 30),
+        timestamp=when or datetime(2026, 4, 27, 14, 30),
         open=open_,
         high=high,
         low=low,
         close=close,
         volume=1000,
-        is_complete=True,
     )
 
 
@@ -104,7 +107,7 @@ class TestStart:
             box_manager=bm,
             on_entry=on_entry,
             resolve_tracked_id=lambda _s: None,
-            market_context=lambda c: _ctx(current_time=c.time),
+            market_context=lambda c: _ctx(current_time=c.timestamp),
         )
         det.start()
         det.start()  # idempotent
@@ -133,7 +136,7 @@ class TestCheckEntryRouting:
             box_manager=bm,
             on_entry=on_entry,
             resolve_tracked_id=lambda _s: None,
-            market_context=lambda c: _ctx(current_time=c.time),
+            market_context=lambda c: _ctx(current_time=c.timestamp),
         )
         candle = _make_candle()
         out = await det.check_entry(candle)
@@ -156,7 +159,7 @@ class TestCheckEntryRouting:
             box_manager=bm,
             on_entry=on_entry,
             resolve_tracked_id=lambda _s: "tracked-001",
-            market_context=lambda c: _ctx(current_time=c.time),
+            market_context=lambda c: _ctx(current_time=c.timestamp),
         )
         out = await det.check_entry(_make_candle())
         assert out == []
@@ -187,7 +190,7 @@ class TestCheckEntryRouting:
             box_manager=bm,
             on_entry=on_entry,
             resolve_tracked_id=lambda _s: "tracked-001",
-            market_context=lambda c: _ctx(current_time=c.time),
+            market_context=lambda c: _ctx(current_time=c.timestamp),
         )
 
         # First bar: previous None -> evaluate raises ValueError, no dispatch.
@@ -225,7 +228,7 @@ class TestCheckEntryRouting:
             box_manager=bm,
             on_entry=on_entry,
             resolve_tracked_id=lambda _s: "tracked-001",
-            market_context=lambda c: _ctx(current_time=c.time),
+            market_context=lambda c: _ctx(current_time=c.timestamp),
         )
         # path-A detector queries list_waiting_for_tracked(tracked, PATH_A)
         # so PATH_B boxes are filtered upstream and never seen.
@@ -266,7 +269,7 @@ class TestCheckEntryRouting:
             box_manager=bm,
             on_entry=flaky_on_entry,
             resolve_tracked_id=lambda _s: "tracked-001",
-            market_context=lambda c: _ctx(current_time=c.time),
+            market_context=lambda c: _ctx(current_time=c.timestamp),
         )
 
         # Prime prev candle.
@@ -302,7 +305,7 @@ class TestSyncCallback:
             box_manager=bm,
             on_entry=lambda _d, _b: None,  # type: ignore[arg-type]
             resolve_tracked_id=lambda _s: None,
-            market_context=lambda c: _ctx(current_time=c.time),
+            market_context=lambda c: _ctx(current_time=c.timestamp),
         )
         # No event loop running -- should swallow gracefully.
         det._on_bar_complete_sync(_make_candle())  # no exception
@@ -330,7 +333,7 @@ class TestSyncCallback:
             box_manager=bm,
             on_entry=on_entry,
             resolve_tracked_id=lambda _s: "tracked-001",
-            market_context=lambda c: _ctx(current_time=c.time),
+            market_context=lambda c: _ctx(current_time=c.timestamp),
         )
         # First bar primes prev (no dispatch since prev was None -> ValueError swallowed).
         det._on_bar_complete_sync(_make_candle(open_=92, high=98, low=91, close=95))
