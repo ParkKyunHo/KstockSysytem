@@ -10,6 +10,7 @@ user approval.
 
 from __future__ import annotations
 
+from enum import Enum
 from typing import Final
 
 
@@ -163,5 +164,38 @@ class V71Constants:
     WS_PHASE_2_INTERVAL_SECONDS: Final[float] = 300.0
     """Phase 2 fixed interval -- infinite retries every 5 minutes."""
 
+    # ---- Candle / Market schedule (02_TRADING_RULES.md §4 / §7) ----
+    CANDLE_THREE_MINUTE_SECONDS: Final[int] = 180
+    """3분봉 길이 (PATH_A 기준) -- §4.1 / §4.2."""
 
-__all__ = ["V71Constants"]
+    CANDLE_HISTORY_PER_STOCK_MAX: Final[int] = 200
+    """종목당 보관 봉 수 한도 (deque maxlen). ATR(10)+EMA(60)에 70봉이
+    필요하므로 200봉이면 1회 대응 + 여유. 메모리 한계 50종목 × 200봉
+    × ~200byte ≈ 2MB."""
+
+    DAILY_CANDLE_FETCH_HHMM: Final[str] = "15:35"
+    """EOD 폴링 시각 (KRX 15:30 정규장 종료 5분 후)."""
+
+    # ---- KRX market schedule (02_TRADING_RULES.md §7 / §10) ----
+    MARKET_OPEN_TIME: Final[str] = "09:00"
+    """정규장 시작 (KST)."""
+
+    MARKET_CLOSE_TIME: Final[str] = "15:30"
+    """정규장 종료 (KST)."""
+
+    SIGNAL_START_TIME: Final[str] = "09:05"
+    """진입 신호 탐지 시작 (CLAUDE.md Part 3.5)."""
+
+
+class V71Timeframe(str, Enum):
+    """V7.1 candle timeframe (V71 prefix per harness 1 + 격리 원칙).
+
+    PRD §4.1/§4.2 = PATH_A 3분봉, §4.3 = PATH_B 일봉. M1 등 다른
+    타임프레임은 V7.1에서 사용하지 않음.
+    """
+
+    THREE_MINUTE = "3m"
+    DAILY = "1d"
+
+
+__all__ = ["V71Constants", "V71Timeframe"]
