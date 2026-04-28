@@ -4256,3 +4256,94 @@ PRD §6 에이전트 5개 중 3개 + skill 활용:
 각 단위마다 동일 워크플로우 (architect → 구현 → security + test 병렬 → 테스트 → 실행 → harness → commit) 반복.
 
 ---
+
+## 2026-04-28 (Phase A: V7.0 완전 폐기)
+
+> 사용자 결정 (재논의 금지, 헌법 처리): V7.0 레거시 → 완전 삭제, V7.1 단독 운영.
+> 단계 분리 (big-bang 금지) + 각 step 마다 commit + V7.1 회귀 + harness 6/6 + ruff baseline 강제.
+> 시스템 설계: PATH_A = 3분봉, PATH_B = 일봉 (PRD 02 §4.1/§4.2/§4.3 + §7).
+
+### Phase A 진행률
+
+| Step | Commit | 내용 | 상태 |
+|------|--------|------|------|
+| A-1 | `3cfd969` | V71Tick + V71Candle frozen + V71Timeframe + `message_to_tick` | ✅ |
+| A-2 | `152637b` | V71BaseCandleBuilder Protocol + V71ThreeMinuteCandleBuilder | ✅ |
+| A-3 | `9f133a2` | V71DailyCandleBuilder (PATH_B 일봉, ka10081 EOD) | ✅ |
+| A-4 | `17f6de7` | V71CandleManager + V71MarketSchedule | ✅ |
+| B   | `0601d17` | V7.1 candle/market import path 전환 (4 파일) | ✅ |
+| **C** | (이번) | **scripts/ V7.0 의존 33 파일 archive** | ✅ |
+| D   | | V7.0 모듈 일괄 git rm (가장 큰 단계) | ⏳ |
+| E   | | PRD 문서 + feature_flags.yaml 정리 | ⏳ |
+| F   | | P-Wire-12: V71CandleManager wiring → trading_bridge (자동 박스 감지 활성화) | ⏳ |
+
+### V7.1 신규 캔들/마켓 모듈 (Step A-1 ~ A-4 산출)
+
+```
+src/core/v71/candle/
+├── __init__.py
+├── types.py                       (V71Tick, V71Candle, message_to_tick)
+├── v71_candle_builder.py          (V71BaseCandleBuilder Protocol, runtime_checkable)
+├── v71_three_minute_builder.py    (PATH_A 3분봉, deque maxlen=200)
+├── v71_daily_builder.py           (PATH_B 일봉, ka10081 EOD)
+└── v71_candle_manager.py          (다중 종목 + WS PRICE_TICK routing + EOD scheduler)
+
+src/core/v71/market/
+├── __init__.py
+└── v71_market_schedule.py         (KRX 휴장일 + 정규장 체크 + 싱글턴)
+```
+
+Architect 결정 (재논의 금지):
+- Q1 V71Timeframe → `v71_constants.py` (매직 넘버 일관성)
+- Q2 Protocol (ABC X)
+- Q3 메시지→Tick 변환은 `types.message_to_tick` 순수 함수
+- Q4 frozen=True 강제 + V71Candle.tick_count 추가
+- Q5 일봉 빌더 = ka10081 EOD 폴링 (3분봉 누적 X)
+- Q6 deque(maxlen=`CANDLE_HISTORY_PER_STOCK_MAX`=200)
+- Q7 boot 1회 + 15:35 EOD + `fill_gap()`
+- Q8 명시적 add_stock/remove_stock (BoxManager 의존 X)
+- Q9 subscriber 격리 (한 cb 실패 → 다른 cb 진행)
+- Q10 ka10081은 V71KiwoomClient.get_daily_chart 이미 존재
+
+### Step C: scripts V7.0 의존 archive (2026-04-28)
+
+**규모**: 33 파일 R(rename), 0/0 변경 (rename-only, 내용 무수정)
+
+**Archive 대상 → `scripts/archive/v70/`**
+
+scripts/*.py (18개):
+- `test_*.py` (12): test_integration / test_core / test_telegram / test_realtime_data_manager / test_trading_engine_integration / test_api_positions / test_condition / test_condition_simple / test_order / test_reporter / test_api / test_database
+- `check_*.py` (5): check_change_rate / check_rvol / check_rvol_simple / check_db_schema / check_db_counts
+- `temp_analyze.py`
+
+scripts/*.ps1 (12개):
+- `analyze_*.ps1` (4): run_analyze / analyze_277810 / analyze_all_pool / analyze_daily
+- `check_signal_*.ps1` (3): check_signal_logs / check_signal_process / check_signal_detail
+- `check_telegram_logs.ps1`
+- `check_all_alerts.ps1` + `check_all_alerts2.ps1`
+- `get_pool.ps1`
+- `temp_analyze.ps1`
+
+scripts/deploy/* (3개) → `scripts/archive/v70/deploy/`:
+- `test_import.ps1` (V7.0 ExitManager / OrderExecutor / TradingEngine import 검증)
+- `run_rvol_check.ps1` (`check_rvol_simple.py` 호출)
+- `run_change_rate_check.ps1` (`check_change_rate.py` 호출)
+
+**보존**
+
+- `scripts/log_file_change.py` — Claude Code hook, V7.1 무관
+- `scripts/check_and_migrate_v25.py` — V25 → V7 일회성 마이그레이션, V7.1 무관 (보수적 보존)
+- `scripts/harness/*` — V7.1 전용
+- `scripts/deploy/*` (test_import / run_rvol / run_change_rate 외) — 운영 도구 모두 보존
+  - 특히 `test_server.ps1`은 `python -m src.main` 호출 → `src/main.py` 처리는 Step D에서 결정
+
+**검증**
+
+- V7.1 회귀: 1279/1279 PASS
+- 6 harness: PASS (V71_PATHS 영향 없음, archive 디렉토리는 V7.1 land 외)
+- ruff: 554 errors (baseline 동등, Step C는 코드 무수정)
+- `git diff --stat`: 33 R(rename), 0 insertions, 0 deletions
+
+**다음**: Step D — `src/core/`, `src/notification/`, `src/api/`, `tests/` V7.0 의존 파일 일괄 `git rm`. `src/main.py` V7.1 entry 갱신 또는 폐기 결정.
+
+---
