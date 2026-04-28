@@ -442,6 +442,12 @@ class _TradingEngineHandle:
         # 09:00 KST.
         self.monthly_review: Any = None
         self.monthly_review_scheduler: Any = None
+        # P-Wire-10: V7.0 TelegramBot (shared for outbound + commands) +
+        # V71TelegramCommands. Polling task is owned by the V7.0 bot's
+        # ``start_polling`` / ``stop_polling`` -- detach must call stop
+        # before notification stack tears down.
+        self.telegram_bot: Any = None
+        self.telegram_commands: Any = None
 
 
 # Default reconciliation cadence (PRD 02_TRADING_RULES.md §7.1 -- "매 5분마다").
@@ -572,18 +578,13 @@ async def _build_pg_notification_execute() -> Any:
     return execute
 
 
-def _build_telegram_send_fn() -> Any:
-    """Wrap V7.0 ``TelegramBot.send_message`` into the V7.1
-    ``TelegramSendFn`` callable contract.
+def _build_telegram_bot() -> Any:
+    """Construct a single V7.0 :class:`TelegramBot` instance to be shared
+    by the notification service (outbound) and command registrar (inbound).
 
     Returns ``None`` when ``TELEGRAM_BOT_TOKEN`` / ``TELEGRAM_CHAT_ID``
     are missing -- the notification service then operates in *queue
-    only* mode (records persisted, worker not started). This is the
-    fail-secure path used during paper smoke + early Phase 7 work
-    before the Telegram bot is reactivated.
-
-    parse_mode is intentionally not forwarded -- CLAUDE.md Part 1.1
-    forbids it, and V7.0 TelegramBot already guards (defence in depth).
+    only* mode and the command registrar is skipped.
     """
     import os
 
@@ -598,7 +599,18 @@ def _build_telegram_send_fn() -> Any:
 
     from src.notification.telegram import TelegramBot
 
-    bot = TelegramBot()
+    return TelegramBot()
+
+
+def _build_telegram_send_fn(bot: Any) -> Any:
+    """Wrap a constructed :class:`TelegramBot` into the V7.1
+    ``TelegramSendFn`` callable contract.
+
+    parse_mode is intentionally not forwarded -- CLAUDE.md Part 1.1
+    forbids it, and V7.0 TelegramBot already guards (defence in depth).
+    """
+    if bot is None:
+        return None
 
     async def send(text: str) -> bool:
         return await bot.send_message(text)
@@ -629,10 +641,12 @@ def _build_notification_stack() -> dict[str, Any]:
     )
 
     clock = _AsyncioRealClock()
-    telegram_send = _build_telegram_send_fn()
+    bot = _build_telegram_bot()
+    telegram_send = _build_telegram_send_fn(bot)
 
     return {
         "clock": clock,
+        "telegram_bot": bot,
         "telegram_send": telegram_send,
         "_PostgresNotificationRepository": PostgresNotificationRepository,
         "_V71NotificationQueue": V71NotificationQueue,
@@ -1276,6 +1290,134 @@ async def _build_daily_summary(
     return summary, scheduler
 
 
+async def _build_telegram_commands(
+    handle: _TradingEngineHandle,
+) -> Any:
+    """Wire V71TelegramCommands onto the shared V7.0 TelegramBot +
+    start polling so /status, /positions, etc. can be invoked.
+
+    Cross-flag invariant:
+      * v71.notification_v71 ON (queue + repository required)
+      * v71.kiwoom_exchange ON (cancel_order needs V71OrderManager)
+      * telegram_bot must exist (TELEGRAM_BOT_TOKEN/CHAT_ID env present)
+    """
+    import os
+
+    from src.utils.feature_flags import is_enabled
+
+    if not is_enabled("v71.notification_v71"):
+        raise RuntimeError(
+            "trading_bridge: v71.telegram_commands_v71 requires "
+            "v71.notification_v71"
+        )
+    if handle.notification_queue is None:
+        raise RuntimeError(
+            "trading_bridge: V71TelegramCommands requires notification_queue"
+        )
+    if handle.notification_repository is None:
+        raise RuntimeError(
+            "trading_bridge: V71TelegramCommands requires notification_repository"
+        )
+    if handle.notification_circuit_breaker is None:
+        raise RuntimeError(
+            "trading_bridge: V71TelegramCommands requires circuit_breaker"
+        )
+    if handle.box_manager is None:
+        raise RuntimeError(
+            "trading_bridge: V71TelegramCommands requires box_manager"
+        )
+    if handle.position_manager is None:
+        raise RuntimeError(
+            "trading_bridge: V71TelegramCommands requires position_manager"
+        )
+    if handle.telegram_bot is None:
+        raise RuntimeError(
+            "trading_bridge: V71TelegramCommands requires a telegram_bot "
+            "(TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID must be set)"
+        )
+
+    chat_id = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
+    if not chat_id:
+        raise RuntimeError(
+            "trading_bridge: TELEGRAM_CHAT_ID required for command "
+            "authorization (commands silently ignore non-listed chats)"
+        )
+
+    from src.core.v71.notification.v71_telegram_commands import (
+        CommandContext,
+        V71TelegramCommands,
+    )
+
+    bot = handle.telegram_bot
+    clock = handle.clock if handle.clock is not None else V71RealClock()
+
+    async def _telegram_send(text: str, *, chat_id: str | None = None) -> bool:
+        """V7.0 TelegramBot.send_message uses positional + chat_id kwarg."""
+        return await bot.send_message(text, chat_id=chat_id)
+
+    async def _audit_log(**kwargs: Any) -> None:
+        """Log audit events as structured WARNING. The V7.1 audit pipeline
+        (per 12_SECURITY.md §8.3) will replace this when wired."""
+        logger.warning("v71_telegram_command_audit: %s", kwargs)
+
+    def _safe_mode_get() -> bool:
+        return bool(system_state.safe_mode)
+
+    async def _safe_mode_set(active: bool) -> None:
+        system_state.safe_mode = bool(active)
+        if active:
+            system_state.safe_mode_entered_at = datetime.now(timezone.utc)
+        else:
+            system_state.safe_mode_resumed_at = datetime.now(timezone.utc)
+
+    async def _cancel_order(order_id: str) -> bool:
+        if handle.order_manager is None:
+            logger.warning(
+                "v71_telegram_cancel_order: order_manager not wired",
+            )
+            return False
+        try:
+            from uuid import UUID
+            await handle.order_manager.cancel_order(UUID(order_id))
+            return True
+        except Exception as exc:  # noqa: BLE001 -- command must not raise
+            logger.warning(
+                "v71_telegram_cancel_order failed: %s",
+                type(exc).__name__,
+            )
+            return False
+
+    def _list_tracked() -> list[Any]:
+        # TrackedSummary build is a follow-up unit; empty list means
+        # /tracking returns an empty (but valid) response body.
+        return []
+
+    cmd_ctx = CommandContext(
+        box_manager=handle.box_manager,
+        position_manager=handle.position_manager,
+        notification_queue=handle.notification_queue,
+        notification_repository=handle.notification_repository,
+        circuit_breaker=handle.notification_circuit_breaker,
+        clock=clock,
+        telegram_send=_telegram_send,
+        audit_log=_audit_log,
+        authorized_chat_ids=(chat_id,),
+        safe_mode_get=_safe_mode_get,
+        safe_mode_set=_safe_mode_set,
+        cancel_order=_cancel_order,
+        list_tracked=_list_tracked,
+        report_handler=None,  # Phase 6
+    )
+    commands = V71TelegramCommands(context=cmd_ctx)
+    commands.register(bot)
+    # Start polling so registered commands actually receive updates.
+    # User decision (2026-04-28): test telegram after deploy. The polling
+    # is harmless when no chats send commands; first real /status hits
+    # this path.
+    await bot.start_polling()
+    return commands
+
+
 async def _build_monthly_review(
     handle: _TradingEngineHandle,
 ) -> Any:
@@ -1670,6 +1812,7 @@ async def attach_trading_engine() -> _TradingEngineHandle:
             handle.notification_repository = repository
             handle.notification_queue = queue
             handle.notification_circuit_breaker = circuit_breaker
+            handle.telegram_bot = built["telegram_bot"]
             if built["telegram_send"] is not None:
                 service = built["_V71NotificationService"](
                     queue=queue,
@@ -1856,6 +1999,32 @@ async def attach_trading_engine() -> _TradingEngineHandle:
             "-- daily PnL alert at 15:30 not scheduled",
         )
 
+    # P-Wire-10: V71TelegramCommands. Registers 13 commands on the
+    # shared V7.0 TelegramBot and starts polling so the user can
+    # /status / /positions / /stop after deployment. User policy
+    # 2026-04-28: actual command testing happens after deploy; the
+    # registration code path runs now.
+    if is_enabled("v71.telegram_commands_v71"):
+        try:
+            commands = await _build_telegram_commands(handle)
+        except Exception as exc:  # noqa: BLE001
+            logger.error(
+                "trading_bridge: v71.telegram_commands_v71 enabled but "
+                "construction failed: %s",
+                type(exc).__name__,
+            )
+            raise
+        handle.telegram_commands = commands
+        logger.info(
+            "trading_bridge: V71TelegramCommands wired + polling started"
+        )
+    else:
+        logger.warning(
+            "trading_bridge: feature flag 'v71.telegram_commands_v71' "
+            "disabled -- /status etc. not registered (web dashboard "
+            "only)",
+        )
+
     # P-Wire-9: V71MonthlyReview scheduler (1st of month, 09:00 KST).
     # Same dependencies as daily_summary; minimal review body when
     # list_review_items returns empty (placeholder, follow-up unit).
@@ -1933,6 +2102,21 @@ async def detach_trading_engine(handle: _TradingEngineHandle) -> None:
     """
     handle.box_manager = None
     handle.position_manager = None
+
+    # P-Wire-10: stop telegram polling BEFORE notification service so
+    # in-flight command handlers (which call telegram_send) don't fight
+    # over the bot during shutdown. The bot itself is closed implicitly
+    # when polling stops.
+    if handle.telegram_bot is not None:
+        try:
+            await handle.telegram_bot.stop_polling()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "trading_bridge: telegram_bot.stop_polling() failed: %s",
+                type(exc).__name__,
+            )
+    handle.telegram_commands = None
+    handle.telegram_bot = None
 
     # P-Wire-9: stop monthly review scheduler before notification service
     if handle.monthly_review_scheduler is not None:

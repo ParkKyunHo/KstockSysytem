@@ -40,6 +40,7 @@ _PRODUCTION_FLAGS = (
     "v71.exit_orchestrator",
     "v71.daily_summary",
     "v71.monthly_review",
+    "v71.telegram_commands_v71",
 )
 
 
@@ -126,7 +127,15 @@ async def test_attach_with_all_flags_on_production_succeeds(production_env):  # 
 
     with (
         patch("src.database.connection.get_db_manager", return_value=db),
-        patch("src.notification.telegram.TelegramBot"),
+        patch(
+            "src.notification.telegram.TelegramBot",
+            return_value=MagicMock(
+                send_message=AsyncMock(return_value=True),
+                register_command=MagicMock(),
+                start_polling=AsyncMock(),
+                stop_polling=AsyncMock(),
+            ),
+        ),
         patch(
             "src.core.v71.notification.v71_notification_service."
             "V71NotificationService.start", AsyncMock(),
@@ -208,6 +217,10 @@ async def test_attach_with_all_flags_on_production_succeeds(production_env):  # 
             assert handle.monthly_review is not None
             assert handle.monthly_review_scheduler is not None
 
+            # P-Wire-10: telegram bot + commands
+            assert handle.telegram_bot is not None
+            assert handle.telegram_commands is not None
+
             # Production mode guarantee: ViMonitor wired so degraded_vi
             # flag is OFF (BuyExecutor uses real is_vi_active).
             from src.web.v71.api.system.state import system_state
@@ -239,7 +252,15 @@ async def test_attach_production_keys_used_not_paper(production_env):  # noqa: A
 
     with (
         patch("src.database.connection.get_db_manager", return_value=db),
-        patch("src.notification.telegram.TelegramBot"),
+        patch(
+            "src.notification.telegram.TelegramBot",
+            return_value=MagicMock(
+                send_message=AsyncMock(return_value=True),
+                register_command=MagicMock(),
+                start_polling=AsyncMock(),
+                stop_polling=AsyncMock(),
+            ),
+        ),
         patch(
             "src.core.v71.notification.v71_notification_service."
             "V71NotificationService.start", AsyncMock(),

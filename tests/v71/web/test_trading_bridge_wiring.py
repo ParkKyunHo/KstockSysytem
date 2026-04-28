@@ -690,8 +690,12 @@ class TestTelegramSendFnBuilder:
         os.environ["TELEGRAM_CHAT_ID"] = "chat456"
         with patch("src.notification.telegram.TelegramBot") as bot_cls:
             bot_cls.return_value = AsyncMock()
-            from src.web.v71.trading_bridge import _build_telegram_send_fn
-            fn = _build_telegram_send_fn()
+            from src.web.v71.trading_bridge import (
+                _build_telegram_bot,
+                _build_telegram_send_fn,
+            )
+            bot = _build_telegram_bot()
+            fn = _build_telegram_send_fn(bot)
         assert callable(fn)
         bot_cls.assert_called_once()  # constructed exactly once
 
@@ -714,9 +718,14 @@ class TestTelegramSendFnBuilder:
         else:
             os.environ["TELEGRAM_CHAT_ID"] = chat
 
-        from src.web.v71.trading_bridge import _build_telegram_send_fn
+        from src.web.v71.trading_bridge import (
+            _build_telegram_bot,
+            _build_telegram_send_fn,
+        )
         with caplog.at_level("WARNING"):
-            fn = _build_telegram_send_fn()
+            bot = _build_telegram_bot()
+            fn = _build_telegram_send_fn(bot)
+        assert bot is None
         assert fn is None
         assert any(
             "TELEGRAM_BOT_TOKEN" in r.message
@@ -732,8 +741,12 @@ class TestTelegramSendFnBuilder:
             bot = AsyncMock()
             bot.send_message = AsyncMock(return_value=True)
             bot_cls.return_value = bot
-            from src.web.v71.trading_bridge import _build_telegram_send_fn
-            fn = _build_telegram_send_fn()
+            from src.web.v71.trading_bridge import (
+                _build_telegram_bot,
+                _build_telegram_send_fn,
+            )
+            constructed_bot = _build_telegram_bot()
+            fn = _build_telegram_send_fn(constructed_bot)
             await fn("hello")
         bot.send_message.assert_awaited_once()
         call = bot.send_message.call_args
@@ -1840,6 +1853,30 @@ class TestExitOrchestratorWiring:
 
     async def test_monthly_review_requires_notification_v71(self):
         os.environ["V71_FF__V71__MONTHLY_REVIEW"] = "true"
+        os.environ["V71_FF__V71__NOTIFICATION_V71"] = "false"
+        ff.reload()
+        from src.web.v71.trading_bridge import attach_trading_engine
+
+        with pytest.raises(
+            RuntimeError, match="requires v71.notification_v71",
+        ):
+            await attach_trading_engine()
+
+    async def test_telegram_commands_flag_off_leaves_slot_none(self):
+        os.environ["V71_FF__V71__TELEGRAM_COMMANDS_V71"] = "false"
+        ff.reload()
+        from src.web.v71.trading_bridge import (
+            attach_trading_engine,
+            detach_trading_engine,
+        )
+        handle = await attach_trading_engine()
+        try:
+            assert handle.telegram_commands is None
+        finally:
+            await detach_trading_engine(handle)
+
+    async def test_telegram_commands_requires_notification_v71(self):
+        os.environ["V71_FF__V71__TELEGRAM_COMMANDS_V71"] = "true"
         os.environ["V71_FF__V71__NOTIFICATION_V71"] = "false"
         ff.reload()
         from src.web.v71.trading_bridge import attach_trading_engine
