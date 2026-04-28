@@ -2957,6 +2957,62 @@ uvicorn.run('src.web.v71.main:app', host='127.0.0.1', port=8001, log_level='info
 
 ---
 
+### Phase 5 후속 P5-Kiwoom-Notify: 키움 에러 → notification (2026-04-28)
+
+**Commit `e6c0034`**: `feat(v71): exchange P5-Kiwoom-Notify — 키움 에러 → notification 자동 변환`
+**규모**: 4 files +834 / -0
+
+#### 신규 / 변경
+
+- **notification_skill.py 확장**:
+  * EventType 5개: KIWOOM_RATE_LIMIT_EXCEEDED (HIGH) / KIWOOM_TOKEN_INVALID (MEDIUM) / KIWOOM_IP_MISMATCH (CRITICAL) / KIWOOM_ENV_MISMATCH (CRITICAL) / KIWOOM_SERVER_ERROR (HIGH)
+  * format_kiwoom_error_message — 표준 텔레그램 본문 (02 §9.6) + 액션 hint (is_fatal / 토큰 재발급 / 백오프) + return_msg 200자 truncate + Bearer/Authorization 정규식 redaction (Security H1)
+- **exchange/notify_kiwoom_error.py 신규** (~150 LOC):
+  * build_kiwoom_error_request (pure builder, V71KiwoomMappedError → NotificationRequest)
+  * notify_kiwoom_error (async helper, send_notification 위임)
+  * _KIWOOM_ERROR_TO_EVENT_TYPE MappingProxyType
+  * _FORBIDDEN_PAYLOAD_KEYS / _RESERVED_PAYLOAD_KEYS sanitization
+  * Severity cast fail-secure (fallback HIGH + logger.error)
+
+#### 워크플로우 (12단계, 3 에이전트 병렬)
+
+| 에이전트 | 발견 | 반영 |
+|---------|-----|-----|
+| architect | (생략) — 신규 모듈 X / 의존성 변경 X / 패키지 결정 X — PRD §6.1 필수 조건 미해당 | - |
+| security-reviewer | HIGH 1 (H1 token echo) + MEDIUM 2 (M1 sanitize / M2 fail-secure) + LOW 2 | H1+M1+M2 즉시 |
+| test-strategy | 28 케이스 가이드 | 43 케이스 구현 |
+| trading-logic-verifier | PASS + advisory 2건 (운영 영향 없음) | 모두 PASS |
+
+#### 보안 패치 (3건 즉시)
+
+- **H1** Bearer / Authorization 정규식 redaction: 키움 응답 (200 + return_code != 0)에 token echo 가능성. kiwoom_client._scrub_response가 4xx만 보호하던 틈을 본 단위 format 단계에서 차단. truncate 전 redaction → 마커 잘림 방지
+- **M1** extra_payload sanitize: 9 forbidden keys (token / app_secret / Authorization 등) → ***REDACTED***, 5 reserved keys (is_fatal / return_code 등) → drop + logger.warning. 03_DATA_MODEL notifications.payload JSONB 영구 보존이라 caller가 ATTACKER_VALUE 주입해도 차단
+- **M2** Severity(error.severity) cast fail-secure: ValueError 시 fallback Severity.HIGH + logger.error. 알림 helper는 절대 raise 안 함 (CRITICAL 알림 누락 = 운영자 무지각 = 자동 거래 직격탄)
+
+#### 검증
+
+- 단위 테스트: 43/43 PASS in 0.08s
+  * 매핑 6 (parametrize) / format 8 / build_request 8 / 보안 sanitize 9 (parametrize) / severity fail-secure 2 / async queue 4 / schema 2 / fallback 1
+- V7.1 회귀: 979/979 PASS (936 + 43)
+- Exchange 누적: 394/394 PASS (66+42+72+28+79+64+43)
+- notification_skill 회귀: 28/28 PASS (기존 fully)
+- 6 harness: 1/2/3/4/6 PASS, 5 WARN
+- ruff: 0 errors after auto-fix (unused imports trim)
+- 보안 회귀: Bearer redaction / forbidden keys / reserved keys / fail-secure fallback / payload JSON 직렬화 검증
+
+#### 함정 / 학습
+
+- **structlog → caplog 캡처 안 됨**: src.utils.logger는 structlog (stdout 직접 출력) — pytest caplog가 capture 못함. capsys로 변경. P5-Kiwoom-5의 logger.error 검증은 다른 경로 (record.getMessage 패턴)였음
+- **EventType vs Severity 미스매치 (advisory)**: fallback EventType=SYSTEM_ERROR + 미매핑 subclass의 severity (LOW/MEDIUM/HIGH) 결합 시 [LOW] SYSTEM_ERROR 등 운영 혼란 가능 — 현재 5 매핑 모두 mapped 클래스, 미래 확장 시 신규 KIWOOM_OTHER_ERROR EventType 추가 검토
+- **stock_code=None 하드코딩 (advisory)**: 현재 5 매핑 모두 client-wide 에러 (1700/8005/8010/8030/8031/1999) → rate_limit_key가 종목 무관이라 합당. 종목별 에러 추가 시 extra_payload로 stock_code 받아 보강 필요
+
+#### 다음 단위
+
+- **P5-Kiwoom-Wire (선택)**: kiwoom_api_skill.py NotImpl 4개 (call_kiwoom_api / get_orderbook / send_order / get_order_status)를 V71KiwoomClient + error_mapper + V71OrderManager + V71Reconciler + notify_kiwoom_error 위임으로 채우기
+- **Phase 5 후속 완료 후**: `v71-phase5-kiwoom-complete` tag
+
+---
+
 ### Phase 5 후속 P5-Kiwoom-6: V71Reconciler (2026-04-28)
 
 **Commit `c6fb195`**: `feat(v71): exchange P5-Kiwoom-6 — V71Reconciler (kt00018 ↔ DB + 시나리오 A/B/C/D/E)`
