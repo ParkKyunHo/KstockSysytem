@@ -2957,6 +2957,62 @@ uvicorn.run('src.web.v71.main:app', host='127.0.0.1', port=8001, log_level='info
 
 ---
 
+### Phase 6/7 wiring 추가 단위 P-Wire-7/8/9 (2026-04-28)
+
+#### P-Wire-7 (commit `b0e4a31`): orchestrator callback wiring
+**규모**: 4 files +219 / -3
+
+- V71ExitOrchestrator에 `on_vi_resumed(stock_code)` 메서드 추가 (signature 어댑터, exchange.get_current_price 호출 후 reevaluate_stock)
+- 생성자에 exchange 슬롯 추가 (handle.exchange_adapter 주입)
+- trading_bridge `_build_exit_orchestrator`: `dataclasses.replace`로 ExitExecutor._ctx + ViMonitor._ctx에 orchestrator 콜백 사후 주입 (V7.1 모듈 무수정)
+- PRD §10.4 1초 budget 보장 (VI 해제 즉시 stop/TS 재평가)
+- 5 신규 테스트 + 1201 V7.1 회귀
+
+#### P-Wire-8 (commit `8c7663d`): V71DailySummary 스케줄러
+**규모**: 3 files +144
+
+- `_build_daily_summary(handle)` async helper:
+  * notification_service + position_manager + box_manager + clock + list_tracked (empty 반환) + get_total_capital (BuyExecutor closure 재사용)
+  * V71DailySummary + V71DailySummaryScheduler 15:30 KST 발송
+- 2 슬롯 (daily_summary + daily_summary_scheduler), v71.daily_summary flag
+- detach: scheduler.stop FIRST → notification_service.stop
+- 2 신규 + 1203 V7.1 회귀
+
+#### P-Wire-9 (commit `efea63f`): V71MonthlyReview 스케줄러
+**규모**: 3 files +117
+
+- `_build_monthly_review(handle)` — DailySummary 패턴 mirror
+- 매월 1일 09:00 KST 발송, list_review_items empty (heartbeat)
+- 2 슬롯 (monthly_review + monthly_review_scheduler), v71.monthly_review flag
+- 2 신규 + 1205 V7.1 회귀
+
+#### Phase 7 P7.1 진입 직전 시스템 상태
+
+**완전히 wired**:
+- ✓ Boot stack (production env 보정 + 11 P-Wire 플래그 ON dry-run smoke)
+- ✓ Auto-buy executor (P-Wire-4a, 4 callable + tracked resolver)
+- ✓ Auto-exit executor (P-Wire-4b)
+- ✓ VI monitor (P-Wire-4c, BuyExecutor stub 교체)
+- ✓ Notification 4 등급 (P-Wire-3, queue + circuit + Postgres)
+- ✓ Reconciler 5분 주기 (P-Wire-2)
+- ✓ Kiwoom WebSocket 5 채널 (P-Wire-5, VI 9068 dispatcher)
+- ✓ Exit orchestrator PRICE_TICK → 자동 청산 (P-Wire-6)
+- ✓ Orchestrator 콜백 (P-Wire-7, on_vi_resumed + on_position_closed)
+- ✓ Daily summary (P-Wire-8, 15:30)
+- ✓ Monthly review (P-Wire-9, 1일 09:00)
+
+**잔여 자율 가능 단위 (선택)**:
+- V71RestartRecovery §13 7-step (10 callable, substantial)
+- V71TelegramCommands 등록 + V7.0 폴링 통합 (사용자 결정: 배포 후)
+- TrackedSummary list_tracked DB JOIN (path_type from support_boxes)
+- V71BoxEntryDetector + V7.0 CandleManager 통합 (large)
+
+**사용자 자원 (배포 직전 / 후)**:
+- AWS Lightsail 정리 (배포 직전, 사용자 위임 정책)
+- Telegram bot 동작 테스트 (배포 후, 기존 @stock_Albra_bot)
+
+---
+
 ### Phase 7 진입 직전 production env 보정 + boot smoke (2026-04-28)
 
 **Commit `7e70bc4`** (P-Wire-1 production env 보정), **Commit `840df16`** (production boot smoke).
