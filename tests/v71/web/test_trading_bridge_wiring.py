@@ -1,11 +1,13 @@
 """Unit tests for ``src/web/v71/trading_bridge.attach_trading_engine``
-P-Wire-1 (kiwoom exchange wiring).
+P-Wire-1 (kiwoom exchange) + P-Wire-2 (reconciler periodic loop).
 """
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import os
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -235,3 +237,162 @@ class TestKiwoomExchangeWiring:
             assert handle.kiwoom_client is None
             assert handle.order_manager is None
             assert handle.exchange_adapter is None
+
+
+# ---------------------------------------------------------------------------
+# Group D: P-Wire-2 reconciler periodic loop (5 cases)
+# ---------------------------------------------------------------------------
+
+
+class TestReconcilerWiring:
+    async def test_flag_off_no_task(self):
+        os.environ["V71_FF__V71__KIWOOM_EXCHANGE"] = "true"
+        os.environ["V71_FF__V71__RECONCILIATION_V71"] = "false"
+        os.environ["KIWOOM_APP_KEY"] = "test_key"
+        os.environ["KIWOOM_SECRET"] = "test_secret"
+        ff.reload()
+        with patch("src.database.connection.get_db_manager") as get_db_mock:
+            get_db_mock.return_value.session = lambda: None
+            from src.web.v71.trading_bridge import (
+                attach_trading_engine,
+                detach_trading_engine,
+            )
+            handle = await attach_trading_engine()
+            try:
+                assert handle.reconciler is None
+                assert handle.reconciler_task is None
+            finally:
+                await detach_trading_engine(handle)
+
+    async def test_flag_on_without_kiwoom_raises(self):
+        # reconciliation_v71 ON + kiwoom_exchange OFF → RuntimeError.
+        os.environ["V71_FF__V71__KIWOOM_EXCHANGE"] = "false"
+        os.environ["V71_FF__V71__RECONCILIATION_V71"] = "true"
+        ff.reload()
+        from src.web.v71.trading_bridge import attach_trading_engine
+
+        with pytest.raises(RuntimeError, match="kiwoom_exchange"):
+            await attach_trading_engine()
+
+    async def test_task_started_with_default_interval(self):
+        os.environ["V71_FF__V71__KIWOOM_EXCHANGE"] = "true"
+        os.environ["V71_FF__V71__RECONCILIATION_V71"] = "true"
+        os.environ["KIWOOM_APP_KEY"] = "test_key"
+        os.environ["KIWOOM_SECRET"] = "test_secret"
+        os.environ.pop("V71_RECONCILER_INTERVAL_SECONDS", None)
+        ff.reload()
+        with patch("src.database.connection.get_db_manager") as get_db_mock:
+            get_db_mock.return_value.session = lambda: None
+            from src.web.v71.trading_bridge import (
+                attach_trading_engine,
+                detach_trading_engine,
+            )
+            handle = await attach_trading_engine()
+            try:
+                assert handle.reconciler is not None
+                assert handle.reconciler_task is not None
+                assert handle.reconciler_task.get_name() == "v71_reconciler_loop"
+                assert not handle.reconciler_task.done()
+            finally:
+                await detach_trading_engine(handle)
+                # Task must be fully resolved after detach.
+                assert handle.reconciler_task is None
+
+    async def test_loop_runs_reconcile_all_periodically(self):
+        # Use a very short interval + AsyncMock to verify the loop fires
+        # repeatedly until cancellation.
+        os.environ["V71_FF__V71__KIWOOM_EXCHANGE"] = "true"
+        os.environ["V71_FF__V71__RECONCILIATION_V71"] = "true"
+        os.environ["KIWOOM_APP_KEY"] = "test_key"
+        os.environ["KIWOOM_SECRET"] = "test_secret"
+        os.environ["V71_RECONCILER_INTERVAL_SECONDS"] = "0.01"
+        ff.reload()
+        with patch("src.database.connection.get_db_manager") as get_db_mock:
+            get_db_mock.return_value.session = lambda: None
+            from src.web.v71.trading_bridge import (
+                attach_trading_engine,
+                detach_trading_engine,
+            )
+            handle = await attach_trading_engine()
+            try:
+                handle.reconciler.reconcile_all = AsyncMock()
+                # Replace the running task with one that uses the patched
+                # method -- the original task captured the un-patched
+                # reference at creation time.
+                handle.reconciler_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await handle.reconciler_task
+
+                from src.web.v71.trading_bridge import _reconciler_loop
+
+                handle.reconciler_task = asyncio.create_task(
+                    _reconciler_loop(
+                        handle.reconciler, interval_seconds=0.01,
+                    ),
+                )
+                await asyncio.sleep(0.05)  # let it tick a few times
+                assert handle.reconciler.reconcile_all.await_count >= 2
+            finally:
+                await detach_trading_engine(handle)
+
+    async def test_loop_survives_reconcile_all_failure(self):
+        os.environ["V71_FF__V71__KIWOOM_EXCHANGE"] = "true"
+        os.environ["V71_FF__V71__RECONCILIATION_V71"] = "true"
+        os.environ["KIWOOM_APP_KEY"] = "test_key"
+        os.environ["KIWOOM_SECRET"] = "test_secret"
+        os.environ["V71_RECONCILER_INTERVAL_SECONDS"] = "0.01"
+        ff.reload()
+        with patch("src.database.connection.get_db_manager") as get_db_mock:
+            get_db_mock.return_value.session = lambda: None
+            from src.web.v71.trading_bridge import (
+                _reconciler_loop,
+                attach_trading_engine,
+                detach_trading_engine,
+            )
+            handle = await attach_trading_engine()
+            try:
+                # Replace the loop with one whose reconcile_all raises
+                # repeatedly -- the always-run policy must keep ticking.
+                handle.reconciler_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await handle.reconciler_task
+
+                handle.reconciler.reconcile_all = AsyncMock(
+                    side_effect=RuntimeError("boom"),
+                )
+                handle.reconciler_task = asyncio.create_task(
+                    _reconciler_loop(
+                        handle.reconciler, interval_seconds=0.01,
+                    ),
+                )
+                await asyncio.sleep(0.05)
+                # Despite RuntimeError, the loop kept running -- multiple
+                # attempts means the catch-block fired.
+                assert handle.reconciler.reconcile_all.await_count >= 2
+                assert not handle.reconciler_task.done()
+            finally:
+                await detach_trading_engine(handle)
+
+
+# ---------------------------------------------------------------------------
+# Group E: _resolve_reconciler_interval helper (3 cases parametrize)
+# ---------------------------------------------------------------------------
+
+
+class TestReconcilerIntervalHelper:
+    @pytest.mark.parametrize(
+        "raw,expected",
+        [
+            ("60", 60.0),
+            ("0.5", 0.5),
+            ("", 300.0),       # default
+            ("abc", 300.0),    # invalid → fallback
+            ("0", 300.0),      # non-positive → fallback
+            ("-5", 300.0),     # negative → fallback
+        ],
+    )
+    def test_interval_parsing(self, raw, expected):
+        os.environ["V71_RECONCILER_INTERVAL_SECONDS"] = raw
+        from src.web.v71.trading_bridge import _resolve_reconciler_interval
+        assert _resolve_reconciler_interval() == expected
+        os.environ.pop("V71_RECONCILER_INTERVAL_SECONDS", None)

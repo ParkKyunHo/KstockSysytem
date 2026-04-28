@@ -24,6 +24,7 @@ then the bridge is dormant and only carries publisher state.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import datetime, timezone
 from typing import Any
@@ -370,6 +371,101 @@ class _TradingEngineHandle:
         self.kiwoom_client: Any = None
         self.order_manager: Any = None
         self.exchange_adapter: Any = None
+        # P-Wire-2: Reconciler periodic task (feature flag
+        # ``v71.reconciliation_v71``). ``reconciler_task`` is the
+        # asyncio.Task background loop -- detach cancels + awaits.
+        self.reconciler: Any = None
+        self.reconciler_task: asyncio.Task[None] | None = None
+
+
+# Default reconciliation cadence (PRD 02_TRADING_RULES.md §7.1 -- "매 5분마다").
+# Local override available via ``V71_RECONCILER_INTERVAL_SECONDS`` env var
+# (paper smoke / tests use a much shorter interval).
+_RECONCILER_INTERVAL_DEFAULT_SECONDS = 300.0
+
+
+async def _reconciler_loop(
+    reconciler: Any, *, interval_seconds: float,
+) -> None:
+    """Run ``reconciler.reconcile_all()`` on a fixed cadence.
+
+    Boundaries:
+      * The first pass fires immediately on startup (post-restart §13.1
+        Step 3 -- broker may have moved during downtime).
+      * Each pass is wrapped in try/except -- a single failure must not
+        starve the loop (헌법 §4 항상 운영). The reconciler itself
+        already isolates per-stock failures into ``failed_stock_codes``
+        so this catch is a defence-in-depth backstop for transport
+        outages where ``reconcile_all`` raises ``V71ReconcilerError``.
+      * Sleeping is interrupted by ``asyncio.CancelledError`` on detach.
+    """
+    while True:
+        try:
+            await reconciler.reconcile_all()
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 -- always-run policy
+            logger.warning(
+                "trading_bridge: reconciler pass failed: %s",
+                type(exc).__name__,
+            )
+        try:
+            await asyncio.sleep(interval_seconds)
+        except asyncio.CancelledError:
+            raise
+
+
+def _resolve_reconciler_interval() -> float:
+    """Read the reconciler cadence from ``V71_RECONCILER_INTERVAL_SECONDS``,
+    falling back to PRD default (300 s)."""
+    import os
+
+    raw = os.environ.get("V71_RECONCILER_INTERVAL_SECONDS", "").strip()
+    if not raw:
+        return _RECONCILER_INTERVAL_DEFAULT_SECONDS
+    try:
+        value = float(raw)
+    except ValueError:
+        logger.warning(
+            "trading_bridge: invalid V71_RECONCILER_INTERVAL_SECONDS=%r; "
+            "falling back to %.0fs",
+            raw, _RECONCILER_INTERVAL_DEFAULT_SECONDS,
+        )
+        return _RECONCILER_INTERVAL_DEFAULT_SECONDS
+    if value <= 0:
+        logger.warning(
+            "trading_bridge: V71_RECONCILER_INTERVAL_SECONDS must be > 0 "
+            "(got %s); falling back to %.0fs",
+            value, _RECONCILER_INTERVAL_DEFAULT_SECONDS,
+        )
+        return _RECONCILER_INTERVAL_DEFAULT_SECONDS
+    return value
+
+
+def _build_reconciler(handle: _TradingEngineHandle) -> Any:
+    """Construct V71Reconciler from the already-built kiwoom infrastructure.
+
+    Requires the ``v71.kiwoom_exchange`` flag to have produced a client +
+    order_manager; otherwise the reconciler has nothing to reconcile.
+    """
+    from src.core.v71.exchange.reconciler import (
+        V71Reconciler,
+        V71ReconciliationApplyMode,
+    )
+    from src.database.connection import get_db_manager
+
+    if handle.kiwoom_client is None:
+        raise RuntimeError(
+            "trading_bridge: v71.reconciliation_v71 enabled but "
+            "v71.kiwoom_exchange is OFF -- enable kiwoom_exchange first"
+        )
+
+    db = get_db_manager()
+    return V71Reconciler(
+        kiwoom_client=handle.kiwoom_client,
+        db_session_factory=db.session,
+        apply_mode=V71ReconciliationApplyMode.SIMPLE_APPLY,
+    )
 
 
 def _build_kiwoom_exchange() -> dict[str, Any]:
@@ -505,14 +601,45 @@ async def attach_trading_engine() -> _TradingEngineHandle:
             "position_manager not constructed",
         )
 
+    # P-Wire-2: V71Reconciler periodic task. Only spins up when the
+    # exchange infrastructure is already wired -- there is nothing to
+    # reconcile against without a kiwoom_client.
+    if is_enabled("v71.reconciliation_v71"):
+        try:
+            handle.reconciler = _build_reconciler(handle)
+        except Exception as exc:  # noqa: BLE001 -- boot failure surfaces
+            logger.error(
+                "trading_bridge: v71.reconciliation_v71 enabled but "
+                "construction failed: %s",
+                type(exc).__name__,
+            )
+            raise
+        interval = _resolve_reconciler_interval()
+        handle.reconciler_task = asyncio.create_task(
+            _reconciler_loop(
+                handle.reconciler, interval_seconds=interval,
+            ),
+            name="v71_reconciler_loop",
+        )
+        logger.info(
+            "trading_bridge: reconciler loop started (interval=%.0fs)",
+            interval,
+        )
+    else:
+        logger.warning(
+            "trading_bridge: feature flag 'v71.reconciliation_v71' disabled "
+            "-- reconciler periodic loop not started",
+        )
+
     logger.info(
         "trading_bridge: V7.1 engine objects constructed "
-        "(kiwoom=%s, box=%s, position=%s)",
+        "(kiwoom=%s, box=%s, position=%s, reconciler=%s)",
         "yes" if handle.kiwoom_client else "no",
         type(handle.box_manager).__name__ if handle.box_manager else "none",
         type(handle.position_manager).__name__
         if handle.position_manager
         else "none",
+        "running" if handle.reconciler_task else "off",
     )
     return handle
 
@@ -521,10 +648,29 @@ async def detach_trading_engine(handle: _TradingEngineHandle) -> None:
     """Release the engine handle in reverse construction order.
 
     The Kiwoom client owns an httpx.AsyncClient connection pool -- close
-    it last (after the order_manager / exchange_adapter that use it).
+    it last (after the order_manager / exchange_adapter / reconciler
+    that use it).
     """
     handle.box_manager = None
     handle.position_manager = None
+
+    # P-Wire-2: stop the reconciler loop before tearing down the client
+    # it depends on. CancelledError propagates out of asyncio.sleep /
+    # reconcile_all naturally; we still await the task so the cancel
+    # actually completes before we close the client.
+    if handle.reconciler_task is not None:
+        handle.reconciler_task.cancel()
+        try:
+            await handle.reconciler_task
+        except asyncio.CancelledError:
+            pass
+        except Exception as exc:  # noqa: BLE001 -- shutdown is best-effort
+            logger.warning(
+                "trading_bridge: reconciler_task await failed: %s",
+                type(exc).__name__,
+            )
+        handle.reconciler_task = None
+    handle.reconciler = None
 
     handle.exchange_adapter = None
     handle.order_manager = None
