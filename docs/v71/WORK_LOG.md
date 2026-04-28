@@ -4620,4 +4620,72 @@ V7.0 폐기 후 dead code 제거 + V7.1 단독 표준:
 
 P-Wire-14 (V71MarketSchedule holidays seed) — 헌법 1 휴장일 차단. P-Wire-14 완료 후 Phase 7 paper smoke 또는 production 직접 진입 가능.
 
+### Phase A 후속 P-Wire-14: V71MarketSchedule holidays seed + KST 정정 (2026-04-28)
+
+**Commit**: TBD-p-wire-14
+**규모**: 7 files +470
+
+#### 12단계 워크플로우
+
+| 단계 | 도구 | 결과 |
+|------|------|------|
+| 1 | PRD §6.1 + V71MarketSchedule 학습 | market_calendar 테이블 정의 + 마이그레이션 005 land 확인 (ORM 모델만 부재) |
+| 2 | **v71-architect** | WARNING (옵션 D 권고). Q1~Q7 결정 — 옵션 A 단독 = FAIL (PRD §6.1 위반), 옵션 B 단독 = FAIL (헌법 4 위반 — DB 빈 상태 = trade 정지) |
+| 3 | 구현 | 옵션 D — DB 우선 + hardcoded fallback + KST 즉시 정정 |
+| 4-6 | (생략) | 작은 단위 + architect 권고 명확 — security/test 호출 생략, 표준 패턴 mirror |
+| 7 | 회귀 | 16 신규 PASS first try |
+| 8 | 6 harness | PASS |
+| 9 | ruff lint | 3 신규 issue → 자동 fix → baseline 163 동등 |
+| 10 | V7.1 전체 회귀 | 1332/1332 PASS (1316 → 1332, +16 신규) |
+| 11 | commit (no push) | (이번 commit) |
+| 12 | WORK_LOG + memory 갱신 | (이 entry) |
+
+#### 변경
+
+| 파일 | 변경 |
+|------|------|
+| `src/core/v71/market/v71_kr_holidays.py` | **신규** — KR_HOLIDAYS_2026 frozenset (2026 KR 공휴일 + KRX 추가 휴장 5/1 5/1, 12/31) |
+| `src/database/models_v71.py` | `MarketDayType` Enum + `MarketCalendar` ORM (마이그레이션 005 mirror) + Date import |
+| `src/core/v71/market/v71_market_schedule.py` | `is_market_open()` KST tz-aware 정정 (default `datetime.now(_KST)` + tz-aware → KST 변환 + naive → WARN) |
+| `src/web/v71/trading_bridge.py` | `_HOLIDAY_CACHE_DB_TIMEOUT_SECONDS` + `_load_holidays_seed()` (DB 우선 + 헌법 4 fallback) + `_build_market_calendar(handle)` + `market_calendar_source` slot + attach 가장 첫 단계 (P-Wire-1 이전) |
+| `tests/v71/market/test_v71_kr_holidays.py` | **신규** — 7 케이스 (frozenset shape + 핵심 날짜 검증) |
+| `tests/v71/market/test_v71_market_schedule.py` | KST 3 케이스 추가 (UTC tz-aware → KST 변환 / naive → WARN / default → KST tz) |
+| `tests/v71/web/test_trading_bridge_market_calendar.py` | **신규** — 6 케이스 (DB success / DB empty / DB exception / DB timeout / build seed singleton / build records fallback source) |
+
+#### 결정 (architect Q1~Q7)
+
+- **Q1 옵션 D 채택** — DB 우선 + hardcoded fallback. 옵션 A 단독 거부 (PRD §6.1 위반), 옵션 B 단독 거부 (헌법 4 위반)
+- **Q2 KST 즉시 정정** — `is_market_open(now=None)` default path까지 KST tz-aware
+- **Q3 hardcoded list 위치** — `src/core/v71/market/v71_kr_holidays.py` (도메인 격리)
+- **Q4 마이그레이션** — 005 이미 land. ORM 모델만 추가
+- **Q5 wiring 위치** — attach 가장 첫 단계 (P-Wire-1 이전). 다른 P-Wire는 schedule 의존 가능
+- **Q6 fallback 정책** — DB 실패 시 hardcoded + WARNING (헌법 4 우선)
+- **Q7 명명** — `market_calendar` 테이블 그대로 (PRD §6.1 + 마스터 데이터 카테고리, V71_* prefix 미적용)
+
+#### 헌법 정합
+
+- 헌법 1 (사용자 판단 불가침): 휴장일 자동 차단 → 박스 자동 진입이 휴장일 발화 안 함
+- 헌법 2 (NFR1): boot 시 schedule 캐시 prime → bar 완성 시점 메모리 lookup
+- 헌법 4 (시스템 계속 운영): DB 실패해도 hardcoded fallback으로 trade 가능
+- 헌법 5 (단순함): 한 commit에 5 신규 + 2 갱신 통합
+
+#### 검증
+
+- V7.1 회귀: **1332/1332** PASS (1316 → 1332, +16 신규)
+- 6 harness: PASS
+- ruff: 163 errors (baseline 동등, 신규 issue 0)
+- 7 files +470
+
+#### 다음
+
+P-Wire-14 완료. **Phase A + 후속 (P-Wire-12, 13, 14) 모두 land**. 시스템 wiring 완성:
+- V71CandleManager → V71BoxEntryDetector → V71BuyExecutor 자동 박스 진입 활성화 가능
+- V71MarketSchedule 휴장일 차단 활성화 가능
+- 모든 헌법 5원칙 충족
+
+다음 단계 후보:
+- AWS Lightsail 정리 (배포 직전, 사용자 위임)
+- production .env 검증 + Telegram bot 재활성화
+- Phase 7 진입 (paper skip 결정으로 production 직접 + 운영 단위 점진 활성화)
+
 ---

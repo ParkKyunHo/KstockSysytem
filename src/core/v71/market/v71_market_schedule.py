@@ -21,10 +21,20 @@ filter still applies.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Iterable
-from datetime import date, datetime, time, timedelta
+from datetime import date, datetime, time, timedelta, timezone
 
 from src.core.v71.v71_constants import V71Constants
+
+log = logging.getLogger(__name__)
+
+
+# KRX market sessions are KST. Hosts may run UTC (default AWS Lightsail),
+# so ``is_market_open(now=None)`` must default to KST -- otherwise the
+# default path would silently drift by 9 hours and mis-classify market
+# phase. Phase A Step F follow-up (P-Wire-14) introduced this guard.
+_KST = timezone(timedelta(hours=9))
 
 
 def _parse_hhmm(text: str) -> time:
@@ -70,9 +80,30 @@ class V71MarketSchedule:
     # ------------------------------------------------------------------
 
     def is_market_open(self, now: datetime | None = None) -> bool:
-        """True iff ``now`` (default = system clock, naive local) is
-        inside the regular session window AND today is a trading day."""
-        moment = now if now is not None else datetime.now()
+        """True iff ``now`` is inside the regular session window AND
+        today is a trading day.
+
+        The reference clock is KST (KRX market timezone). Behaviour by
+        ``now`` shape:
+
+          * ``None`` -- use ``datetime.now(KST)`` (default path is safe
+            on UTC hosts).
+          * tz-aware ``datetime`` -- normalise to KST before comparing.
+          * naive ``datetime`` -- assumed to already be KST (operator
+            tooling, fixtures); a WARNING is logged so accidental
+            naive UTC values surface in logs instead of silently
+            shifting 9 hours.
+        """
+        if now is None:
+            moment = datetime.now(_KST).replace(tzinfo=None)
+        elif now.tzinfo is None:
+            log.warning(
+                "v71_market_schedule.is_market_open received naive "
+                "datetime -- assuming KST. Pass tz-aware to silence.",
+            )
+            moment = now
+        else:
+            moment = now.astimezone(_KST).replace(tzinfo=None)
         today = moment.date()
         if not self.is_trading_day(today):
             return False

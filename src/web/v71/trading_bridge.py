@@ -471,6 +471,12 @@ class _TradingEngineHandle:
         # ``unregister_on_complete`` on detach (P-Wire-13 H1 leak fix).
         self.box_entry_detector_path_a: Any = None
         self.box_entry_detector_path_b: Any = None
+        # P-Wire-14 (Phase A Step F follow-up): market_calendar holiday
+        # seed source for diagnostics. ``"db"`` when the DB had rows;
+        # ``"hardcoded_fallback"`` when KR_HOLIDAYS_2026 was used (DB
+        # empty / unreachable). Surfaced in /system/status so operators
+        # know whether to seed the table.
+        self.market_calendar_source: str | None = None
 
 
 # Default reconciliation cadence (PRD 02_TRADING_RULES.md §7.1 -- "매 5분마다").
@@ -695,6 +701,7 @@ def _build_notification_stack() -> dict[str, Any]:
 
 _TOTAL_CAPITAL_TTL_SECONDS = 300.0  # PRD §6.2 / §3.4: 5분 단위 평가
 _TRACKED_CACHE_DB_TIMEOUT_SECONDS = 10.0  # security M3: bound boot blocking
+_HOLIDAY_CACHE_DB_TIMEOUT_SECONDS = 10.0  # P-Wire-14 mirror — same boot bound
 # Top-level kt00018 keys (KIWOOM_API_ANALYSIS.md). Wire-level field
 # correction may land in P-Wire-5 paper smoke; the cache falls back to
 # 0 + WARNING when neither key resolves so PATH_A naturally abandons
@@ -960,6 +967,91 @@ async def _load_tracked_stocks_cache() -> dict[str, str]:
             len(cache), skipped,
         )
     return cache
+
+
+async def _load_holidays_seed() -> tuple[frozenset, str]:
+    """Load market_calendar holidays once at lifespan start (P-Wire-14).
+
+    Returns ``(holidays, source)`` where ``source`` is one of:
+      * ``"db"`` -- DB had at least one HOLIDAY/EMERGENCY_CLOSED row.
+      * ``"hardcoded_fallback"`` -- DB unreachable / timed out / empty.
+        ``KR_HOLIDAYS_2026`` is used so the schedule is never blank.
+
+    Constitution §4 (system always runs) takes precedence over a clean
+    failure here: a hung Supabase pooler or a forgotten DB seed must
+    not stop trading -- the fallback list ships well-known holidays so
+    the box-entry pipeline can short-circuit on at least the obvious
+    closures while operators investigate.
+    """
+    from sqlalchemy import select
+
+    from src.core.v71.market.v71_kr_holidays import KR_HOLIDAYS_2026
+    from src.database.connection import get_db_manager
+    from src.database.models_v71 import MarketCalendar, MarketDayType
+
+    db = get_db_manager()
+    closed_types = (
+        MarketDayType.HOLIDAY,
+        MarketDayType.EMERGENCY_CLOSED,
+    )
+    try:
+        async with asyncio.timeout(_HOLIDAY_CACHE_DB_TIMEOUT_SECONDS), \
+                db.session() as session:
+            result = await session.execute(
+                select(MarketCalendar.trading_date).where(
+                    MarketCalendar.day_type.in_(closed_types),
+                ),
+            )
+            rows = [row[0] for row in result.all()]
+    except asyncio.TimeoutError:
+        logger.warning(
+            "trading_bridge: market_calendar prime timed out (>%.0fs) "
+            "-- using hardcoded KR_HOLIDAYS_2026 fallback",
+            _HOLIDAY_CACHE_DB_TIMEOUT_SECONDS,
+        )
+        return KR_HOLIDAYS_2026, "hardcoded_fallback"
+    except Exception as exc:  # noqa: BLE001 -- never block boot
+        logger.warning(
+            "trading_bridge: market_calendar prime failed (%s) "
+            "-- using hardcoded KR_HOLIDAYS_2026 fallback",
+            type(exc).__name__,
+        )
+        return KR_HOLIDAYS_2026, "hardcoded_fallback"
+
+    if not rows:
+        logger.warning(
+            "trading_bridge: market_calendar table empty -- using "
+            "hardcoded KR_HOLIDAYS_2026 fallback. Operators should "
+            "seed market_calendar via dashboard or SQL for accurate "
+            "KRX holidays + half-days.",
+        )
+        return KR_HOLIDAYS_2026, "hardcoded_fallback"
+    return frozenset(rows), "db"
+
+
+async def _build_market_calendar(
+    handle: _TradingEngineHandle,
+) -> None:
+    """Seed V71MarketSchedule with the latest holiday list (P-Wire-14).
+
+    Runs unconditionally (no feature flag) because the box-entry
+    pipeline's safety net depends on it -- a flag-off path would let
+    an operator silently ship a configuration where every weekday is
+    treated as a trading day. The fallback list keeps the wiring safe
+    even when the DB is empty/unreachable.
+    """
+    from src.core.v71.market.v71_market_schedule import (
+        get_v71_market_schedule,
+    )
+
+    holidays, source = await _load_holidays_seed()
+    schedule = get_v71_market_schedule()
+    schedule.set_holidays(holidays)
+    handle.market_calendar_source = source
+    logger.info(
+        "trading_bridge: V71MarketSchedule seeded (count=%d, source=%s)",
+        len(holidays), source,
+    )
 
 
 async def _build_buy_executor(handle: _TradingEngineHandle) -> dict[str, Any]:
@@ -2286,6 +2378,28 @@ async def attach_trading_engine() -> _TradingEngineHandle:
     from src.utils.feature_flags import is_enabled
 
     handle = _TradingEngineHandle()
+
+    # P-Wire-14 (Phase A Step F follow-up): seed V71MarketSchedule
+    # holidays as the very first step. The box-entry pipeline's
+    # safety net depends on this -- a missing holiday seed would let
+    # automatic entries fire on KRX closures (Constitution §1
+    # violation). Always-on (no feature flag) because the fallback
+    # list (KR_HOLIDAYS_2026) keeps wiring safe even when the DB is
+    # empty or unreachable, and a flag-off path would silently expose
+    # the very risk this guard exists to prevent.
+    try:
+        await _build_market_calendar(handle)
+    except Exception as exc:  # noqa: BLE001 -- never block boot
+        # _load_holidays_seed already swallows DB failures, but a bug
+        # in the wiring layer itself must not stop trading. Schedule
+        # is left empty if everything above fails -- entry conditions
+        # still require the regular session window so the blast
+        # radius is bounded.
+        logger.error(
+            "trading_bridge: V71MarketSchedule wiring failed: %s "
+            "(holidays empty -- entries depend solely on session window)",
+            type(exc).__name__,
+        )
 
     # P-Wire-1: Kiwoom exchange infrastructure -- shared by V71OrderManager
     # and V71KiwoomExchangeAdapter.

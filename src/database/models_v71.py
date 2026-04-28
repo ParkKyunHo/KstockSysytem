@@ -22,7 +22,7 @@ trade_events, notifications, daily_reports, etc.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime, time
 from decimal import Decimal
 from enum import Enum
 from typing import Any
@@ -31,6 +31,7 @@ from uuid import UUID, uuid4
 from sqlalchemy import (
     JSON,
     Boolean,
+    Date,
     DateTime,
     ForeignKey,
     Numeric,
@@ -280,6 +281,44 @@ class Stock(Base):
     last_updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False,
     )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False,
+    )
+
+
+# ---------------------------------------------------------------------
+# market_calendar (mirrors migration 005 -- PRD §6.1)
+# ---------------------------------------------------------------------
+
+
+class MarketDayType(str, Enum):
+    """KRX market day classification (matches migration 005 ENUM)."""
+
+    TRADING = "TRADING"
+    HOLIDAY = "HOLIDAY"
+    HALF_DAY = "HALF_DAY"
+    EMERGENCY_CLOSED = "EMERGENCY_CLOSED"
+
+
+class MarketCalendar(Base):
+    """Master KRX schedule (operator-managed via dashboard or SQL).
+
+    Spec: ``docs/v71/03_DATA_MODEL.md`` §6.1 + migration 005. The
+    repository layer (``src/database/repositories/v71/...``) reads this
+    on attach and seeds the in-memory ``V71MarketSchedule`` so the
+    bar-completion path can short-circuit on holidays without touching
+    the DB on every check.
+    """
+
+    __tablename__ = "market_calendar"
+
+    trading_date: Mapped[date] = mapped_column(Date, primary_key=True)
+    day_type: Mapped[MarketDayType] = mapped_column(
+        SQLEnum(MarketDayType, name="market_day_type"), nullable=False,
+    )
+    market_open_time: Mapped[time | None] = mapped_column(Time)
+    market_close_time: Mapped[time | None] = mapped_column(Time)
+    note: Mapped[str | None] = mapped_column(String(200))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False,
     )
