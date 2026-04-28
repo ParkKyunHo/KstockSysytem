@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-from fastapi import APIRouter, Request, status
+from fastapi import APIRouter, Request, Response, status
 
 from ..audit import record_audit
 from ..db_models import AuditAction
@@ -159,13 +159,13 @@ async def refresh(
 # ---------------------------------------------------------------------
 
 
-@router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
+@router.post("/logout")
 async def logout(
     request: Request,
     session: SessionDep,
     user: CurrentUserDep,
     access_token: AccessTokenDep,
-) -> None:
+) -> Response:
     await service.logout(
         session,
         user_id=user.id,
@@ -174,6 +174,7 @@ async def logout(
         user_agent=_user_agent(request),
     )
     await session.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 # ---------------------------------------------------------------------

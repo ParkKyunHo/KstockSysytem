@@ -32,8 +32,12 @@ tenacity>=8.2.0  # 재시도 로직
 # ========================
 # V7.1 Phase 5 — Web Backend (FastAPI)
 # ========================
-fastapi>=0.110.0
-uvicorn[standard]>=0.27.0
+# fastapi 0.116+ ships starlette 1.x which breaks slowapi 0.1.9
+# (BaseHTTPMiddleware response contract changed). Pin until slowapi
+# ships a 1.x-compatible release.
+fastapi>=0.110.0,<0.116.0
+starlette>=0.40,<0.42
+uvicorn[standard]>=0.27.0,<0.40
 python-jose[cryptography]>=3.3.0  # JWT
 passlib[bcrypt]>=1.7.4              # bcrypt password hash
 pyotp>=2.9.0                         # TOTP 2FA
