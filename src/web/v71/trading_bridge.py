@@ -448,6 +448,13 @@ class _TradingEngineHandle:
         # before notification stack tears down.
         self.telegram_bot: Any = None
         self.telegram_commands: Any = None
+        # P-Wire-11: V71RestartRecovery (§13 7-step). Run-once at attach
+        # to clean up orphan orders + reconcile state after a restart.
+        # Position-side V71Reconciler is built specifically for this
+        # (the exchange-side reconciler in P-Wire-2 has different API).
+        self.position_reconciler: Any = None
+        self.restart_recovery: Any = None
+        self.restart_recovery_report: Any = None
 
 
 # Default reconciliation cadence (PRD 02_TRADING_RULES.md §7.1 -- "매 5분마다").
@@ -1290,6 +1297,234 @@ async def _build_daily_summary(
     return summary, scheduler
 
 
+async def _build_restart_recovery(
+    handle: _TradingEngineHandle,
+) -> Any:
+    """Build V71RestartRecovery (§13 7-step) + run once at attach.
+
+    Cross-flag invariant:
+      * v71.restart_recovery ON
+      * v71.notification_v71 ON (CRITICAL alert at Step 7)
+      * v71.kiwoom_exchange ON (kt00018 + cancel_order needed)
+      * v71.reconciliation_v71 ON (Step 3 reconciliation)
+
+    Position-side V71Reconciler is built locally (the P-Wire-2
+    exchange-side reconciler has a different ``reconcile_all()`` API
+    that already fetches balances internally; the recovery context
+    expects ``reconcile(broker_balances=...)``).
+
+    Production safety:
+      * Step 2 cancels orphan orders (state in [SUBMITTED, PARTIAL])
+      * Step 3 reconciles broker balance vs DB positions
+      * Step 4 re-subscribes PRICE_TICK for all open positions
+      * Step 0/6 toggles ``system_state.safe_mode`` so dashboard +
+        BuyExecutor see the recovery window
+    """
+    from src.utils.feature_flags import is_enabled
+
+    for flag in (
+        "v71.notification_v71",
+        "v71.kiwoom_exchange",
+        "v71.reconciliation_v71",
+    ):
+        if not is_enabled(flag):
+            raise RuntimeError(
+                f"trading_bridge: v71.restart_recovery requires {flag}"
+            )
+    for slot, name in (
+        (handle.notification_service, "notification_service"),
+        (handle.kiwoom_client, "kiwoom_client"),
+        (handle.order_manager, "order_manager"),
+        (handle.position_manager, "position_manager"),
+        (handle.box_manager, "box_manager"),
+    ):
+        if slot is None:
+            raise RuntimeError(
+                f"trading_bridge: V71RestartRecovery requires {name}"
+            )
+
+    from src.core.v71.position.v71_reconciler import (
+        ReconcilerContext as PositionReconcilerContext,
+    )
+    from src.core.v71.position.v71_reconciler import (
+        V71Reconciler as PositionV71Reconciler,
+    )
+    from src.core.v71.restart_recovery import (
+        RecoveryContext,
+        V71RestartRecovery,
+    )
+    from src.core.v71.skills.reconciliation_skill import KiwoomBalance
+
+    clock = handle.clock if handle.clock is not None else V71RealClock()
+
+    # Position-side reconciler -- TrackedSummary callbacks are stubs
+    # (follow-up unit). end_tracking is a soft no-op.
+    def _list_tracked_for_stock(_stock_code: str) -> list[Any]:
+        return []
+
+    async def _end_tracking(
+        _tracked_stock_id: str, _reason: str,
+    ) -> None:
+        return None
+
+    pos_ctx = PositionReconcilerContext(
+        position_manager=handle.position_manager,
+        box_manager=handle.box_manager,
+        notifier=handle.notification_service,
+        clock=clock,
+        list_tracked_for_stock=_list_tracked_for_stock,
+        end_tracking=_end_tracking,
+    )
+    position_reconciler = PositionV71Reconciler(context=pos_ctx)
+
+    # 10 callable derivation
+    async def _connect_db() -> None:
+        from sqlalchemy import text
+
+        from src.database.connection import get_db_manager
+        db = get_db_manager()
+        async with db.session() as session:
+            await session.execute(text("SELECT 1"))
+
+    async def _refresh_kiwoom_token() -> None:
+        if handle.token_manager is None:
+            raise RuntimeError("token_manager not built")
+        # Force fresh token (current implementation re-issues on
+        # expiry; calling get_token() at restart re-validates).
+        await handle.token_manager.get_token()
+
+    async def _connect_websocket() -> None:
+        # WS run loop runs in background. State check + raise if CLOSED
+        # so RecoveryReport.failures captures it.
+        if handle.kiwoom_websocket is None:
+            raise RuntimeError("kiwoom_websocket not built")
+        from src.core.v71.exchange.kiwoom_websocket import V71WebSocketState
+        st = handle.kiwoom_websocket.state
+        if st == V71WebSocketState.CLOSED:
+            raise RuntimeError(
+                f"kiwoom_websocket state is {st.value}",
+            )
+
+    async def _connect_telegram() -> None:
+        if handle.telegram_bot is None:
+            raise RuntimeError("telegram_bot not built")
+        # No active probe -- a getMe call here would land in transcripts
+        # during dry-run. Boot-time wiring is sufficient signal.
+
+    async def _cancel_all_pending_orders() -> int:
+        from sqlalchemy import select
+
+        from src.core.v71.exchange.order_manager import V71OrderManager
+        from src.database.connection import get_db_manager
+        from src.database.models_v71 import OrderState, V71Order
+
+        db = get_db_manager()
+        try:
+            async with db.session() as session:
+                result = await session.execute(
+                    select(V71Order.id).where(
+                        V71Order.state.in_(
+                            [OrderState.SUBMITTED, OrderState.PARTIAL],
+                        ),
+                    ),
+                )
+                order_ids = [row[0] for row in result.all()]
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "trading_bridge: cancel_all_pending DB query failed: %s",
+                type(exc).__name__,
+            )
+            return 0
+        cancelled = 0
+        om: V71OrderManager = handle.order_manager
+        for oid in order_ids:
+            try:
+                await om.cancel_order(oid)
+                cancelled += 1
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "trading_bridge: cancel order %s failed: %s",
+                    str(oid)[:8], type(exc).__name__,
+                )
+        return cancelled
+
+    async def _fetch_broker_balances() -> list[Any]:
+        try:
+            response = await handle.kiwoom_client.get_account_balance()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "trading_bridge: fetch_broker_balances kt00018 failed: %s",
+                type(exc).__name__,
+            )
+            return []
+        body = getattr(response, "body", response)
+        if not isinstance(body, dict):
+            return []
+        holdings = body.get("acnt_evlt_remn_indv_tot") or []
+        balances: list[KiwoomBalance] = []
+        for row in holdings:
+            try:
+                stock_code = str(row.get("stk_cd", "")).strip().upper()
+                if not _VALID_STOCK_CODE.match(stock_code):
+                    continue
+                balances.append(
+                    KiwoomBalance(
+                        stock_code=stock_code,
+                        quantity=_coerce_int(row.get("rmnd_qty", 0)),
+                        avg_price=_coerce_int(row.get("pur_pric", 0)),
+                    ),
+                )
+            except Exception:  # noqa: BLE001 -- skip malformed rows
+                continue
+        return balances
+
+    async def _resubscribe_market_data() -> int:
+        if handle.kiwoom_websocket is None:
+            return 0
+        from src.core.v71.exchange.kiwoom_websocket import (
+            V71KiwoomChannelType,
+        )
+        open_positions = handle.position_manager.list_open()
+        stock_codes = {p.stock_code for p in open_positions}
+        count = 0
+        for code in stock_codes:
+            try:
+                await handle.kiwoom_websocket.subscribe(
+                    V71KiwoomChannelType.PRICE_TICK, code,
+                )
+                count += 1
+            except Exception:  # noqa: BLE001
+                continue
+        return count
+
+    def _enter_safe_mode() -> None:
+        system_state.safe_mode = True
+        system_state.safe_mode_entered_at = datetime.now(timezone.utc)
+        system_state.safe_mode_reason = "RESTART_RECOVERY"
+
+    def _exit_safe_mode() -> None:
+        system_state.safe_mode = False
+        system_state.safe_mode_resumed_at = datetime.now(timezone.utc)
+        system_state.safe_mode_reason = None
+
+    recovery_ctx = RecoveryContext(
+        reconciler=position_reconciler,
+        notifier=handle.notification_service,
+        clock=clock,
+        connect_db=_connect_db,
+        refresh_kiwoom_token=_refresh_kiwoom_token,
+        connect_websocket=_connect_websocket,
+        connect_telegram=_connect_telegram,
+        cancel_all_pending_orders=_cancel_all_pending_orders,
+        fetch_broker_balances=_fetch_broker_balances,
+        resubscribe_market_data=_resubscribe_market_data,
+        enter_safe_mode=_enter_safe_mode,
+        exit_safe_mode=_exit_safe_mode,
+    )
+    recovery = V71RestartRecovery(context=recovery_ctx)
+    return position_reconciler, recovery
+
+
 async def _build_telegram_commands(
     handle: _TradingEngineHandle,
 ) -> Any:
@@ -2077,6 +2312,46 @@ async def attach_trading_engine() -> _TradingEngineHandle:
             "-- reconciler periodic loop not started",
         )
 
+    # P-Wire-11: V71RestartRecovery — runs the §13 7-step sequence ONCE
+    # at attach. Cancels orphan orders + reconciles state + resubscribes
+    # market data. Failures land in RecoveryReport.failures rather than
+    # raising so a botched recovery never blocks lifespan boot
+    # (Constitution 4 — system always runs).
+    if is_enabled("v71.restart_recovery"):
+        try:
+            (
+                handle.position_reconciler,
+                handle.restart_recovery,
+            ) = await _build_restart_recovery(handle)
+            handle.restart_recovery_report = await handle.restart_recovery.run(
+                reason="PROCESS_START",
+            )
+            failures = handle.restart_recovery_report.failures
+            logger.info(
+                "trading_bridge: V71RestartRecovery completed "
+                "(cancelled=%d, resubscribed=%d, failures=%d)",
+                handle.restart_recovery_report.cancelled_orders,
+                handle.restart_recovery_report.resubscribed_count,
+                len(failures),
+            )
+            if failures:
+                logger.warning(
+                    "trading_bridge: restart recovery had failures: %s",
+                    failures,
+                )
+        except Exception as exc:  # noqa: BLE001 -- don't block boot
+            logger.error(
+                "trading_bridge: v71.restart_recovery enabled but "
+                "construction failed: %s",
+                type(exc).__name__,
+            )
+            raise
+    else:
+        logger.warning(
+            "trading_bridge: feature flag 'v71.restart_recovery' disabled "
+            "-- orphan orders + state drift caught only by 5-min reconciler",
+        )
+
     logger.info(
         "trading_bridge: V7.1 engine objects constructed "
         "(kiwoom=%s, box=%s, position=%s, reconciler=%s, notification=%s)",
@@ -2102,6 +2377,12 @@ async def detach_trading_engine(handle: _TradingEngineHandle) -> None:
     """
     handle.box_manager = None
     handle.position_manager = None
+
+    # P-Wire-11: drop restart recovery slots (stateless wrapper, no
+    # background task to cancel).
+    handle.restart_recovery_report = None
+    handle.restart_recovery = None
+    handle.position_reconciler = None
 
     # P-Wire-10: stop telegram polling BEFORE notification service so
     # in-flight command handlers (which call telegram_send) don't fight

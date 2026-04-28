@@ -41,6 +41,7 @@ _PRODUCTION_FLAGS = (
     "v71.daily_summary",
     "v71.monthly_review",
     "v71.telegram_commands_v71",
+    "v71.restart_recovery",
 )
 
 
@@ -220,6 +221,11 @@ async def test_attach_with_all_flags_on_production_succeeds(production_env):  # 
             # P-Wire-10: telegram bot + commands
             assert handle.telegram_bot is not None
             assert handle.telegram_commands is not None
+
+            # P-Wire-11: restart recovery ran once at attach
+            assert handle.restart_recovery is not None
+            assert handle.position_reconciler is not None
+            assert handle.restart_recovery_report is not None
 
             # Production mode guarantee: ViMonitor wired so degraded_vi
             # flag is OFF (BuyExecutor uses real is_vi_active).
