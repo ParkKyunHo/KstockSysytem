@@ -437,6 +437,11 @@ class _TradingEngineHandle:
         # the task is cancelled before notification_service goes away.
         self.daily_summary: Any = None
         self.daily_summary_scheduler: Any = None
+        # P-Wire-9: V71MonthlyReview + V71MonthlyReviewScheduler. Same
+        # pattern as P-Wire-8 but fires on the 1st of every month at
+        # 09:00 KST.
+        self.monthly_review: Any = None
+        self.monthly_review_scheduler: Any = None
 
 
 # Default reconciliation cadence (PRD 02_TRADING_RULES.md §7.1 -- "매 5분마다").
@@ -1271,6 +1276,54 @@ async def _build_daily_summary(
     return summary, scheduler
 
 
+async def _build_monthly_review(
+    handle: _TradingEngineHandle,
+) -> Any:
+    """Construct V71MonthlyReview + V71MonthlyReviewScheduler.
+
+    Cross-flag: v71.notification_v71 ON. Stateless ``list_review_items``
+    placeholder returns empty list (full TrackedSummary build is a
+    follow-up unit). The review still fires monthly with header + zero
+    items so production receives a heartbeat.
+    """
+    from src.utils.feature_flags import is_enabled
+
+    if not is_enabled("v71.notification_v71"):
+        raise RuntimeError(
+            "trading_bridge: v71.monthly_review requires v71.notification_v71"
+        )
+    if handle.notification_service is None:
+        raise RuntimeError(
+            "trading_bridge: V71MonthlyReview requires notification_service"
+        )
+
+    from src.core.v71.notification.v71_monthly_review import (
+        MonthlyReviewContext,
+        V71MonthlyReview,
+        V71MonthlyReviewScheduler,
+    )
+
+    clock = handle.clock if handle.clock is not None else V71RealClock()
+
+    def _list_review_items() -> list[Any]:
+        # TrackedSummary aggregation is a follow-up unit. Empty list lets
+        # the monthly review fire with a header-only body.
+        return []
+
+    review_ctx = MonthlyReviewContext(
+        notifier=handle.notification_service,
+        clock=clock,
+        list_review_items=_list_review_items,
+        list_expiring_boxes=None,
+    )
+    review = V71MonthlyReview(context=review_ctx)
+    scheduler = V71MonthlyReviewScheduler(
+        monthly_review=review, clock=clock, hour=9, minute=0,
+    )
+    await scheduler.start()
+    return review, scheduler
+
+
 async def _build_exit_orchestrator(
     handle: _TradingEngineHandle,
 ) -> Any:
@@ -1803,6 +1856,28 @@ async def attach_trading_engine() -> _TradingEngineHandle:
             "-- daily PnL alert at 15:30 not scheduled",
         )
 
+    # P-Wire-9: V71MonthlyReview scheduler (1st of month, 09:00 KST).
+    # Same dependencies as daily_summary; minimal review body when
+    # list_review_items returns empty (placeholder, follow-up unit).
+    if is_enabled("v71.monthly_review"):
+        try:
+            review, review_scheduler = await _build_monthly_review(handle)
+        except Exception as exc:  # noqa: BLE001
+            logger.error(
+                "trading_bridge: v71.monthly_review enabled but "
+                "construction failed: %s",
+                type(exc).__name__,
+            )
+            raise
+        handle.monthly_review = review
+        handle.monthly_review_scheduler = review_scheduler
+        logger.info("trading_bridge: V71MonthlyReview scheduler started")
+    else:
+        logger.warning(
+            "trading_bridge: feature flag 'v71.monthly_review' disabled "
+            "-- monthly review on 1st of month not scheduled",
+        )
+
     # P-Wire-2: V71Reconciler periodic task. Only spins up when the
     # exchange infrastructure is already wired -- there is nothing to
     # reconcile against without a kiwoom_client.
@@ -1858,6 +1933,18 @@ async def detach_trading_engine(handle: _TradingEngineHandle) -> None:
     """
     handle.box_manager = None
     handle.position_manager = None
+
+    # P-Wire-9: stop monthly review scheduler before notification service
+    if handle.monthly_review_scheduler is not None:
+        try:
+            await handle.monthly_review_scheduler.stop()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "trading_bridge: monthly_review_scheduler.stop() failed: %s",
+                type(exc).__name__,
+            )
+    handle.monthly_review_scheduler = None
+    handle.monthly_review = None
 
     # P-Wire-8: stop the daily summary scheduler before notification
     # service goes away (the scheduler enqueues into the same queue).
