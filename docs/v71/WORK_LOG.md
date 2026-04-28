@@ -2957,6 +2957,70 @@ uvicorn.run('src.web.v71.main:app', host='127.0.0.1', port=8001, log_level='info
 
 ---
 
+### Phase 6/7 wiring P-Wire-3: V71NotificationService 스택 wiring (2026-04-28)
+
+**Commit `110ac41`**: `feat(v71): web P-Wire-3 — V71NotificationService 스택 wiring (queue + circuit + Postgres)`
+**규모**: 2 files +755 / -1
+
+#### 신규 / 변경
+
+- **trading_bridge.py 확장** (~+207 LOC):
+  * `_AsyncioRealClock` — production Clock impl (datetime.now UTC + asyncio.sleep + sleep_until)
+  * `_build_pg_notification_execute()` — SQLAlchemy AsyncSession → asyncpg 스타일 `(sql, *params) -> rows | rowcount` 어댑터 shim
+    - `$1, $2` placeholder → `:p1, :p2` (right-to-left, $10/$1 충돌 회피)
+    - SELECT는 `list(result.mappings().all())`, 그 외는 `result.rowcount`
+  * `_build_telegram_send_fn()` — V7.0 `TelegramBot.send_message` 래핑
+    - TELEGRAM_BOT_TOKEN/CHAT_ID 부재 시 None (queue-only fail-secure)
+    - parse_mode 미전달 (CLAUDE.md Part 1.1 + V7.0 가드 이중 안전)
+  * `_build_notification_stack()` — Repository/Queue/CircuitBreaker/Service 클래스 + clock + telegram_send dict
+  * `_TradingEngineHandle`: 4 슬롯 추가 (notification_repository / queue / circuit_breaker / service)
+  * attach: `is_enabled('v71.notification_v71')` 가드 + try/except + raise + service.start() + `mark_telegram_active(True/False)`
+  * detach: notification_service.stop() **FIRST** → reconciler cancel → kiwoom aclose() **LAST**
+
+- **test_trading_bridge_wiring.py 확장** (~+549 LOC):
+  * `_isolate_flags` autouse fixture에 TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID 격리 추가
+  * Group F helper unit (15):
+    - F.1 `_AsyncioRealClock` (3): now / sleep / sleep_until_skip_past
+    - F.2 `_build_pg_notification_execute` (7): right-to-left $1/$11 / SELECT / INSERT / UPDATE / empty params / 17 placeholders / propagate session error
+    - F.3 `_build_telegram_send_fn` (1 + 4 parametrize): both_present / missing variants / parse_mode 미전달
+  * Group G attach (4): flag_off / full_stack_started / queue_only_mode / db_build_failure_raises
+  * Group H detach (3): stop_first / stop_failure_continues / never_attached
+
+#### Architect Q1~Q7 결정
+
+- Q1 옵션 A: 본 단위에서 wire (P-Wire-4와 분리, 단순함)
+- Q2 PostgresNotificationRepository: 재시작 후 PENDING CRITICAL 복구 (NFR1)
+- Q3 V7.0 TelegramBot import는 bridge layer 한정, fail-secure (None)
+- Q4 detach 순서: notification stop FIRST → reconciler cancel → kiwoom aclose
+- Q5 `_AsyncioRealClock` helper, P-Wire-4에서 추출 예정
+- Q6 kiwoom 의존 X, 독립 활성화 OK
+- Q7 4 슬롯 추가 (P-Wire-1/2 패턴 일관성)
+
+#### 워크플로우 (12단계, 2 에이전트 병렬)
+
+| 에이전트 | 산출 |
+|---------|-----|
+| v71-architect | PASS + Q1~Q7 결정 + 권고 6건 모두 반영 |
+| security + test 병렬 | PASS — security L1 (mark_telegram_active 가시성) 즉시 반영 |
+
+#### 검증
+
+- 단위 테스트: 45/45 PASS in 1.33s (P-Wire-1/2/3 누적)
+- V7.1 회귀: **1118/1118 PASS** in 8.20s (1095 → 1118, 23 신규)
+- 6 harness: 1/2/3/4/6 PASS, 5 WARN
+- ruff: clean (ARG001 + SIM117 fix)
+
+#### 다음 단계
+
+- **P-Wire-4**: V71BuyExecutor / V71ExitExecutor wiring with 4 callable deps (is_vi_active / get_previous_close / get_total_capital / get_invested_pct_for_stock) + tracked_stock_resolver
+  * `_AsyncioRealClock`을 `src/core/v71/v71_realclock.py`로 추출 (재사용)
+  * Notifier Protocol → `handle.notification_service` 주입
+  * Cross-flag 검사 (`v71.notification_v71` AND `v71.kiwoom_exchange`)
+- **P-Wire-5**: paper smoke (`KIWOOM_ENV=SANDBOX`) + ka10004/ka10001 wire-level 보정
+- **Phase 7 P7.1**: paper trade
+
+---
+
 ### Phase 6/7 wiring P-Wire-2: V71Reconciler 정기 실행 (2026-04-28)
 
 **Commit `04721b1`**: `feat(v71): web P-Wire-2 — V71Reconciler 정기 실행 wiring (5분 주기)`
