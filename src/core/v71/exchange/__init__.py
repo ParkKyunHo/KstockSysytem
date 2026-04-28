@@ -70,6 +70,15 @@ from .order_manager import (
     V71OrderUnsupportedError,
 )
 from .rate_limiter import V71RateLimiter, V71RateLimiterStats
+from .reconciler import (
+    V71PyramidBuyDetected,
+    V71Reconciler,
+    V71ReconcilerError,
+    V71ReconciliationApplyMode,
+    V71ReconciliationDecision,
+    V71ReconciliationReport,
+    V71TrackingTerminated,
+)
 from .token_manager import (
     V71TokenAuthError,
     V71TokenError,
@@ -105,9 +114,16 @@ __all__ = [
     "V71OrderSubmissionFailed",
     "V71OrderSubmitResult",
     "V71OrderUnsupportedError",
+    "V71PyramidBuyDetected",
     "V71RateLimiter",
     "V71RateLimiterStats",
+    "V71Reconciler",
+    "V71ReconcilerError",
+    "V71ReconciliationApplyMode",
+    "V71ReconciliationDecision",
+    "V71ReconciliationReport",
     "V71StockNotFoundError",
+    "V71TrackingTerminated",
     "V71TokenAuthError",
     "V71TokenError",
     "V71TokenInfo",
