@@ -62,6 +62,8 @@ pytest_cache/
 .env.production
 .env.backup
 .env.*.backup
+.env*.bak
+.env*.bak.*
 .venv
 env/
 venv/
