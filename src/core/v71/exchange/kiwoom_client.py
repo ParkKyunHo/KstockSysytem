@@ -458,6 +458,55 @@ class V71KiwoomClient:
             next_key=next_key,
         )
 
+    async def get_vi_active_stocks(
+        self,
+        *,
+        market_tp: str = "000",
+        motion_tp: str = "0",
+        stex_tp: str = "1",
+        cont_yn: str = "N",
+        next_key: str = "",
+    ) -> V71KiwoomResponse:
+        """ka10054 VI 발동 종목 일괄 조회 (사용자 키움 답변 2026-04-30 Q1).
+
+        Args:
+            market_tp: 시장구분 ("000"=전체, "001"=코스피, "101"=코스닥).
+            motion_tp: 발동구분 ("0"=전체, "1"=정적VI, "2"=동적VI, "3"=동적+정적).
+            stex_tp: 거래소구분 ("1"=KRX, "2"=NXT, "3"=통합).
+
+        Response (``data`` dict):
+            ``motn_stk[]`` -- 발동 종목 list
+                * ``stk_cd`` 종목코드
+                * ``stk_nm`` 종목명
+                * ``motn_pric`` VI 발동가격 (string)
+                * ``trde_cntr_proc_time`` 매매체결처리시각 (HHMMSS)
+                * ``virelis_time`` VI 해제시각 (HHMMSS)
+                * ``viaplc_tp`` VI 적용구분 ("정적"/"동적"/"동적+정적")
+                * ``vimotn_cnt`` VI 발동횟수 (string)
+                * ``stex_tp`` 거래소구분 (string)
+        """
+        return await self.request(
+            api_id="ka10054",
+            endpoint=MARKET_PATH,
+            payload={
+                "mrkt_tp": market_tp,
+                "bf_mkrt_tp": "1",  # 정규시장
+                "stk_cd": "",
+                "motn_tp": motion_tp,
+                "skip_stk": "000000000",
+                "trde_qty_tp": "0",
+                "min_trde_qty": "",
+                "max_trde_qty": "",
+                "trde_prica_tp": "0",
+                "min_trde_prica": "",
+                "max_trde_prica": "",
+                "motn_drc": "0",  # 전체 (상승/하락 무관)
+                "stex_tp": stex_tp,
+            },
+            cont_yn=cont_yn,
+            next_key=next_key,
+        )
+
     async def place_buy_order(
         self,
         *,

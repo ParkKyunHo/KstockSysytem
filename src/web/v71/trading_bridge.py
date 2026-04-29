@@ -659,6 +659,22 @@ async def _maintenance_schedule_loop(handle: _TradingEngineHandle) -> None:
                         "refresh_ts_base_prices failed: %s",
                         type(exc).__name__,
                     )
+                # #6 post-maintenance: VI state 재확인 (점검 동안 발동
+                # 가능성).
+                try:
+                    vi_triggered = await _refresh_vi_state(handle)
+                    if vi_triggered > 0:
+                        logger.info(
+                            "trading_bridge: post-maintenance applied %d "
+                            "new VI triggers",
+                            vi_triggered,
+                        )
+                except Exception as exc:  # noqa: BLE001
+                    logger.error(
+                        "trading_bridge: post-maintenance "
+                        "refresh_vi_state failed: %s",
+                        type(exc).__name__,
+                    )
 
             await asyncio.sleep(_MAINTENANCE_POLL_SECONDS)
         except asyncio.CancelledError:
@@ -779,6 +795,49 @@ async def _refresh_ts_base_prices(
             len(positions),
         )
     return updated
+
+
+async def _refresh_vi_state(handle: _TradingEngineHandle) -> int:
+    """ka10054 호출 + V71ViMonitor 일괄 갱신 (#6, 2026-04-30).
+
+    WS 끊김 사이 1h 채널 push 누락 -> 미인지 VI 발동 종목 -> BuyExecutor
+    가 vi_active=False 로 인식 후 매수 진행 위험 (헌법 §1 위반). ka10054
+    snapshot 으로 catch-up.
+
+    키움 답변 (Q4): ka10054 가 당일 누적 VI 발동 종목 list 반환 -> WS
+    끊김 보완에 충분. 별도 history endpoint 없음.
+
+    Returns 신규 트리거된 종목 수 (이미 활성인 종목 idempotent skip).
+    """
+    if handle.kiwoom_client is None or handle.vi_monitor is None:
+        return 0
+
+    try:
+        resp = await handle.kiwoom_client.get_vi_active_stocks()
+        data = resp.data or {}
+        motn_stk = data.get("motn_stk") or []
+        if not motn_stk:
+            logger.debug(
+                "trading_bridge: refresh_vi_state -- no active VI stocks"
+            )
+            return 0
+
+        triggered = await handle.vi_monitor.apply_kiwoom_snapshot(
+            motn_stk=motn_stk,
+        )
+        if triggered > 0:
+            logger.warning(
+                "trading_bridge: refresh_vi_state applied %d new VI "
+                "triggers (catch-up from missed 1h push)",
+                triggered,
+            )
+        return triggered
+    except Exception as exc:  # noqa: BLE001
+        logger.error(
+            "trading_bridge: refresh_vi_state failed: %s",
+            type(exc).__name__,
+        )
+        return 0
 
 
 async def _cancel_orphan_submitted_orders(
@@ -1732,6 +1791,23 @@ async def _build_kiwoom_websocket(
             logger.error(
                 "trading_bridge: WS reconnect refresh_ts_base_prices "
                 "failed: %s",
+                type(exc).__name__,
+            )
+
+        # #6 (2026-04-30): VI state 재확인 -- 끊김 사이 1h 채널 push 누락
+        # -> 미인지 VI 발동 -> BuyExecutor 매수 차단 안 됨 (헌법 §1).
+        # ka10054 snapshot 으로 catch-up.
+        try:
+            vi_triggered = await _refresh_vi_state(handle)
+            if vi_triggered > 0:
+                logger.warning(
+                    "trading_bridge: WS reconnect applied %d new VI "
+                    "triggers from ka10054",
+                    vi_triggered,
+                )
+        except Exception as exc:  # noqa: BLE001
+            logger.error(
+                "trading_bridge: WS reconnect refresh_vi_state failed: %s",
                 type(exc).__name__,
             )
 

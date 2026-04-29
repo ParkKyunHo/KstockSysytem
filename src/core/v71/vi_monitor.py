@@ -229,6 +229,64 @@ class V71ViMonitor:
         await self._auto_resettle(stock_code)
 
     # ------------------------------------------------------------------
+    # #6 (2026-04-30): ka10054 snapshot 일괄 적용 (WS 끊김 catch-up)
+    # ------------------------------------------------------------------
+
+    async def apply_kiwoom_snapshot(
+        self,
+        *,
+        motn_stk: list[dict],
+    ) -> int:
+        """``ka10054.motn_stk`` list 를 받아 VI state 일괄 갱신.
+
+        WS 끊김 사이 1h 채널 push 누락 -> 미인지 발동 catch-up. 이미
+        TRIGGERED 인 종목은 ``on_vi_triggered`` idempotent 가드로 silent
+        skip. 신규 발동만 trigger 처리.
+
+        ka10054 응답에 ``last_close_before_vi`` 가 없어 ``motn_pric`` 으로
+        대체 (정확한 PRD §10 직전 종가 비교는 다음 1h push 또는 별도
+        ka10001 fetch 가 필요하지만, snapshot 단계는 안전한 fallback).
+
+        Returns 신규 트리거된 종목 수.
+        """
+        triggered = 0
+        skipped = 0
+        for item in motn_stk:
+            stock_code = str(item.get("stk_cd") or "").strip()
+            if not stock_code:
+                continue
+            try:
+                trigger_price = int(str(item.get("motn_pric") or "0").strip())
+            except (TypeError, ValueError):
+                continue
+            if trigger_price <= 0:
+                continue
+
+            current = self.get_state(stock_code)
+            if current is VIState.TRIGGERED:
+                skipped += 1
+                continue
+
+            try:
+                await self.on_vi_triggered(
+                    stock_code,
+                    trigger_price=trigger_price,
+                    last_close_before_vi=trigger_price,
+                )
+                triggered += 1
+            except Exception:  # noqa: BLE001 -- per-stock isolation
+                log.exception(
+                    "apply_kiwoom_snapshot failed for %s", stock_code,
+                )
+
+        if triggered > 0 or skipped > 0:
+            log.info(
+                "VI snapshot applied: triggered=%d skipped=%d total=%d",
+                triggered, skipped, len(motn_stk),
+            )
+        return triggered
+
+    # ------------------------------------------------------------------
     # Auto-resettle
     # ------------------------------------------------------------------
 
