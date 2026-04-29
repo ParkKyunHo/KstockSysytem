@@ -559,11 +559,17 @@ def _resolve_reconciler_interval() -> float:
 # 박스 invalidation 위험. ±5분 buffer 로 사전 차단 + 재가동 직후
 # reconcile_all 호출로 drift 보정.
 
+# 사용자 키움 답변 정정 (2026-04-30, Q8): 정확한 점검 시간:
+#   * 01:00-01:30 (30 분)
+#   * 05:50-06:10 (20 분)
+#   * 07:00-07:30 (30 분 -- 조건검색 재기동)
+# 주말 동일. ±5 분 buffer 로 매매 trigger 사전 차단. 03:00 / 17:00 은
+# 최초 답변에서 close 보고로 추정되었으나 정밀 답변에 명시되지 않아
+# 제거 (false positive 매매 차단 회피).
 _MAINTENANCE_WINDOWS_KST: tuple[tuple[_Time, _Time], ...] = (
-    (_Time(0, 55), _Time(1, 5)),     # 01:00 close 보고 ±5분
-    (_Time(2, 55), _Time(3, 5)),     # 03:00 close 보고 ±5분
-    (_Time(6, 55), _Time(7, 35)),    # 07:00-07:30 조건검색 재기동
-    (_Time(16, 55), _Time(17, 5)),   # 17:00 close 보고 ±5분
+    (_Time(0, 55), _Time(1, 35)),    # 01:00-01:30 ±5분
+    (_Time(5, 45), _Time(6, 15)),    # 05:50-06:10 ±5분
+    (_Time(6, 55), _Time(7, 35)),    # 07:00-07:30 ±5분 (조건검색 재기동)
 )
 _MAINTENANCE_REASON_PREFIX = "kiwoom_maintenance:"
 _MAINTENANCE_POLL_SECONDS = 30.0
@@ -637,6 +643,22 @@ async def _maintenance_schedule_loop(handle: _TradingEngineHandle) -> None:
                             "failed: %s",
                             type(exc).__name__,
                         )
+                # #7 post-maintenance: TS state 재계산 -- 점검 30분 동안
+                # PRICE_TICK 누락 가능성 큼.
+                try:
+                    ts_updated = await _refresh_ts_base_prices(handle)
+                    if ts_updated > 0:
+                        logger.info(
+                            "trading_bridge: post-maintenance refreshed "
+                            "%d ts_base_price values",
+                            ts_updated,
+                        )
+                except Exception as exc:  # noqa: BLE001
+                    logger.error(
+                        "trading_bridge: post-maintenance "
+                        "refresh_ts_base_prices failed: %s",
+                        type(exc).__name__,
+                    )
 
             await asyncio.sleep(_MAINTENANCE_POLL_SECONDS)
         except asyncio.CancelledError:
@@ -650,6 +672,113 @@ async def _maintenance_schedule_loop(handle: _TradingEngineHandle) -> None:
                 await asyncio.sleep(_MAINTENANCE_POLL_SECONDS)
             except asyncio.CancelledError:
                 raise
+
+
+async def _refresh_ts_base_prices(
+    handle: _TradingEngineHandle,
+) -> int:
+    """OPEN position 의 ts_base_price 를 ka10081 직전 20영업일 high 로
+    재계산 (#7).
+
+    PRD §5 BasePrice = ``Highest(High, 20)``. WS 끊김 사이 PRICE_TICK
+    누락 -> ts_base_price stale -> effective_stop 잘못 계산 -> 잘못된
+    자동 청산 위험. 재연결 직후 + post-maintenance 에서 catch-up.
+
+    TS 는 단조증가 (PRD §5) -- 새 high > 기존 일 때만 update, 작거나
+    같으면 skip. Returns 갱신된 position 수.
+
+    키움 답변 (2026-04-30, Q6): ka10081 단일 호출 최대 600개 + 휴장일
+    자동 제외 -> cont_yn 없이 직전 20영업일 high 추출 가능.
+    """
+    if handle.kiwoom_client is None:
+        return 0
+
+    from decimal import Decimal as _Decimal
+
+    from sqlalchemy import select
+
+    from src.database.connection import get_db_manager
+    from src.database.models_v71 import PositionStatus, V71Position
+
+    db = get_db_manager()
+    today_kst = (datetime.now(timezone.utc) + timedelta(hours=9)).strftime(
+        "%Y%m%d"
+    )
+
+    updated = 0
+    failed = 0
+    try:
+        async with db.session() as session:
+            stmt = select(V71Position).where(
+                V71Position.status != PositionStatus.CLOSED
+            )
+            result = await session.execute(stmt)
+            positions = list(result.scalars().all())
+    except Exception as exc:  # noqa: BLE001
+        logger.error(
+            "trading_bridge: refresh_ts_base_prices DB fetch failed: %s",
+            type(exc).__name__,
+        )
+        return 0
+
+    for position in positions:
+        try:
+            resp = await handle.kiwoom_client.get_daily_chart(
+                stock_code=position.stock_code,
+                base_date=today_kst,
+            )
+            data = resp.data or {}
+            bars = data.get("stk_dt_pole_chart_qry") or []
+            if not bars:
+                continue
+
+            # 직전 20영업일 high (휴장일 자동 제외 -- 키움 spec).
+            highs: list[int] = []
+            for bar in bars[:20]:
+                high_raw = bar.get("high_pric") or bar.get("high") or "0"
+                high = _coerce_int(high_raw)
+                if high > 0:
+                    highs.append(high)
+            if not highs:
+                continue
+
+            new_base = max(highs)
+
+            # 단조증가 update -- 새 base > 기존 일 때만.
+            async with db.session() as session:
+                pos = await session.get(V71Position, position.id)
+                if pos is None:
+                    continue
+                current_base = int(pos.ts_base_price or 0)
+                if new_base > current_base:
+                    pos.ts_base_price = _Decimal(new_base)
+                    pos.updated_at = datetime.now(timezone.utc)
+                    await session.commit()
+                    updated += 1
+                    logger.info(
+                        "trading_bridge: refresh ts_base_price stock=%s "
+                        "old=%d new=%d",
+                        position.stock_code,
+                        current_base,
+                        new_base,
+                    )
+        except Exception as exc:  # noqa: BLE001
+            failed += 1
+            logger.warning(
+                "refresh_ts_base_price failed stock=%s: %s",
+                position.stock_code,
+                type(exc).__name__,
+            )
+
+    if updated > 0 or failed > 0:
+        logger.info(
+            "trading_bridge: refresh_ts_base_prices updated=%d failed=%d "
+            "(total positions=%d)",
+            updated,
+            failed,
+            len(positions),
+        )
+    return updated
 
 
 async def _cancel_orphan_submitted_orders(
@@ -1585,6 +1714,24 @@ async def _build_kiwoom_websocket(
         except Exception as exc:  # noqa: BLE001
             logger.error(
                 "trading_bridge: WS reconnect orphan cancel failed: %s",
+                type(exc).__name__,
+            )
+
+        # #7 (2026-04-30): TS state 재계산 -- 끊김 사이 PRICE_TICK 누락으로
+        # ts_base_price stale 가능 -> effective_stop 잘못 계산 -> 잘못된
+        # 자동 청산. ka10081 직전 20봉 high 로 catch-up. 단조증가 보장.
+        try:
+            ts_updated = await _refresh_ts_base_prices(handle)
+            if ts_updated > 0:
+                logger.warning(
+                    "trading_bridge: WS reconnect refreshed %d "
+                    "ts_base_price values",
+                    ts_updated,
+                )
+        except Exception as exc:  # noqa: BLE001
+            logger.error(
+                "trading_bridge: WS reconnect refresh_ts_base_prices "
+                "failed: %s",
                 type(exc).__name__,
             )
 
