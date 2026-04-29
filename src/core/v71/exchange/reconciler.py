@@ -54,6 +54,7 @@ Out of scope (architect-confirmed, follow-up units):
 
 from __future__ import annotations
 
+import asyncio
 import re
 from collections.abc import Awaitable, Callable
 from contextlib import AbstractAsyncContextManager
@@ -390,6 +391,13 @@ class V71Reconciler:
         self._apply_mode = apply_mode
         self._on_pyramid = on_pyramid_buy_detected
         self._on_tracking_terminated = on_tracking_terminated
+        # #5 (2026-04-30): serialize concurrent reconcile_all callers
+        # (5-min loop + on_reconnect_recovered + post-maintenance resume +
+        # manual trigger). Second caller waits until first completes,
+        # then runs a fresh reconciliation -- catches any drift
+        # introduced in the meantime without duplicating kt00018 fetches
+        # or DB writes.
+        self._reconcile_lock = asyncio.Lock()
 
     def __repr__(self) -> str:
         # PII / lambda objects deliberately excluded.
@@ -403,7 +411,15 @@ class V71Reconciler:
     async def reconcile_all(self) -> V71ReconciliationReport:
         """Run a full reconciliation pass. The kt00018 call happens once;
         DB reads + writes happen per stock under per-stock transactions.
+
+        Concurrency (#5, 2026-04-30): ``self._reconcile_lock`` serializes
+        callers. 두 번째 호출은 첫 번째 완료까지 대기 후 fresh 실행 --
+        kt00018 중복 fetch / DB write race 방지.
         """
+        async with self._reconcile_lock:
+            return await self._reconcile_all_inner()
+
+    async def _reconcile_all_inner(self) -> V71ReconciliationReport:
         started_at = self._clock()
         try:
             kiwoom_balances = await self._fetch_kiwoom_balances()

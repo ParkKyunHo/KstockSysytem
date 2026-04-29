@@ -31,6 +31,7 @@ import re
 import time
 from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
+from datetime import time as _Time
 from typing import Any
 from uuid import UUID
 
@@ -387,6 +388,11 @@ class _TradingEngineHandle:
         # asyncio.Task background loop -- detach cancels + awaits.
         self.reconciler: Any = None
         self.reconciler_task: asyncio.Task[None] | None = None
+        # #1 (2026-04-30): Kiwoom maintenance window auto-SAFE_MODE.
+        # 매일 4회 점검 시간(KST 06:55-07:35 + 00:55-01:05 + 02:55-03:05 +
+        # 16:55-17:05) 도달 시 SAFE_MODE 자동 진입 + 종료 시 reconcile_all
+        # 호출. detach 가 cancel + await 책임.
+        self.maintenance_task: asyncio.Task[None] | None = None
         # P-Wire-3: Notification stack (feature flag
         # ``v71.notification_v71``). ``notification_service.stop()`` must
         # run BEFORE ``kiwoom_client.aclose()`` so the worker drains
@@ -541,6 +547,173 @@ def _resolve_reconciler_interval() -> float:
         )
         return _RECONCILER_INTERVAL_DEFAULT_SECONDS
     return value
+
+
+# ---------------------------------------------------------------------
+# #1 + #4 (2026-04-30): 키움 점검 시간 자동 SAFE_MODE + orphan order 정리
+# ---------------------------------------------------------------------
+#
+# 사용자 키움 답변 (2026-04-30): 매일 07:00-07:30 조건검색 재기동 + 추가
+# 01:00 / 03:00 / 17:00 close 보고. 우리 시스템이 점검 시간을 인지하지
+# 못하면 BuyExecutor / ExitExecutor 가 매매 trigger -> 키움 reject ->
+# 박스 invalidation 위험. ±5분 buffer 로 사전 차단 + 재가동 직후
+# reconcile_all 호출로 drift 보정.
+
+_MAINTENANCE_WINDOWS_KST: tuple[tuple[_Time, _Time], ...] = (
+    (_Time(0, 55), _Time(1, 5)),     # 01:00 close 보고 ±5분
+    (_Time(2, 55), _Time(3, 5)),     # 03:00 close 보고 ±5분
+    (_Time(6, 55), _Time(7, 35)),    # 07:00-07:30 조건검색 재기동
+    (_Time(16, 55), _Time(17, 5)),   # 17:00 close 보고 ±5분
+)
+_MAINTENANCE_REASON_PREFIX = "kiwoom_maintenance:"
+_MAINTENANCE_POLL_SECONDS = 30.0
+
+# #4: WS-only 끊김 시 키움 체결 통보 누락으로 SUBMITTED 영구 stuck
+# 회피. 5분 이상 SUBMITTED/PARTIAL 인 주문을 일괄 cancel.
+_ORPHAN_ORDER_THRESHOLD_SECONDS = 300
+
+
+def _current_maintenance_window() -> tuple[_Time, _Time] | None:
+    """현재 KST 시간이 점검 윈도우 안이면 (start, end) 반환, 아니면 None."""
+    kst = timezone(timedelta(hours=9))
+    now_kst = datetime.now(kst).time()
+    for start, end in _MAINTENANCE_WINDOWS_KST:
+        if start <= now_kst <= end:
+            return (start, end)
+    return None
+
+
+async def _maintenance_schedule_loop(handle: _TradingEngineHandle) -> None:
+    """매일 점검 시간 ±buffer 자동 SAFE_MODE 진입 + 종료 시 reconcile_all.
+
+    auto-safe 와 manual safe_mode 구분: ``safe_mode_reason`` 이
+    ``_MAINTENANCE_REASON_PREFIX`` 로 시작하면 auto, 그 외는 운영자 수동.
+    auto 만 자동 해제되며 manual 은 사용자 수동 resume 까지 유지된다.
+    """
+    from src.web.v71.api.system.state import system_state
+
+    logger.info("trading_bridge: maintenance schedule loop started")
+    while True:
+        try:
+            window = _current_maintenance_window()
+            current_reason = system_state.safe_mode_reason or ""
+            was_auto_safe = current_reason.startswith(
+                _MAINTENANCE_REASON_PREFIX
+            )
+
+            if window is not None and not system_state.safe_mode:
+                window_str = (
+                    f"{window[0].strftime('%H:%M')}-"
+                    f"{window[1].strftime('%H:%M')}"
+                )
+                system_state.safe_mode = True
+                system_state.safe_mode_reason = (
+                    f"{_MAINTENANCE_REASON_PREFIX} {window_str} KST"
+                )
+                system_state.safe_mode_entered_at = datetime.now(timezone.utc)
+                logger.warning(
+                    "trading_bridge: 키움 점검 시간 진입 (%s KST) -- "
+                    "SAFE_MODE 자동 진입 (BuyExecutor / ExitExecutor 차단)",
+                    window_str,
+                )
+            elif window is None and was_auto_safe:
+                logger.warning(
+                    "trading_bridge: 키움 점검 시간 종료 -- SAFE_MODE 자동 "
+                    "해제 + reconcile_all (drift 보정)"
+                )
+                system_state.safe_mode = False
+                system_state.safe_mode_reason = None
+                system_state.safe_mode_resumed_at = datetime.now(timezone.utc)
+                if handle.reconciler is not None:
+                    try:
+                        await handle.reconciler.reconcile_all()
+                        logger.info(
+                            "trading_bridge: post-maintenance reconcile_all "
+                            "complete"
+                        )
+                    except Exception as exc:  # noqa: BLE001
+                        logger.error(
+                            "trading_bridge: post-maintenance reconcile_all "
+                            "failed: %s",
+                            type(exc).__name__,
+                        )
+
+            await asyncio.sleep(_MAINTENANCE_POLL_SECONDS)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - always-run policy
+            logger.error(
+                "trading_bridge: maintenance loop iteration failed: %s",
+                type(exc).__name__,
+            )
+            try:
+                await asyncio.sleep(_MAINTENANCE_POLL_SECONDS)
+            except asyncio.CancelledError:
+                raise
+
+
+async def _cancel_orphan_submitted_orders(
+    handle: _TradingEngineHandle,
+) -> int:
+    """SUBMITTED / PARTIAL 5분 이상 stuck 주문 일괄 cancel.
+
+    WS-only 끊김 시 키움 체결 통보 누락 -> DB orders state 영구 stuck
+    회피. on_reconnect_recovered 에서 reconcile_all 직후 호출.
+
+    Returns 정리된 주문 수.
+    """
+    if handle.order_manager is None:
+        return 0
+
+    from sqlalchemy import select
+
+    from src.database.connection import get_db_manager
+    from src.database.models_v71 import OrderState, V71Order
+
+    db = get_db_manager()
+    cutoff = datetime.now(timezone.utc) - timedelta(
+        seconds=_ORPHAN_ORDER_THRESHOLD_SECONDS
+    )
+
+    cancelled = 0
+    failed = 0
+    try:
+        async with db.session() as session:
+            stmt = (
+                select(V71Order)
+                .where(V71Order.state.in_(
+                    [OrderState.SUBMITTED, OrderState.PARTIAL]
+                ))
+                .where(V71Order.submitted_at < cutoff)
+            )
+            result = await session.execute(stmt)
+            orders = list(result.scalars().all())
+
+        for order in orders:
+            try:
+                await handle.order_manager.cancel_order(order.id)
+                cancelled += 1
+            except Exception as exc:  # noqa: BLE001
+                failed += 1
+                logger.warning(
+                    "cancel_orphan_order failed order_id=%s: %s",
+                    order.id,
+                    type(exc).__name__,
+                )
+    except Exception as exc:  # noqa: BLE001
+        logger.error(
+            "trading_bridge: cancel_orphan_orders fetch failed: %s",
+            type(exc).__name__,
+        )
+        return 0
+
+    if cancelled > 0 or failed > 0:
+        logger.info(
+            "trading_bridge: cancel_orphan_orders cancelled=%d failed=%d",
+            cancelled,
+            failed,
+        )
+    return cancelled
 
 
 def _build_reconciler(handle: _TradingEngineHandle) -> Any:
@@ -1395,6 +1568,23 @@ async def _build_kiwoom_websocket(
         except Exception as exc:  # noqa: BLE001
             logger.error(
                 "trading_bridge: WS reconnect reconcile_all failed: %s",
+                type(exc).__name__,
+            )
+
+        # #4 (2026-04-30): WS-only 끊김 시 키움 체결 통보 누락으로
+        # 영구 SUBMITTED stuck 된 주문이 있으면 일괄 cancel. reconcile_all
+        # 이 잔고 차이를 이미 catch 했으므로 stuck 주문은 빈 껍데기.
+        try:
+            cleaned = await _cancel_orphan_submitted_orders(handle)
+            if cleaned > 0:
+                logger.warning(
+                    "trading_bridge: WS reconnect cancelled %d orphan "
+                    "SUBMITTED/PARTIAL orders",
+                    cleaned,
+                )
+        except Exception as exc:  # noqa: BLE001
+            logger.error(
+                "trading_bridge: WS reconnect orphan cancel failed: %s",
                 type(exc).__name__,
             )
 
@@ -2913,9 +3103,24 @@ async def attach_trading_engine() -> _TradingEngineHandle:
             "-- orphan orders + state drift caught only by 5-min reconciler",
         )
 
+    # #1 (2026-04-30): maintenance schedule loop -- 매일 4회 점검 시간에
+    # 자동 SAFE_MODE 진입 + 종료 시 reconcile_all. detach 가 cancel + await.
+    handle.maintenance_task = asyncio.create_task(
+        _maintenance_schedule_loop(handle),
+        name="v71_maintenance_schedule_loop",
+    )
+    logger.info(
+        "trading_bridge: maintenance schedule task started (windows=%s)",
+        [
+            f"{s.strftime('%H:%M')}-{e.strftime('%H:%M')}"
+            for s, e in _MAINTENANCE_WINDOWS_KST
+        ],
+    )
+
     logger.info(
         "trading_bridge: V7.1 engine objects constructed "
-        "(kiwoom=%s, box=%s, position=%s, reconciler=%s, notification=%s)",
+        "(kiwoom=%s, box=%s, position=%s, reconciler=%s, notification=%s, "
+        "maintenance=%s)",
         "yes" if handle.kiwoom_client else "no",
         type(handle.box_manager).__name__ if handle.box_manager else "none",
         type(handle.position_manager).__name__
@@ -2925,6 +3130,7 @@ async def attach_trading_engine() -> _TradingEngineHandle:
         "running"
         if handle.notification_service
         else ("queue-only" if handle.notification_queue else "off"),
+        "running" if handle.maintenance_task else "off",
     )
     return handle
 
@@ -3070,6 +3276,22 @@ async def detach_trading_engine(handle: _TradingEngineHandle) -> None:
     handle.notification_circuit_breaker = None
     handle.notification_queue = None
     handle.notification_repository = None
+
+    # #1 (2026-04-30): stop maintenance schedule loop. SAFE_MODE 자동
+    # 해제 책임은 detach 가 아니라 운영자(또는 다음 attach) -- 단순히
+    # task cancel 만. Polling sleep 이라 cancel 즉시 종료.
+    if handle.maintenance_task is not None:
+        handle.maintenance_task.cancel()
+        try:
+            await handle.maintenance_task
+        except asyncio.CancelledError:
+            pass
+        except Exception as exc:  # noqa: BLE001 -- shutdown best-effort
+            logger.warning(
+                "trading_bridge: maintenance_task await failed: %s",
+                type(exc).__name__,
+            )
+        handle.maintenance_task = None
 
     # P-Wire-2: stop the reconciler loop before tearing down the client
     # it depends on. CancelledError propagates out of asyncio.sleep /
