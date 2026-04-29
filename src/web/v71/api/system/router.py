@@ -92,8 +92,26 @@ async def system_status(
         try:
             raw = cap_fn()
             total_capital_value = float(raw) if raw else None
-        except Exception:  # noqa: BLE001 -- never break /system/status
+            # Diagnostic logging (production-safe, no PII):
+            import logging as _logging
+            _logging.getLogger(__name__).info(
+                "system_status_capital cap_fn=present raw=%s final=%s",
+                raw,
+                total_capital_value,
+            )
+        except Exception as exc:  # noqa: BLE001 -- never break /system/status
             total_capital_value = None
+            import logging as _logging
+            _logging.getLogger(__name__).warning(
+                "system_status_capital_call_failed error=%s",
+                type(exc).__name__,
+            )
+    else:
+        import logging as _logging
+        _logging.getLogger(__name__).info(
+            "system_status_capital cap_fn=None (buy_executor not built or "
+            "register skipped)",
+        )
 
     payload = SystemStatusOut(
         status=sys_status,  # type: ignore[arg-type]

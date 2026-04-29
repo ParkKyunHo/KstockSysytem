@@ -702,11 +702,20 @@ def _build_notification_stack() -> dict[str, Any]:
 _TOTAL_CAPITAL_TTL_SECONDS = 300.0  # PRD §6.2 / §3.4: 5분 단위 평가
 _TRACKED_CACHE_DB_TIMEOUT_SECONDS = 10.0  # security M3: bound boot blocking
 _HOLIDAY_CACHE_DB_TIMEOUT_SECONDS = 10.0  # P-Wire-14 mirror — same boot bound
-# Top-level kt00018 keys (KIWOOM_API_ANALYSIS.md). Wire-level field
-# correction may land in P-Wire-5 paper smoke; the cache falls back to
-# 0 + WARNING when neither key resolves so PATH_A naturally abandons
-# (헌법 §1: 자본금 추정 실패는 매수 차단).
-_KT00018_TOTAL_EVAL_KEYS = ("tot_evlt_amt", "prsm_dpst_aset_amt", "tot_pur_amt")
+# Top-level kt00018 keys (KIWOOM_API_ANALYSIS.md).
+#
+# Priority order (2026-04-30 production observation + 키움 답변):
+#   1. ``prsm_dpst_aset_amt`` (추정 예탁 자산 = 예수금 + 주식 평가).
+#      비중 결정 + 30 % per-stock cap 계산에 가장 적합 -- 보유 주식이
+#      없어도 예수금 만큼은 매수 가능하므로 ``tot_evlt_amt`` 0 -> capital
+#      0 -> 모든 매수 차단 회귀를 방지한다.
+#   2. ``tot_evlt_amt`` (총 주식 평가금) -- 예수금 키 부재 시 fallback.
+#   3. ``tot_pur_amt`` (총 매입금, 역사적) -- 위 둘 다 0 일 때 마지막
+#      fallback.
+#
+# 또한 첫 매칭 키가 0 이면 다음 키 시도 (위 회귀 방지). 모든 키 부재
+# 또는 모두 0 이면 캐시 0 + WARNING -> 헌법 §1 매수 차단.
+_KT00018_TOTAL_EVAL_KEYS = ("prsm_dpst_aset_amt", "tot_evlt_amt", "tot_pur_amt")
 # security M1: KRX (6 digits) + NXT (5-8 alphanumeric) whitelist. Mirrors
 # ``src/core/v71/exchange/reconciler.py:140``.
 _VALID_STOCK_CODE = re.compile(r"^[A-Z0-9]{5,8}$")
@@ -765,15 +774,37 @@ def _build_total_capital_cache(kiwoom_client: Any) -> Any:
             state["value"] = 0
             state["fetched_at"] = time.monotonic()
             return
+        # 키 우선순위 + 0 fallback: 첫 매칭 키 값이 > 0 이면 즉시 채택,
+        # 0 이면 다음 키 시도. 모든 키가 부재 또는 모두 0 이면 캐시 0.
+        matched_key: str | None = None
+        matched_value = 0
+        present_keys: list[str] = []
         for key in _KT00018_TOTAL_EVAL_KEYS:
             if key in body:
-                state["value"] = _coerce_int(body[key])
-                state["fetched_at"] = time.monotonic()
-                return
+                present_keys.append(key)
+                v = _coerce_int(body[key])
+                if v > 0:
+                    matched_key = key
+                    matched_value = v
+                    break
+        if matched_key is not None:
+            state["value"] = matched_value
+            state["fetched_at"] = time.monotonic()
+            logger.info(
+                "trading_bridge: capital matched key=%s value=%d "
+                "(present_keys=%s)",
+                matched_key,
+                matched_value,
+                present_keys,
+            )
+            return
+        # 부재 또는 모두 0
         logger.warning(
-            "trading_bridge: get_total_capital response missing all of %s "
-            "-- caching 0 (PATH_A buys will abandon via cap check)",
-            _KT00018_TOTAL_EVAL_KEYS,
+            "trading_bridge: get_total_capital all keys missing or zero "
+            "(checked=%s, present=%s) -- caching 0 (PATH_A buys will "
+            "abandon via cap check)",
+            list(_KT00018_TOTAL_EVAL_KEYS),
+            present_keys,
         )
         state["value"] = 0
         state["fetched_at"] = time.monotonic()
@@ -1116,6 +1147,22 @@ async def _build_buy_executor(handle: _TradingEngineHandle) -> dict[str, Any]:
     # buy_executor build wins (only one is built per attach).
     from src.web.v71.api.system.state import system_state as _system_state
     _system_state.get_total_capital = get_total_capital
+    try:
+        _initial_cap = get_total_capital()
+        # WARNING level 로 강제 (uvicorn logging 설정에서 stdlib INFO 가
+        # 일부 누락되는 케이스 관찰됨). 진단 후 INFO 로 다시 낮출 예정.
+        logger.warning(
+            "trading_bridge: capital getter registered to system_state "
+            "(initial_value=%s, type=%s)",
+            _initial_cap,
+            type(_initial_cap).__name__,
+        )
+    except Exception as exc:  # noqa: BLE001 - diagnostic only
+        logger.error(
+            "trading_bridge: capital getter registered but initial call "
+            "failed: %s",
+            type(exc).__name__,
+        )
     get_invested_pct = _build_invested_pct_factory(
         handle.position_manager, get_total_capital,
     )

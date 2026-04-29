@@ -556,9 +556,22 @@ class V71KiwoomWebSocket:
             elif trnm in (_TRNM_REG, _TRNM_REMOVE):
                 logger.debug("v71_kiwoom_ws_subscribe_ack", trnm=trnm)
             elif trnm == _TRNM_LOGIN:
-                # LOGIN ack -- 응답 형식은 키움 spec 미명시이지만 일반적
-                # ack pattern. 단순 debug 로깅 (운영 실패 시 SYSTEM
-                # return_code 로 별도 노출됨).
+                # LOGIN ack (사용자 키움 답변 2026-04-30):
+                #   {"trnm":"LOGIN", "return_code":"0|1", "return_msg":"..."}
+                # ``return_code != "0"`` -> 토큰 / 인증 거부. auth error
+                # raise -> run loop 의 reconnect 로직이 token_manager 에서
+                # 새 토큰을 받아 재시도.
+                login_rc = str(payload.get("return_code") or "0")
+                login_msg = str(payload.get("return_msg") or "")[:200]
+                if login_rc != "0":
+                    logger.warning(
+                        "v71_kiwoom_ws_login_failed",
+                        return_code=login_rc,
+                        return_msg=login_msg,
+                    )
+                    raise V71WebSocketAuthError(
+                        f"Kiwoom WS LOGIN rejected: {login_rc} {login_msg}"
+                    )
                 logger.debug("v71_kiwoom_ws_login_ack")
             elif trnm in _KEEPALIVE_TRNMS:
                 # PING echo (사용자 키움 답변 2026-04-29: 5회 누락 시 close).
@@ -586,12 +599,27 @@ class V71KiwoomWebSocket:
                 return_msg = str(
                     payload.get("return_msg") or payload.get("message") or ""
                 )[:200]
-                if return_code and return_code != "0":
+                # 키움 표준 코드 (사용자 키움 답변 2026-04-30):
+                #   R00000 정상 / R10001 점검 / R10002 인증 실패
+                #   R10003 접속 제한 / R10004 LOGIN 누락 (자동 send 로 fix)
+                #   R10005 토큰 만료 / R10006 서버 내부 오류
+                # ``return_code`` 가 "0" / "R00000" / 빈 값 = 정상.
+                # 그 외 = warning 으로 운영자 노출.
+                normal = return_code in ("", "0", "R00000")
+                if not normal:
                     logger.warning(
                         "v71_kiwoom_ws_system_alert",
                         return_code=return_code,
                         return_msg=return_msg,
                     )
+                    # R10002 / R10005 = 인증 / 토큰 만료 -> auth error raise.
+                    # run loop 의 reconnect 로직이 token_manager 에서 새
+                    # 토큰을 받아 재시도. 5회 실패 시 abort.
+                    if return_code in ("R10002", "R10005"):
+                        raise V71WebSocketAuthError(
+                            f"Kiwoom WS auth invalidated: {return_code} "
+                            f"{return_msg}"
+                        )
                 else:
                     logger.debug(
                         "v71_kiwoom_ws_system_status",
