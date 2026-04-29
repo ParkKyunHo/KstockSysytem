@@ -34,7 +34,10 @@ OrderTradeTypeLit = Literal[
 class OrderOut(BaseModel):
     """09_API_SPEC §13.1 GET /api/v71/orders item shape."""
 
-    model_config = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(
+        from_attributes=True,
+        json_encoders={Decimal: float},
+    )
 
     id: UUID
     kiwoom_order_no: str

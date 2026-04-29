@@ -12,7 +12,10 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 class UserSettingsOut(BaseModel):
     """09_API_SPEC §10.1."""
 
-    model_config = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(
+        from_attributes=True,
+        json_encoders={Decimal: float},
+    )
 
     total_capital: Decimal | None
     notify_critical: bool

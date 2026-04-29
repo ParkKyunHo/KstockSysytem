@@ -35,6 +35,8 @@ PositionStatusLit = Literal["OPEN", "PARTIAL_CLOSED", "CLOSED"]
 class TrackedStockSummaryOut(BaseModel):
     """Per-stock aggregates (09_API_SPEC §3.1 -- PRD Patch #3)."""
 
+    model_config = ConfigDict(json_encoders={Decimal: float})
+
     active_box_count: int
     path_a_box_count: int
     path_b_box_count: int
@@ -47,7 +49,10 @@ class TrackedStockSummaryOut(BaseModel):
 class TrackedStockOut(BaseModel):
     """List item shape (09_API_SPEC §3.1)."""
 
-    model_config = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(
+        from_attributes=True,
+        json_encoders={Decimal: float},
+    )
 
     id: UUID
     stock_code: str
@@ -66,7 +71,10 @@ class TrackedStockOut(BaseModel):
 class TrackedStockBoxOut(BaseModel):
     """Box shape inside ``GET /tracked_stocks/{id}`` (09_API_SPEC §3.3)."""
 
-    model_config = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(
+        from_attributes=True,
+        json_encoders={Decimal: float},
+    )
 
     id: UUID
     path_type: PathTypeLit
@@ -83,7 +91,10 @@ class TrackedStockBoxOut(BaseModel):
 class TrackedStockPositionOut(BaseModel):
     """Position shape inside ``GET /tracked_stocks/{id}`` (09_API_SPEC §3.3)."""
 
-    model_config = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(
+        from_attributes=True,
+        json_encoders={Decimal: float},
+    )
 
     id: UUID
     source: PositionSourceLit
@@ -122,7 +133,10 @@ class StockSearchRequest(BaseModel):
 
 
 class StockSearchItem(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(
+        from_attributes=True,
+        json_encoders={Decimal: float},
+    )
 
     stock_code: str
     stock_name: str
@@ -140,7 +154,10 @@ class StockSearchItem(BaseModel):
 class BoxOut(BaseModel):
     """List + create response (09_API_SPEC §4.1, §4.2)."""
 
-    model_config = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(
+        from_attributes=True,
+        json_encoders={Decimal: float},
+    )
 
     id: UUID
     tracked_stock_id: UUID

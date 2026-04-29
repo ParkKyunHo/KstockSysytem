@@ -16,7 +16,10 @@ PositionStatusLit = Literal["OPEN", "PARTIAL_CLOSED", "CLOSED"]
 class PositionOut(BaseModel):
     """09_API_SPEC §5.1."""
 
-    model_config = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(
+        from_attributes=True,
+        json_encoders={Decimal: float},
+    )
 
     id: UUID
     source: PositionSourceLit
@@ -59,7 +62,10 @@ class PositionOut(BaseModel):
 
 
 class TradeEventInline(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(
+        from_attributes=True,
+        json_encoders={Decimal: float},
+    )
 
     id: UUID
     event_type: str
@@ -69,6 +75,8 @@ class TradeEventInline(BaseModel):
 
 
 class EffectiveStopOut(BaseModel):
+    model_config = ConfigDict(json_encoders={Decimal: float})
+
     fixed_stop: Decimal
     ts_stop: Decimal | None
     effective: Decimal
@@ -81,11 +89,15 @@ class PositionDetailOut(PositionOut):
 
 
 class PositionSourceBreakdown(BaseModel):
+    model_config = ConfigDict(json_encoders={Decimal: float})
+
     count: int
     capital: Decimal
 
 
 class PositionStockAtLimit(BaseModel):
+    model_config = ConfigDict(json_encoders={Decimal: float})
+
     stock_code: str
     actual_pct: Decimal
     limit_pct: Decimal

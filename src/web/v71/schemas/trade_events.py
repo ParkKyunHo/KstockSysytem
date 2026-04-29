@@ -13,7 +13,10 @@ from pydantic import BaseModel, ConfigDict
 class TradeEventOut(BaseModel):
     """09_API_SPEC §6.1."""
 
-    model_config = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(
+        from_attributes=True,
+        json_encoders={Decimal: float},
+    )
 
     id: UUID
     position_id: UUID | None
@@ -44,6 +47,8 @@ class TradeEventOut(BaseModel):
 
 
 class TradeEventTodayBuy(BaseModel):
+    model_config = ConfigDict(json_encoders={Decimal: float})
+
     stock_code: str
     quantity: int | None
     price: Decimal | None
@@ -51,6 +56,8 @@ class TradeEventTodayBuy(BaseModel):
 
 
 class TradeEventTodaySell(BaseModel):
+    model_config = ConfigDict(json_encoders={Decimal: float})
+
     stock_code: str
     quantity: int | None
     price: Decimal | None
@@ -62,6 +69,8 @@ class TradeEventTodaySell(BaseModel):
 
 class TradeEventTodayOut(BaseModel):
     """09_API_SPEC §6.2."""
+
+    model_config = ConfigDict(json_encoders={Decimal: float})
 
     date: date
     total_pnl: Decimal
