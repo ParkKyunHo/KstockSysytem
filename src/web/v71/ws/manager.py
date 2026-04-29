@@ -32,8 +32,19 @@ class ConnectionManager:
         self._conns: dict[UUID, WSConnection] = {}
         self._lock = asyncio.Lock()
 
-    async def register(self, websocket: WebSocket, *, user_id: UUID) -> WSConnection:
-        await websocket.accept()
+    async def register(
+        self,
+        websocket: WebSocket,
+        *,
+        user_id: UUID,
+        subprotocol: str | None = None,
+    ) -> WSConnection:
+        # subprotocol 이 제공되면 RFC 6455 의무에 따라 echo back. 아니면
+        # 일반 accept (브라우저가 protocol 보내지 않은 경우).
+        if subprotocol is not None:
+            await websocket.accept(subprotocol=subprotocol)
+        else:
+            await websocket.accept()
         conn = WSConnection(
             websocket=websocket,
             user_id=user_id,

@@ -10,6 +10,8 @@ Production runs ``uvicorn src.web.v71.main:app`` after binding the
 
 from __future__ import annotations
 
+import logging
+import re
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -33,6 +35,47 @@ from .ws.router import router as ws_router
 _FRONTEND_DIST = (
     Path(__file__).resolve().parent.parent.parent.parent / "frontend" / "dist"
 )
+
+
+# ---------------------------------------------------------------------
+# uvicorn access log: mask query-string secrets (?token=..., ?password=...)
+# so JWT 토큰이 journalctl 평문으로 남지 않게 한다. WS 인증은 F2 로
+# subprotocol 헤더로 이전했지만 backward-compat 클라이언트가 query 로
+# 보낼 가능성에 대비. 서버 사이드 안전망.
+# ---------------------------------------------------------------------
+
+_SECRET_QUERY_RE = re.compile(
+    r"(?P<key>token|password|access_token|refresh_token)=[^\s&\"]+",
+    re.IGNORECASE,
+)
+
+
+class _MaskAccessLogSecrets(logging.Filter):
+    """Replace ``?token=<value>`` etc. with ``?token=***`` in uvicorn
+    access log records (which use args=(client, method, target, ver, ...)).
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if record.args and isinstance(record.args, tuple):
+            new_args = []
+            for arg in record.args:
+                if isinstance(arg, str) and _SECRET_QUERY_RE.search(arg):
+                    arg = _SECRET_QUERY_RE.sub(r"\g<key>=***", arg)
+                new_args.append(arg)
+            record.args = tuple(new_args)
+        return True
+
+
+def _install_access_log_secret_mask() -> None:
+    """Idempotent install on the uvicorn.access logger."""
+    access_log = logging.getLogger("uvicorn.access")
+    # 이미 같은 클래스의 filter 가 등록되어 있으면 skip.
+    if any(isinstance(f, _MaskAccessLogSecrets) for f in access_log.filters):
+        return
+    access_log.addFilter(_MaskAccessLogSecrets())
+
+
+_install_access_log_secret_mask()
 
 
 def create_app(settings: WebSettings | None = None) -> FastAPI:
