@@ -300,10 +300,15 @@ class V71MonthlyReview:
 
 
 def _first_of_next_month(dt: datetime) -> datetime:
-    """1st of the month strictly after ``dt``'s month, at 00:00."""
+    """1st of the month strictly after ``dt``'s month, at 00:00.
+
+    Preserves ``dt.tzinfo`` (None for naive, KST/UTC for aware) so callers
+    that pass tz-aware ``now`` get tz-aware results -- avoids
+    ``can't compare offset-naive and offset-aware datetimes``.
+    """
     if dt.month == 12:
-        return datetime(dt.year + 1, 1, 1)
-    return datetime(dt.year, dt.month + 1, 1)
+        return datetime(dt.year + 1, 1, 1, tzinfo=dt.tzinfo)
+    return datetime(dt.year, dt.month + 1, 1, tzinfo=dt.tzinfo)
 
 
 class V71MonthlyReviewScheduler:
@@ -384,10 +389,16 @@ class V71MonthlyReviewScheduler:
     # ------------------------------------------------------------------
 
     def next_target(self, *, now: datetime | None = None) -> datetime:
-        """Datetime of the next monthly firing, strictly in the future."""
+        """Datetime of the next monthly firing, strictly in the future.
+
+        ``self._clock.now()`` returns a tz-aware datetime (V71RealClock =
+        KST). ``candidate`` must inherit ``now.tzinfo`` to allow comparison
+        without ``can't compare offset-naive and offset-aware`` TypeError.
+        """
         now = now if now is not None else self._clock.now()
         candidate = datetime(
-            now.year, now.month, 1, self._hour, self._minute, 0
+            now.year, now.month, 1, self._hour, self._minute, 0,
+            tzinfo=now.tzinfo,
         )
         if candidate <= now:
             candidate = _first_of_next_month(now).replace(

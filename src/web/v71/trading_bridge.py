@@ -755,7 +755,7 @@ def _build_total_capital_cache(kiwoom_client: Any) -> Any:
                 type(exc).__name__,
             )
             return
-        body = getattr(response, "body", response)
+        body = getattr(response, "data", None)
         if not isinstance(body, dict):
             logger.warning(
                 "trading_bridge: get_total_capital response shape "
