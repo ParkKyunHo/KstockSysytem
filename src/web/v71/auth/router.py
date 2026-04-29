@@ -5,13 +5,19 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-from fastapi import APIRouter, Request, Response, status
+from fastapi import APIRouter, Depends, Request, Response, status
 
 from ..audit import record_audit
 from ..db_models import AuditAction
 from ..dependencies import RequestIdDep, SessionDep, SettingsDep
 from ..exceptions import V71AuthenticationError
-from ..rate_limit import LOGIN_LIMIT, limiter
+from ..rate_limit import (
+    LOGIN_LIMIT,  # noqa: F401 -- kept for slowapi reactivation path
+    limiter,  # noqa: F401
+    login_rate_limit,
+    refresh_rate_limit,
+    totp_rate_limit,
+)
 from ..schemas.common import build_meta
 from . import service, totp
 from .dependencies import AccessTokenDep, CurrentUserDep
@@ -56,11 +62,14 @@ def _envelope(payload: Any, request_id: str) -> dict[str, Any]:
 # ---------------------------------------------------------------------
 
 
-@router.post("/login", status_code=status.HTTP_200_OK)
-# TODO(rate-limit-v2): slowapi 0.1.9 의 @limiter.limit 가 fastapi 0.115
-# signature introspection 을 깨뜨려 query/body validation 실패. slowapi
-# 1.x 호환 release (또는 자체 미들웨어 rate limit) 도입 시 재활성화.
-# @limiter.limit(LOGIN_LIMIT)
+@router.post(
+    "/login",
+    status_code=status.HTTP_200_OK,
+    dependencies=[Depends(login_rate_limit)],
+)
+# Note: slowapi 의 @limiter.limit 는 fastapi 0.115 signature introspection
+# 을 깨뜨려 query/body validation 실패. D (2026-04-29) 자체 sliding-window
+# limiter (rate_limit.py) 로 교체. PRD §1.2 = 5/분/IP.
 async def login(
     body: LoginRequest,
     request: Request,
@@ -107,9 +116,11 @@ async def login(
 # ---------------------------------------------------------------------
 
 
-@router.post("/totp/verify", status_code=status.HTTP_200_OK)
-# TODO(rate-limit-v2): see /login note above.
-# @limiter.limit(LOGIN_LIMIT)
+@router.post(
+    "/totp/verify",
+    status_code=status.HTTP_200_OK,
+    dependencies=[Depends(totp_rate_limit)],
+)
 async def totp_verify(
     body: TotpVerifyRequest,
     request: Request,
@@ -138,7 +149,11 @@ async def totp_verify(
 # ---------------------------------------------------------------------
 
 
-@router.post("/refresh", status_code=status.HTTP_200_OK)
+@router.post(
+    "/refresh",
+    status_code=status.HTTP_200_OK,
+    dependencies=[Depends(refresh_rate_limit)],
+)
 async def refresh(
     body: RefreshRequest,
     session: SessionDep,
