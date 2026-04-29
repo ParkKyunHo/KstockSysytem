@@ -116,7 +116,7 @@ async def list_notifications(
     stock_code: str | None = Query(default=None, max_length=10),
     from_date: datetime | None = Query(default=None),
     to_date: datetime | None = Query(default=None),
-    limit: int = Query(default=20, ge=1, le=100),
+    limit: int = Query(default=20, ge=1, le=200),
     cursor: str | None = Query(default=None),
 ) -> dict[str, Any]:
     stmt = select(Notification)

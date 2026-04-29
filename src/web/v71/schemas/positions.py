@@ -7,7 +7,7 @@ from decimal import Decimal
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, field_serializer
 
 PositionSourceLit = Literal["SYSTEM_A", "SYSTEM_B", "MANUAL"]
 PositionStatusLit = Literal["OPEN", "PARTIAL_CLOSED", "CLOSED"]
@@ -92,7 +92,13 @@ class PositionStockAtLimit(BaseModel):
 
 
 class PositionSummaryOut(BaseModel):
-    """09_API_SPEC §5.3."""
+    """09_API_SPEC §5.3.
+
+    Decimal 4 field는 ``field_serializer`` 로 JSON 직렬화 시 ``float`` 변환.
+    Pydantic v2 default 는 ``Decimal -> str`` 인데, 프론트엔드가 ``toFixed()``
+    호출 시 ``string.toFixed`` TypeError -> 컴포넌트 unmount -> 블랙 화면이
+    되므로 number 직렬화로 강제. 정확성은 서버 내부 Decimal 연산에서 유지.
+    """
 
     total_positions: int
     total_capital_invested: Decimal
@@ -107,6 +113,15 @@ class PositionSummaryOut(BaseModel):
     bottom_pnl: list[PositionOut]
 
     stocks_at_limit: list[PositionStockAtLimit]
+
+    @field_serializer(
+        "total_capital_invested",
+        "total_capital_pct",
+        "total_pnl_amount",
+        "total_pnl_pct",
+    )
+    def _decimal_to_float(self, v: Decimal) -> float:
+        return float(v)
 
 
 class ReconcileTaskOut(BaseModel):

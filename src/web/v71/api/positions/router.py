@@ -148,7 +148,7 @@ async def list_positions(
     source: str | None = Query(default=None),
     status_q: str | None = Query(default=None, alias="status"),
     stock_code: str | None = Query(default=None, max_length=10),
-    limit: int = Query(default=20, ge=1, le=100),
+    limit: int = Query(default=20, ge=1, le=200),
     cursor: str | None = Query(default=None),
     sort: str = Query(default="-created_at"),
 ) -> dict[str, Any]:

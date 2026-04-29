@@ -184,7 +184,7 @@ async def list_restarts(
     session: SessionDep,
     request_id: RequestIdDep,
     _user: CurrentUserDep,
-    limit: int = Query(default=20, ge=1, le=100),
+    limit: int = Query(default=20, ge=1, le=200),
     cursor: str | None = Query(default=None),
     from_date: datetime | None = Query(default=None),
 ) -> dict[str, Any]:

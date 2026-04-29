@@ -4942,3 +4942,59 @@ boot smoke RESULT: 6 pass / 0 fail
 | C — 자동 박스 진입 (자금 위험) | **사용자 명시 결정 필수** |
 
 ---
+
+
+## 2026-04-29 V7.1 운영 진입 완료 -- 16 flag 풀-온 + 2 버그 fix
+
+### 결정
+- 사용자 지시: "푸시하고, 기능에 문제없으면 이제 실전 운영단계에 들어갑시다.(점진적으로 모든인프라 기능 on)"
+- → 4 stage 점진 활성 + 발견 버그 fix + 배포 검증
+
+### Stage 1 — 인프라 baseline (3 flag)
+- `kiwoom_exchange` / `notification_v71` / `kiwoom_websocket` 활성
+- ✅ token issued (production, 24h, masked LwZA****QHsg)
+- ✅ kiwoom exchange wiring in PRODUCTION mode (app_key_prefix=UtEi***)
+- ⚠ unknown_trnm SYSTEM warning (cosmetic noise, 후속)
+
+### Stage 2 — 매매 wire (12 flag, dependency 추가 5)
+- 활성: `vi_monitor` / `buy_executor_v71` / `exit_executor_v71` / `position_v71` / `box_system` / `reconciliation_v71` / `restart_recovery`
+- exit_v71 dependency 누락 → RuntimeError → 추가 활성: `exit_v71` + `pullback_strategy` + `breakout_strategy` + `path_b_daily` + `manual_trade_handler`
+- ✅ buy_executor / exit_executor build 성공
+- ❌ get_total_capital response shape unexpected — kt00018 응답 unwrap 누락 (★★★)
+
+### Stage 3 + 4 — 자동 박스 진입 + 스케줄 알림 (6 flag)
+- 활성: `candle_builder` / `box_entry_detector` / `exit_orchestrator` / `daily_summary` / `monthly_review` / `telegram_commands_v71`
+- ✅ 텔레그램 폴링 시작
+- ✅ WS subscribe ack (REG)
+- ✅ kt00018 호출 success (3건, 28~41ms)
+- ❌ monthly_review TypeError — tz-naive vs aware 비교 (★)
+
+### 발견 버그 2 fix (commit 09b8483, 2 files +17 -6)
+1. `trading_bridge._build_total_capital_cache`: `getattr(response, "body", response)` → `getattr(response, "data", None)`. V71KiwoomResponse 정의 일치.
+2. `v71_monthly_review.{_first_of_next_month, next_target}`: candidate datetime에 `tzinfo=now.tzinfo` 보존.
+
+### 검증 (배포 후 journalctl)
+- "shape unexpected": 0건
+- "TypeError.*offset": 0건
+- kt00018 호출 모두 success
+- Application startup complete + 16 flag 모두 disabled 메시지 0건
+
+### 사전 등록 baseline
+- `tracked_stocks: 0` / `support_boxes: 0` / `open_positions: 0` / `pending_orders: 0`
+- → Stage 3 자동 박스 진입 인프라 풀-온이지만 등록 데이터 0 = 자동 발화 X (안전)
+- 박스 등록 시점부터 자동 매수 발화 시작
+
+### 잔여 후속 작업
+1. **사용자 박스 등록** — 자금 위험 진행 시작 (사용자 결정 영역)
+2. circular import (Task #9) — pytest collect 차단, 운영 영향 X
+3. unknown_trnm SYSTEM warning (cosmetic)
+4. shared/.env BOM noise (hotfix.ps1 [4/6] cosmetic)
+5. boot_smoke false negative 2건 (journalctl 200줄 한계)
+6. 옵션 D — rate limit 재구현 (brute-force 방어)
+7. 옵션 E — HTTPS (도메인 결정)
+8. 옵션 F — market_calendar DB seed (KRX 2026 휴장일)
+
+### Push 완료
+- 3 commits: `4055765` (옵션 A frontend) + `a85a58a` (positions NameError) + `09b8483` (운영 활성 후 2 버그 fix)
+
+---

@@ -155,7 +155,7 @@ async def list_reports(
     from_date: datetime | None = Query(default=None),
     to_date: datetime | None = Query(default=None),
     include_hidden: bool = Query(default=False),  # ★ PRD Patch #5
-    limit: int = Query(default=20, ge=1, le=100),
+    limit: int = Query(default=20, ge=1, le=200),
     cursor: str | None = Query(default=None),
 ) -> dict[str, Any]:
     stmt = select(DailyReport)
