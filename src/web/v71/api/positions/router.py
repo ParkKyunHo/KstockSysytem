@@ -14,7 +14,13 @@ from uuid import UUID
 
 from fastapi import APIRouter, Query, status
 from sqlalchemy import or_, select
-from sqlalchemy.ext.asyncio import AsyncSession
+
+from src.database.models_v71 import (
+    PositionSource,
+    PositionStatus,
+    TradeEvent,
+    V71Position,
+)
 
 from ...auth.dependencies import CurrentUserDep
 from ...dependencies import RequestIdDep, SessionDep
@@ -30,13 +36,7 @@ from ...schemas.positions import (
     ReconcileTaskOut,
     TradeEventInline,
 )
-from ..system.tasks import task_registry, TaskType
-from src.database.models_v71 import (
-    V71Position,
-    PositionSource,
-    PositionStatus,
-    TradeEvent,
-)
+from ..system.tasks import TaskType, task_registry
 
 router = APIRouter(prefix="/positions", tags=["positions"])
 
@@ -49,7 +49,7 @@ _LIMIT_PCT_PER_STOCK = Decimal(30)
 # ---------------------------------------------------------------------
 
 
-def _to_out(p: Position) -> PositionOut:
+def _to_out(p: V71Position) -> PositionOut:
     return PositionOut(
         id=p.id,
         source=p.source.value,
@@ -214,7 +214,7 @@ async def positions_summary(
     rows = list(
         (
             await session.execute(
-                select(Position).where(V71Position.status != PositionStatus.CLOSED)
+                select(V71Position).where(V71Position.status != PositionStatus.CLOSED)
             )
         ).scalars().all()
     )
