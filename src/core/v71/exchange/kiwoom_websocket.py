@@ -92,24 +92,24 @@ _TRNM_REMOVE = "REMOVE"
 _TRNM_REAL = "REAL"
 _TRNM_PING = "PING"
 _TRNM_SYSTEM = "SYSTEM"
+_TRNM_LOGIN = "LOGIN"
 _REFRESH_KEEP = "1"
 
-# 키움 application-level keep-alive trnm. 받은 메시지를 그대로 echo back
-# 하지 않으면 키움 서버가 5회 누락 후 connection close (사용자 키움 공식
-# 답변 2026-04-29). websockets 라이브러리의 RFC 6455 ping/pong 은 transport
-# 레벨이라 별개.
+# 키움 application-level keep-alive (사용자 키움 공식 답변 2026-04-29):
 #
-# 운영 관찰 결과 (2026-04-29):
-#   * trnm=SYSTEM 메시지가 ~10초 주기로 도착 + 메시지 직후 connection
-#     ConnectionClosedOK 정상 close.
-#   * SYSTEM 에 echo 시도해도 send 시점에 이미 closed -> SYSTEM 은 PING
-#     이 아니라 keep-alive 실패 직전의 close 시그널 (또는 LOGIN 응답?)
-#     일 가능성. 키움 공식 spec 미확인.
-#   * 따라서 SYSTEM 은 echo 제거 + payload keys 만 디버그 로깅.
-#   * PING trnm 은 안전하게 echo 유지 (키움 답변 명시).
+#   PING:   {"trnm": "PING"}
+#           서버 -> 클라이언트. 받은 메시지를 그대로 서버에 echo (PONG).
+#           응답 누락 시 서버가 connection close (5회 누락 기준).
+#           websockets 라이브러리의 RFC 6455 ping/pong 은 transport
+#           레벨이라 별개로 application-level echo 가 필요.
 #
-# 사용자가 키움에 정확한 PING/PONG 메시지 형식 + SYSTEM 의미를 문의 후
-# 명확해지면 dispatcher 정정 (별도 단위).
+#   SYSTEM: {"trnm": "SYSTEM", "return_code": "0", "return_msg": "..."}
+#           서버 -> 클라이언트. 서버 상태 / 점검 / 오류 / 버전 정보 등
+#           정보 전달용. ★ 응답 없음 (echo 시 protocol 위반으로 즉시
+#           close 관찰됨). return_code "0" = 정상, 다른 값 = 점검 / 오류.
+#
+# 따라서 _KEEPALIVE_TRNMS 에는 PING 만 포함. SYSTEM 은 별도 분기에서
+# return_code 분석 + 운영 가시성에 사용한다.
 _KEEPALIVE_TRNMS: frozenset[str] = frozenset({_TRNM_PING})
 
 
@@ -473,6 +473,22 @@ class V71KiwoomWebSocket:
         self._ws = ws
         await self._set_state(V71WebSocketState.CONNECTED)
 
+        # 키움 application-level LOGIN (사용자 키움 답변 + 2026-04-29
+        # production R10004 관찰 결과로 확정): connect 의 ``Authorization``
+        # 헤더 만으로는 application 인증이 충족되지 않는다. connect 직후
+        # ``{"trnm": "LOGIN", "token": <access_token>}`` 을 첫 메시지로
+        # 보내지 않으면 키움이 매 ~10초마다 R10004 SYSTEM 메시지 + close
+        # 를 반복한다. ``token`` 은 connect 시 발급 받은 그 값을 그대로
+        # 재사용 (재요청 X) -- 같은 token 이 양쪽에서 검증된다.
+        try:
+            await ws.send(json.dumps({"trnm": _TRNM_LOGIN, "token": token}))
+            logger.debug("v71_kiwoom_ws_login_sent")
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "v71_kiwoom_ws_login_send_failed",
+                error=type(exc).__name__,
+            )
+
         normal_close = False
         try:
             await self._restore_subscriptions()
@@ -539,6 +555,11 @@ class V71KiwoomWebSocket:
                         )
             elif trnm in (_TRNM_REG, _TRNM_REMOVE):
                 logger.debug("v71_kiwoom_ws_subscribe_ack", trnm=trnm)
+            elif trnm == _TRNM_LOGIN:
+                # LOGIN ack -- 응답 형식은 키움 spec 미명시이지만 일반적
+                # ack pattern. 단순 debug 로깅 (운영 실패 시 SYSTEM
+                # return_code 로 별도 노출됨).
+                logger.debug("v71_kiwoom_ws_login_ack")
             elif trnm in _KEEPALIVE_TRNMS:
                 # PING echo (사용자 키움 답변 2026-04-29: 5회 누락 시 close).
                 try:
@@ -551,12 +572,32 @@ class V71KiwoomWebSocket:
                         error=type(exc).__name__,
                     )
             elif trnm == _TRNM_SYSTEM:
-                # 운영 관찰: SYSTEM 메시지 직후 close -> echo 의미 X.
-                # payload keys 만 디버그 로깅 (키움 공식 spec 확인 후 정정).
-                logger.debug(
-                    "v71_kiwoom_ws_system_message",
-                    keys=sorted(payload.keys()),
+                # 키움 spec (2026-04-29): SYSTEM 은 정보 전달용 (응답 없음).
+                # return_code "0" = 정상 -> debug. 다른 값 = 점검 / 오류
+                # / 접속 제한 등 -> warning 으로 운영자에게 자동 노출.
+                #
+                # 키움 공식 spec 의 키 이름은 ``return_code`` / ``return_msg``
+                # 이지만 우리 production 환경에서는 ``code`` / ``message`` 키로
+                # 도착하는 케이스 관찰됨 (2026-04-29 production observation).
+                # 둘 다 fallback 처리 + 안전 truncate (200자).
+                return_code = str(
+                    payload.get("return_code") or payload.get("code") or ""
                 )
+                return_msg = str(
+                    payload.get("return_msg") or payload.get("message") or ""
+                )[:200]
+                if return_code and return_code != "0":
+                    logger.warning(
+                        "v71_kiwoom_ws_system_alert",
+                        return_code=return_code,
+                        return_msg=return_msg,
+                    )
+                else:
+                    logger.debug(
+                        "v71_kiwoom_ws_system_status",
+                        return_code=return_code or "(empty)",
+                        return_msg=return_msg,
+                    )
             else:
                 logger.warning("v71_kiwoom_ws_unknown_trnm", trnm=trnm)
 
