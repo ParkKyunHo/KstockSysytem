@@ -1109,6 +1109,13 @@ async def _build_buy_executor(handle: _TradingEngineHandle) -> dict[str, Any]:
     # Prime the capital cache once so the first PATH_A buy doesn't fall
     # through to fallback 0.
     await refresh_total()
+
+    # Surface the capital getter to the web layer (system/status) so the
+    # box wizard can size positions against the real account balance
+    # instead of a hardcoded constant. Idempotent overwrite -- last
+    # buy_executor build wins (only one is built per attach).
+    from src.web.v71.api.system.state import system_state as _system_state
+    _system_state.get_total_capital = get_total_capital
     get_invested_pct = _build_invested_pct_factory(
         handle.position_manager, get_total_capital,
     )
@@ -1312,9 +1319,42 @@ async def _build_kiwoom_websocket(
     is_paper = (
         os.environ.get("KIWOOM_ENV", "PRODUCTION").strip().upper() == "SANDBOX"
     )
+
+    async def _on_ws_reconnect_recovered() -> None:
+        """WS 끊김 후 재연결 직후 트리거.
+
+        주말 / 새벽 키움 점검으로 WS 가 끊기면 그 사이의 체결 / 잔고 변동 /
+        VI 발동은 키움이 buffered 로 보내주지 않는다 (push-only). 5분 주기
+        reconciler loop 가 fallback 이지만 짧은 끊김 사이의 drift 는 5분간
+        반영되지 않는다. 이 콜백이 재연결 직후 ``reconcile_all()`` 을 즉시
+        실행해서 drift 를 즉시 closure -> 자동 매매 안전성 보장.
+
+        ``handle.reconciler`` 가 None (reconciliation_v71 flag 비활성)
+        이면 안내 로그만 남기고 noop -- 운영자가 의도적으로 reconciler 를
+        끈 케이스에 강제 활성화하지 않는다.
+        """
+        if handle.reconciler is None:
+            logger.info(
+                "trading_bridge: WS reconnect recovered but reconciler is "
+                "None (v71.reconciliation_v71 disabled) -- 5-min loop "
+                "fallback only",
+            )
+            return
+        try:
+            await handle.reconciler.reconcile_all()
+            logger.info(
+                "trading_bridge: WS reconnect reconcile_all complete",
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.error(
+                "trading_bridge: WS reconnect reconcile_all failed: %s",
+                type(exc).__name__,
+            )
+
     ws = V71KiwoomWebSocket(
         token_manager=handle.token_manager,
         is_paper=is_paper,
+        on_reconnect_recovered=_on_ws_reconnect_recovered,
     )
 
     if handle.vi_monitor is not None:

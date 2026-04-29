@@ -38,6 +38,17 @@ class MarketStatus(BaseModel):
     next_close_at: datetime | None = None
 
 
+class AccountSnapshot(BaseModel):
+    """Real Kiwoom account total (kt00018 총평가금액, 5분 TTL cache).
+
+    박스 wizard 가 비중 (%) 입력 시 실제 잔고 대비 매수 규모를 표시하기
+    위해 노출. ``None`` 인 경우는 buy_executor 비활성 또는 키움 fetch 실패
+    -- frontend 는 fallback 메시지 처리.
+    """
+
+    total_capital: float | None = None
+
+
 SystemStatusLit = Literal["RUNNING", "SAFE_MODE", "RECOVERING"]
 
 
@@ -56,6 +67,10 @@ class SystemStatusOut(BaseModel):
 
     market: MarketStatus
     current_time: datetime
+
+    # 비중 결정 UX (BoxWizard) 에 사용하는 실제 계좌 잔고. 노출 안 됐다면
+    # 키움 미연결 또는 fetch 실패. 없을 시 None.
+    account: AccountSnapshot = AccountSnapshot()
 
 
 class SystemHealthOut(BaseModel):

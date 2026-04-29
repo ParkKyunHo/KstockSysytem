@@ -90,7 +90,27 @@ CLOSE_TIMEOUT_SECONDS = 10.0
 _TRNM_REG = "REG"
 _TRNM_REMOVE = "REMOVE"
 _TRNM_REAL = "REAL"
+_TRNM_PING = "PING"
+_TRNM_SYSTEM = "SYSTEM"
 _REFRESH_KEEP = "1"
+
+# 키움 application-level keep-alive trnm. 받은 메시지를 그대로 echo back
+# 하지 않으면 키움 서버가 5회 누락 후 connection close (사용자 키움 공식
+# 답변 2026-04-29). websockets 라이브러리의 RFC 6455 ping/pong 은 transport
+# 레벨이라 별개.
+#
+# 운영 관찰 결과 (2026-04-29):
+#   * trnm=SYSTEM 메시지가 ~10초 주기로 도착 + 메시지 직후 connection
+#     ConnectionClosedOK 정상 close.
+#   * SYSTEM 에 echo 시도해도 send 시점에 이미 closed -> SYSTEM 은 PING
+#     이 아니라 keep-alive 실패 직전의 close 시그널 (또는 LOGIN 응답?)
+#     일 가능성. 키움 공식 spec 미확인.
+#   * 따라서 SYSTEM 은 echo 제거 + payload keys 만 디버그 로깅.
+#   * PING trnm 은 안전하게 echo 유지 (키움 답변 명시).
+#
+# 사용자가 키움에 정확한 PING/PONG 메시지 형식 + SYSTEM 의미를 문의 후
+# 명확해지면 dispatcher 정정 (별도 단위).
+_KEEPALIVE_TRNMS: frozenset[str] = frozenset({_TRNM_PING})
 
 
 # ---------------------------------------------------------------------------
@@ -214,6 +234,7 @@ class V71KiwoomWebSocket:
         sleep: Callable[[float], Awaitable[None]] | None = None,
         clock: Callable[[], datetime] | None = None,
         on_state_change: V71StateChangeHandler | None = None,
+        on_reconnect_recovered: Callable[[], Awaitable[None]] | None = None,
         stop_on_normal_close: bool = False,
     ) -> None:
         resolved_base = base_url or (PAPER_BASE_URL if is_paper else LIVE_BASE_URL)
@@ -231,6 +252,11 @@ class V71KiwoomWebSocket:
         self._sleep = sleep or asyncio.sleep
         self._clock = clock or _utcnow
         self._on_state_change = on_state_change
+        # 재연결 후 첫 정상 메시지(REAL) 수신 시 호출되는 콜백. 외부에서
+        # reconciler 즉시 실행 + CRITICAL 알림 등 복구 경로를 트리거한다.
+        # service restart 직후의 첫 연결에서는 호출되지 않고 (실패 카운터가
+        # 0 이므로), WS 끊김 후 재연결 케이스에서만 호출된다.
+        self._on_reconnect_recovered = on_reconnect_recovered
         # When True, ``run()`` exits cleanly if the recv loop ends without
         # exception (i.e., server closed the socket gracefully). Kiwoom in
         # production never closes cleanly, so the operational default is
@@ -497,10 +523,40 @@ class V71KiwoomWebSocket:
                 # reset both failure counters so the next disconnect starts
                 # fresh in Phase 1 (and so a single recovered connection
                 # clears any prior auth blip).
+                was_recovering = self._consecutive_failures > 0
                 self._consecutive_failures = 0
                 self._consecutive_auth_failures = 0
+                if was_recovering and self._on_reconnect_recovered is not None:
+                    # 재연결 직후 첫 정상 메시지를 받은 시점. 외부
+                    # (orchestrator) 가 reconciler 즉시 실행 + CRITICAL
+                    # 알림으로 재연결 사이 누락된 체결/잔고/VI 를 복구한다.
+                    try:
+                        await self._on_reconnect_recovered()
+                    except Exception as exc:  # noqa: BLE001
+                        logger.error(
+                            "v71_kiwoom_ws_reconnect_recovered_handler_error",
+                            error=type(exc).__name__,
+                        )
             elif trnm in (_TRNM_REG, _TRNM_REMOVE):
                 logger.debug("v71_kiwoom_ws_subscribe_ack", trnm=trnm)
+            elif trnm in _KEEPALIVE_TRNMS:
+                # PING echo (사용자 키움 답변 2026-04-29: 5회 누락 시 close).
+                try:
+                    await self._send_payload(payload)
+                    logger.debug("v71_kiwoom_ws_keepalive_echo", trnm=trnm)
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(
+                        "v71_kiwoom_ws_keepalive_echo_failed",
+                        trnm=trnm,
+                        error=type(exc).__name__,
+                    )
+            elif trnm == _TRNM_SYSTEM:
+                # 운영 관찰: SYSTEM 메시지 직후 close -> echo 의미 X.
+                # payload keys 만 디버그 로깅 (키움 공식 spec 확인 후 정정).
+                logger.debug(
+                    "v71_kiwoom_ws_system_message",
+                    keys=sorted(payload.keys()),
+                )
             else:
                 logger.warning("v71_kiwoom_ws_unknown_trnm", trnm=trnm)
 

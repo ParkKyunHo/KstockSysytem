@@ -8,8 +8,9 @@ from __future__ import annotations
 
 import os
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime
 
 
 @dataclass
@@ -30,6 +31,12 @@ class SystemState:
     # blocked by VI state; surfaced to the dashboard so operators can see
     # the gap.
     degraded_vi: bool = False
+
+    # 박스 wizard 비중 결정용 실제 키움 잔고 (kt00018 5분 TTL cache).
+    # buy_executor wire 시점에 trading_bridge 가 register. 비활성 또는
+    # 키움 fetch 실패 시 None -- frontend 는 fallback (settings.total_capital
+    # 또는 unknown 메시지) 처리.
+    get_total_capital: Callable[[], int] | None = None
 
     def uptime_seconds(self) -> int:
         return int(time.time() - self.started_at)

@@ -219,6 +219,9 @@ export interface SystemStatusData {
     next_close_at: string | null;
   };
   current_time: string;
+  account?: {
+    total_capital: number | null;
+  };
 }
 
 // ---------------------------------------------------------------------

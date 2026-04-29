@@ -22,6 +22,7 @@ import { useAppShellContext } from '@/hooks/useAppShell';
 import {
   useBoxes,
   useCreateBox,
+  useSystemStatus,
   useTrackedStock,
   useTrackedStocks,
 } from '@/hooks/useApi';
@@ -29,7 +30,12 @@ import { ApiClientError } from '@/lib/api';
 import { formatKrw } from '@/lib/formatters';
 import type { PathType, StrategyType } from '@/types';
 
-const TOTAL_CAPITAL = 100_000_000;
+// 박스 wizard 비중 입력 시 실제 키움 잔고 (kt00018 5분 TTL cache) 가
+// `system_status.account.total_capital` 로 노출된다. fetch 실패 또는
+// buy_executor 비활성 시 fallback 으로 1억 KRW 사용 -- 사용자에게는
+// "잔고 미연결" 안내 + 추정 표시 (직접 운영 차단은 X, 실 매수는 backend
+// 가 다시 실시간 한도 체크).
+const FALLBACK_TOTAL_CAPITAL = 100_000_000;
 
 const STEP_LABELS = [
   '경로',
@@ -67,6 +73,10 @@ export function BoxWizard() {
     { tracked_stock_id: stockId ?? undefined, limit: 100 },
     { enabled: !!stockId },
   );
+  // 비중 input 시 표시할 실제 키움 계좌 잔고 (5분 TTL cache, server side).
+  // poll 30초 (TanStack Query staleTime default) -- WebSocket BALANCE
+  // push 도입 시 실시간으로 교체.
+  const { data: systemStatus } = useSystemStatus();
 
   const livePrice = useMemo(() => {
     if (!stock) return 0;
@@ -133,7 +143,11 @@ export function BoxWizard() {
     );
   }
 
-  const investAmount = (TOTAL_CAPITAL * sizePct) / 100;
+  const totalCapital =
+    systemStatus?.account?.total_capital ?? FALLBACK_TOTAL_CAPITAL;
+  const isCapitalEstimated =
+    systemStatus?.account?.total_capital == null;
+  const investAmount = (totalCapital * sizePct) / 100;
   const estQty = upper > 0 ? Math.floor(investAmount / upper) : 0;
   const stopPrice = upper * (1 + stopLoss / 100);
   const boxWidth = upper - lower;
@@ -367,8 +381,29 @@ export function BoxWizard() {
             >
               <div className="grid-3">
                 <div>
-                  <div className="text-helper">예상 투입</div>
+                  <div className="text-helper">
+                    예상 투입
+                    {isCapitalEstimated && (
+                      <span
+                        style={{
+                          color: 'var(--cds-support-warning, #f1c21b)',
+                          marginLeft: '0.25rem',
+                          fontSize: '0.75rem',
+                        }}
+                      >
+                        (추정)
+                      </span>
+                    )}
+                  </div>
                   <div className="mono">{formatKrw(investAmount)}원</div>
+                  <div
+                    className="text-helper"
+                    style={{ fontSize: '0.7rem', marginTop: '0.25rem' }}
+                  >
+                    {isCapitalEstimated
+                      ? `잔고 미연결 ${formatKrw(totalCapital)}원 가정`
+                      : `계좌 ${formatKrw(totalCapital)}원의 ${sizePct}%`}
+                  </div>
                 </div>
                 <div>
                   <div className="text-helper">예상 수량</div>

@@ -2,19 +2,21 @@
 
 from __future__ import annotations
 
-from datetime import datetime, time as dtime, timezone
+from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, Query, Response, status
 from sqlalchemy import or_, select
-from sqlalchemy.ext.asyncio import AsyncSession
+
+from src.database.models_v71 import SystemRestart
 
 from ...auth.dependencies import CurrentUserDep
 from ...dependencies import RequestIdDep, SessionDep
 from ...exceptions import NotFoundError, V71Error
 from ...schemas.common import PaginationCursor, build_list_meta, build_meta
 from ...schemas.system import (
+    AccountSnapshot,
     AsyncTaskOut,
     BoxEntryMissResponse,
     DatabaseStatus,
@@ -28,10 +30,8 @@ from ...schemas.system import (
     TelegramBotStatus,
     WebsocketStatus,
 )
-from src.database.models_v71 import SystemRestart
-
 from .state import feature_flags, system_state
-from .tasks import TaskStatus, TaskType, task_registry
+from .tasks import TaskType, task_registry
 
 router = APIRouter(prefix="/system", tags=["system"])
 
@@ -84,6 +84,17 @@ async def system_status(
     else:
         sys_status = "RUNNING"
 
+    # 박스 wizard 비중 표시용 실제 계좌 잔고 (5분 TTL cache).
+    # buy_executor 비활성 / 키움 fetch 실패 시 None.
+    total_capital_value: float | None = None
+    cap_fn = system_state.get_total_capital
+    if cap_fn is not None:
+        try:
+            raw = cap_fn()
+            total_capital_value = float(raw) if raw else None
+        except Exception:  # noqa: BLE001 -- never break /system/status
+            total_capital_value = None
+
     payload = SystemStatusOut(
         status=sys_status,  # type: ignore[arg-type]
         uptime_seconds=system_state.uptime_seconds(),
@@ -100,6 +111,7 @@ async def system_status(
         feature_flags=feature_flags.all(),
         market=_market_status(),
         current_time=datetime.now(timezone.utc),
+        account=AccountSnapshot(total_capital=total_capital_value),
     )
     return {"data": payload.model_dump(mode="json"), "meta": build_meta(request_id)}
 

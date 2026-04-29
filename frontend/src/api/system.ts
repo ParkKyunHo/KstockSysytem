@@ -38,6 +38,12 @@ export interface SystemStatusOut {
     next_close_at: string | null;
   };
   current_time: string;
+  // 박스 wizard 비중 표시용 실제 키움 잔고 (kt00018 5분 TTL cache).
+  // ``total_capital`` 이 ``null`` 이면 buy_executor 비활성 또는 키움
+  // fetch 실패 -- frontend 는 fallback (1억) + "(추정)" 표시.
+  account?: {
+    total_capital: number | null;
+  };
 }
 
 export interface SystemHealthOut {
