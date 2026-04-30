@@ -2776,6 +2776,45 @@ async def _build_exit_executor(handle: _TradingEngineHandle) -> Any:
     return V71ExitExecutor(context=ctx)
 
 
+def _make_manual_buy_callback(notifier: Any) -> Any:
+    """Build the V71OrderManager.on_manual_order callback.
+
+    P-Wire-Manual-Buy-Notification: external (HTS / MTS) buys arrive
+    through the Kiwoom WebSocket 00 channel as orders that have no
+    v71_orders row. The callback fires HIGH-severity notifications
+    with the stock code only — security 12_SECURITY §6.3 forbids
+    sending price / quantity over Telegram for manual events the
+    system did not authorise.
+    """
+
+    async def _callback(msg: Any) -> None:
+        try:
+            from src.core.v71.exchange.order_manager import WS_FIELD
+
+            stock_code = (
+                msg.values.get(WS_FIELD["STOCK_CODE"]) or ""
+            ).strip() or None
+            await notifier.notify(
+                severity="HIGH",
+                event_type="MANUAL_BUY_DETECTED",
+                stock_code=stock_code,
+                message=(
+                    "[수동매수 감지] V7.1이 발주하지 않은 주문\n"
+                    f"종목: {stock_code or '(unknown)'}\n"
+                    "외부 (HTS / MTS) 매수로 추정 — Reconciler가 5분 안에 "
+                    "시나리오 C 처리"
+                ),
+                rate_limit_key=f"manual_buy:{stock_code or 'unknown'}",
+            )
+        except Exception as exc:  # noqa: BLE001 -- handler isolation
+            logger.warning(
+                "manual buy callback failed: %s",
+                type(exc).__name__,
+            )
+
+    return _callback
+
+
 def _build_kiwoom_exchange() -> dict[str, Any]:
     """Construct the V7.1 Kiwoom transport stack from environment.
 
@@ -3010,6 +3049,21 @@ async def attach_trading_engine() -> _TradingEngineHandle:
                 await service.start()
                 handle.notification_service = service
                 mark_telegram_active(True)
+
+                # P-Wire-Manual-Buy-Notification: external (HTS/MTS)
+                # buys land via the Kiwoom WS as orders V71OrderManager
+                # has no v71_orders row for. Pre-P-Wire callback was
+                # None → silent log. Wire the alert now that the
+                # notification service is up so the user sees the
+                # event immediately, well before the 5-minute
+                # reconciler scenario C cycle.
+                if handle.order_manager is not None:
+                    handle.order_manager.set_on_manual_order(
+                        _make_manual_buy_callback(service),
+                    )
+                    logger.info(
+                        "trading_bridge: V71OrderManager.on_manual_order wired",
+                    )
             else:
                 logger.warning(
                     "trading_bridge: notification stack built but worker "

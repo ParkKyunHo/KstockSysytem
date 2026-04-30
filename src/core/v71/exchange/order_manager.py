@@ -391,6 +391,26 @@ class V71OrderManager:
         # PII / lambda objects deliberately excluded -- only the wire client.
         return f"V71OrderManager(kiwoom_client={self._client!r})"
 
+    def set_on_manual_order(
+        self, callback: ManualOrderCallback | None,
+    ) -> None:
+        """Assign / replace the manual-order callback after construction.
+
+        P-Wire-Manual-Buy-Notification: trading_bridge wires this once
+        the notification service is up so external (HTS / MTS) buys
+        surface as MANUAL_BUY_DETECTED alerts in real time. The
+        callback isolation is unchanged — exceptions inside it cannot
+        starve the WS event loop (security: handler crashes never
+        re-raise into the caller).
+        """
+        self._on_manual_order = callback
+
+    def set_on_position_fill(
+        self, callback: PositionFillCallback | None,
+    ) -> None:
+        """Assign / replace the position-fill callback after construction."""
+        self._on_position_fill = callback
+
     # ---------------------- Public API: submit -------------------------
 
     async def submit_order(self, request: V71OrderRequest) -> V71OrderSubmitResult:

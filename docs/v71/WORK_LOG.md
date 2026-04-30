@@ -8,6 +8,31 @@
 
 ## 2026-04-30
 
+### P-Wire-Manual-Buy-Notification: 수동매수 즉시 알림 wire (사용자 보고 결함 #2)
+
+**사용자 보고 결함**: HTS/MTS 등 외부에서 수동 매수 시 텔레그램 알림 발송 안 됨. 진단 결과 V71OrderManager의 `on_manual_order` callback이 trading_bridge에서 wire 안 됨 (P-Wire-1 시점에 V71OrderManager만 빌드, callback 미주입). WS 00 채널 → `_notify_manual_order` → `self._on_manual_order is None` → 로그만 남기고 침묵. Reconciler 5분 polling이 시나리오 C로 감지하지만 즉시성 + 박스 정보 누락 (P-Wire-Box-1 land 전).
+
+**구현**:
+- `src/core/v71/exchange/order_manager.py`: `set_on_manual_order(callback)` + `set_on_position_fill(callback)` public setter 신규 (post-construction wiring 패턴).
+- `src/web/v71/trading_bridge.py`:
+  - `_make_manual_buy_callback(notifier)` factory 신규 — V71WebSocketMessage stub 받아 stock_code 추출 후 `notifier.notify(severity="HIGH", event_type="MANUAL_BUY_DETECTED", ...)` 호출. **자금 정보 redact (12 §6.3)** — message에 가격/수량/비중 평문 X, stock_code만.
+  - notification_service 빌드 직후 `handle.order_manager.set_on_manual_order(callback)` 호출. 가드: order_manager None 시 skip (kiwoom_exchange flag off 시).
+
+**테스트**:
+- `tests/v71/web/test_manual_buy_notification.py` 신규 4 cases:
+  - HIGH severity + MANUAL_BUY_DETECTED + stock_code only (가격/수량 평문 X 검증, regex `\d+\s*원` / `\d+\s*주` 부재)
+  - stock_code 없는 메시지 → "(unknown)" 표시
+  - notifier 예외 → callback이 swallow (헌법 4)
+  - `set_on_manual_order` runtime callback 교체 + None 가능
+
+**검증**: V7.1 1340/1340 PASS (1336 + 4 신규) + Harness 7/7 + ruff 0 errors.
+
+**효과**:
+- 외부 수동 매수 → WS 00 도착 → 즉시 텔레그램 HIGH 알림 (Reconciler 5분 대기 없음).
+- 사용자 보고 결함 #2 **완전 해소**.
+
+---
+
 ### P-Wire-Box-3: TrackedSummary list 구현 (DB JOIN)
 
 **목표**: trading_bridge의 `_list_tracked() -> []` stub 2곳을 DB JOIN 결과로 교체. 텔레그램 `/tracking` + `DailySummary` 추적 종목 섹션이 실제 DB 상태 반영.
