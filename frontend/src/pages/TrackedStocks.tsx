@@ -98,12 +98,9 @@ function RowResizer({
 }: {
   onResize: (deltaPx: number) => void;
 }) {
-  const [hover, setHover] = useState(false);
-  const [active, setActive] = useState(false);
   const onMouseDown = (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    setActive(true);
     let lastY = e.clientY;
     const onMove = (ev: MouseEvent) => {
       const delta = ev.clientY - lastY;
@@ -113,7 +110,6 @@ function RowResizer({
       }
     };
     const onUp = () => {
-      setActive(false);
       window.removeEventListener('mousemove', onMove);
       window.removeEventListener('mouseup', onUp);
       document.body.style.cursor = '';
@@ -124,36 +120,18 @@ function RowResizer({
     window.addEventListener('mousemove', onMove);
     window.addEventListener('mouseup', onUp);
   };
-  const isLit = hover || active;
+  // Invisible hit area at the table's bottom edge — cursor flips to
+  // ns-resize on hover, no visible bar (사용자 요청).
   return (
     <div
       onMouseDown={onMouseDown}
-      onMouseEnter={() => setHover(true)}
-      onMouseLeave={() => setHover(false)}
       style={{
-        height: 10,
+        height: 8,
         cursor: 'ns-resize',
         userSelect: 'none',
-        display: 'flex',
-        justifyContent: 'center',
-        alignItems: 'center',
-        // 가로 풀 너비 — 테이블 어느 위치에 호버해도 잡힘
       }}
       title="드래그해서 표 높이 조정"
-    >
-      <div
-        style={{
-          width: 80,
-          height: 3,
-          borderRadius: 2,
-          background: isLit
-            ? 'var(--cds-border-interactive, #4589ff)'
-            : 'var(--cds-border-subtle-01, #525252)',
-          opacity: isLit ? 1 : 0.6,
-          transition: 'opacity 0.12s, background 0.12s',
-        }}
-      />
-    </div>
+    />
   );
 }
 
