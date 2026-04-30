@@ -417,7 +417,10 @@ textarea.cds-input { height: auto; min-height: 64px; padding: 12px 16px; resize:
 .cds-modal__title--danger { color: var(--cds-support-error); }
 .cds-modal__body { padding: 12px 20px 20px; overflow-y: auto; flex: 1; }
 .cds-modal__ft { display: flex; gap: 1px; background: var(--cds-border-subtle-00); }
-.cds-modal__ft .cds-btn { flex: 1; height: 64px; align-items: flex-start; padding-top: 16px; padding-bottom: 16px; }
+/* 사용자 요청 — Carbon 표준 flex-start (텍스트 위 쏠림) → vertical center.
+   .cds-btn 기본 align-items: center 상속 + padding-top/bottom 0으로
+   재정렬해 폰트가 버튼 height 64px의 정확한 가운데에 위치. */
+.cds-modal__ft .cds-btn { flex: 1; height: 64px; align-items: center; padding-top: 0; padding-bottom: 0; }
 
 /* ============== Tabs ================ */
 .cds-tabs { border-bottom: 1px solid var(--cds-border-subtle-00); display: flex; gap: 0; overflow-x: auto; }
