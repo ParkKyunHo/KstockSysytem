@@ -7,11 +7,11 @@
 //   - useTradeEventsToday()                           (PRD §6.2)
 //   - useNotifications({ limit: 100 })                (PRD §7.1)
 //
-// PositionOut intentionally lacks ``current_price`` (PRD §5.1) -- the
-// price WebSocket bus owns the live tick. Until that channel is wired
-// to a hook, we look up the cached tick price by stock_code from mock
-// trackedStocks (kept on the AppShell outlet context). The dashboard
-// degrades gracefully when no price is known.
+// P-Wire-Price-Tick (2026-04-30) — live price source 우선순위:
+//   1. priceStore (WS POSITION_PRICE_UPDATE, 1Hz throttled by backend)
+//   2. PositionOut.current_price (PRD Patch #5 DB column)
+//   3. mock.trackedStocks (dev fallback only — useLiveMock setInterval)
+//   4. null → "—" UI
 
 import { useNavigate } from 'react-router-dom';
 
@@ -46,6 +46,7 @@ import {
   formatUntil,
   formatUptime,
 } from '@/lib/formatters';
+import { usePriceStore } from '@/stores/priceStore';
 
 interface PnlComputed {
   current_price: number | null;
@@ -55,19 +56,39 @@ interface PnlComputed {
 
 function computePnl(
   p: PositionOut,
-  priceByCode: Map<string, number>,
+  wsPrice: number | null,
+  wsPnlAmount: number | null,
+  wsPnlPct: number | null,
+  fallbackPriceByCode: Map<string, number>,
 ): PnlComputed {
-  const live = priceByCode.get(p.stock_code);
-  if (live == null) {
+  // 1. WS push (live, 1Hz)
+  if (wsPrice != null && wsPnlAmount != null && wsPnlPct != null) {
+    return {
+      current_price: wsPrice,
+      pnl_amount: wsPnlAmount,
+      pnl_pct: Number((wsPnlPct * 100).toFixed(2)),
+    };
+  }
+  // 2. DB column (PRD Patch #5)
+  if (p.current_price != null) {
+    return {
+      current_price: p.current_price,
+      pnl_amount: p.pnl_amount ?? 0,
+      pnl_pct: p.pnl_pct != null ? Number((p.pnl_pct * 100).toFixed(2)) : 0,
+    };
+  }
+  // 3. mock fallback (dev only)
+  const fallback = fallbackPriceByCode.get(p.stock_code);
+  if (fallback == null) {
     return { current_price: null, pnl_amount: null, pnl_pct: null };
   }
-  const amount = (live - p.weighted_avg_price) * p.total_quantity;
+  const amount = (fallback - p.weighted_avg_price) * p.total_quantity;
   const pct =
     p.weighted_avg_price > 0
-      ? ((live - p.weighted_avg_price) / p.weighted_avg_price) * 100
+      ? ((fallback - p.weighted_avg_price) / p.weighted_avg_price) * 100
       : 0;
   return {
-    current_price: live,
+    current_price: fallback,
     pnl_amount: Math.round(amount),
     pnl_pct: Number(pct.toFixed(2)),
   };
@@ -105,8 +126,11 @@ export function Dashboard() {
   const totalPnl = today?.total_pnl ?? summary?.total_pnl_amount ?? 0;
   const totalPnlPct = today?.total_pnl_pct ?? summary?.total_pnl_pct ?? null;
 
-  // Live-price lookup by stock_code -- tracked-stock mock prices
-  // until the WebSocket price channel is wired in.
+  // P-Wire-Price-Tick (2026-04-30): WS push priority. Mock kept as
+  // fallback (dev) and as initial render before first tick lands.
+  const wsByStockCode = usePriceStore((s) => s.byStockCode);
+  const wsByPositionId = usePriceStore((s) => s.byPositionId);
+
   const priceByCode = new Map<string, number>();
   for (const m of mock.trackedStocks) {
     priceByCode.set(m.stock_code, m.current_price);
@@ -261,7 +285,9 @@ export function Dashboard() {
               <tbody>
                 {upcoming.map((b) => {
                   const proximity = b.entry_proximity_pct ?? 0;
-                  const livePrice = priceByCode.get(b.stock_code);
+                  const livePrice =
+                    wsByStockCode.get(b.stock_code)?.price ??
+                    priceByCode.get(b.stock_code);
                   return (
                     <tr key={b.id}>
                       <td>
@@ -347,7 +373,15 @@ export function Dashboard() {
               </thead>
               <tbody>
                 {positions.map((p) => {
-                  const computed = computePnl(p, priceByCode);
+                  const wsStock = wsByStockCode.get(p.stock_code);
+                  const wsPos = wsByPositionId.get(p.id);
+                  const computed = computePnl(
+                    p,
+                    wsStock?.price ?? null,
+                    wsPos?.pnlAmount ?? null,
+                    wsPos?.pnlPct ?? null,
+                    priceByCode,
+                  );
                   return (
                     <tr
                       key={p.id}

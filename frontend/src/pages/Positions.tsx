@@ -32,6 +32,7 @@ import {
   formatKrwSigned,
   formatPct,
 } from '@/lib/formatters';
+import { usePriceStore } from '@/stores/priceStore';
 
 type PosTab = 'open' | 'closed';
 type SourceFilter = 'all' | PositionSourceLit;
@@ -47,11 +48,29 @@ interface ComputedPnl {
   pnlPct: number;
 }
 
-// ★ PRD Patch #5 (V7.1.0d, 2026-04-27):
-// PositionOut.current_price/pnl_amount/pnl_pct를 직접 사용. 백엔드는
-// WebSocket 0B (<1s) > kt00018 (5s) > ka10001 (재시작) 우선순위로 갱신.
-// fallback으로 mock 가격 lookup도 유지 (백엔드 미갱신 row 대비).
-function computePnl(p: PositionOut, fallbackPrice: number | null): ComputedPnl {
+// ★ PRD Patch #5 (V7.1.0d, 2026-04-27) + P-Wire-Price-Tick (2026-04-30):
+// 가격 우선순위 (가장 신선한 것):
+//   1. priceStore.byPositionId — WS POSITION_PRICE_UPDATE (1Hz, 운영)
+//   2. PositionOut.current_price — REST GET (DB Patch #5 column,
+//      reconciler kt00018 5s 또는 마지막 publish 결과)
+//   3. mock fallback — VITE_USE_LIVE_MOCK=true 인 dev 한정 (운영 X)
+//   4. null — UI "—" 표시
+function computePnl(
+  p: PositionOut,
+  livePrice: number | null,
+  livePnlAmount: number | null,
+  livePnlPct: number | null,
+  fallbackPrice: number | null,
+): ComputedPnl {
+  // 1. WS push (가장 신선)
+  if (livePrice != null && livePnlAmount != null && livePnlPct != null) {
+    return {
+      current: livePrice,
+      pnlAmount: livePnlAmount,
+      pnlPct: Number((livePnlPct * 100).toFixed(2)),
+    };
+  }
+  // 2. DB 컬럼 (Patch #5)
   if (p.current_price != null) {
     return {
       current: p.current_price,
@@ -59,7 +78,7 @@ function computePnl(p: PositionOut, fallbackPrice: number | null): ComputedPnl {
       pnlPct: p.pnl_pct != null ? Number((p.pnl_pct * 100).toFixed(2)) : 0,
     };
   }
-  // Fallback: 백엔드가 아직 가격 갱신 전인 row (재시작 직후 등)
+  // 3. mock fallback (dev only)
   if (fallbackPrice == null) {
     return { current: null, pnlAmount: 0, pnlPct: 0 };
   }
@@ -101,6 +120,11 @@ export function Positions() {
         subtitle: err instanceof ApiClientError ? err.message : undefined,
       }),
   });
+
+  // P-Wire-Price-Tick (2026-04-30): WS push priority. priceStore가 비어
+  // 있으면 PositionOut.current_price → mock 순서로 fallback (computePnl).
+  const wsByStockCode = usePriceStore((s) => s.byStockCode);
+  const wsByPositionId = usePriceStore((s) => s.byPositionId);
 
   const priceByCode = useMemo(() => {
     const m = new Map<string, number>();
@@ -219,8 +243,16 @@ export function Positions() {
             </thead>
             <tbody>
               {filtered.map((p) => {
-                const livePrice = priceByCode.get(p.stock_code) ?? null;
-                const computed = computePnl(p, livePrice);
+                const wsStock = wsByStockCode.get(p.stock_code);
+                const wsPos = wsByPositionId.get(p.id);
+                const fallbackPrice = priceByCode.get(p.stock_code) ?? null;
+                const computed = computePnl(
+                  p,
+                  wsStock?.price ?? null,
+                  wsPos?.pnlAmount ?? null,
+                  wsPos?.pnlPct ?? null,
+                  fallbackPrice,
+                );
                 return (
                   <tr key={p.id}>
                     <td>

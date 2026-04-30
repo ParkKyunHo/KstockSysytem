@@ -13,6 +13,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useLiveMock } from '@/hooks/useLiveMock';
 import { useSystemStatus, useUnreadNotifications } from '@/hooks/useApi';
 import { useWsBootstrap } from '@/hooks/useWebSocket';
+import { usePriceTickSubscription } from '@/hooks/usePriceTickSubscription';
 import { initialMock, type MockState } from '@/mocks';
 import { formatTime } from '@/lib/formatters';
 import type { SystemStatusOut } from '@/api/system';
@@ -72,6 +73,13 @@ export function AppShell({ theme, onCycleTheme }: AppShellProps) {
 
   // P5.5: real API state.
   useWsBootstrap();
+  // P-Wire-Price-Tick (2026-04-30): WS POSITION_PRICE_UPDATE → priceStore.
+  // Subscribes to "positions" channel and forwards live ticks to the
+  // Zustand store consumed by Positions / Dashboard / etc. Backend gates
+  // publishing on ``v71.price_publisher`` flag — when OFF the store
+  // simply stays empty + pages fall back to PositionOut.current_price
+  // (DB Patch #5 column) or mock (dev only).
+  usePriceTickSubscription();
   const { data: systemStatus } = useSystemStatus();
   const { data: unreadData } = useUnreadNotifications();
 

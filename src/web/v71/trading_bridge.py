@@ -487,6 +487,15 @@ class _TradingEngineHandle:
         # empty / unreachable). Surfaced in /system/status so operators
         # know whether to seed the table.
         self.market_calendar_source: str | None = None
+        # P-Wire-Price-Tick (2026-04-30): V71PricePublisher.
+        # 1Hz throttled batch UPDATE positions.{current_price/at/pnl_amount/
+        # pnl_pct} + publish_position_price_update via WebSocket. Display-
+        # only (P1: never touches status / weighted_avg_price / quantity /
+        # ts_*). Owns its own background flush task -- detach must call
+        # ``stop()`` BEFORE exit_orchestrator.stop() so the in-flight
+        # PRICE_TICK fan-out drains cleanly. Cross-flag invariant:
+        # v71.kiwoom_websocket + v71.position_v71 + v71.price_publisher.
+        self.price_publisher: Any = None
 
 
 # Default reconciliation cadence (PRD 02_TRADING_RULES.md §7.1 -- "매 5분마다").
@@ -2428,6 +2437,60 @@ async def _build_exit_orchestrator(
     return calculator, orchestrator
 
 
+# P-Wire-Price-Tick (2026-04-30): V71PricePublisher attach helper.
+async def _build_price_publisher(
+    handle: _TradingEngineHandle,
+) -> Any:
+    """Construct V71PricePublisher + register PRICE_TICK handler + start
+    1Hz batch flush loop.
+
+    Cross-flag invariant: depends on
+      * ``v71.kiwoom_websocket`` -- handler registers on the WS instance
+      * ``v71.position_v71``      -- list_for_stock returns latest avg
+                                     (P3: weighted_avg_price 캐시 X)
+      * ``v71.price_publisher``   -- the publisher's own gate
+
+    Order invariant: must be wired AFTER ExitOrchestrator (handlers run
+    in registration order on V71KiwoomWebSocket._dispatch_real, and
+    ExitOrchestrator owning the subscribe lifecycle keeps the
+    publisher's handler-list-only role intact -- security S5).
+
+    Detach order (5505 area): publisher.stop() FIRST so the flush task
+    drains before exit_orchestrator.stop() / candle_manager.stop() /
+    kiwoom_websocket.aclose() tear down the data plane.
+    """
+    if handle.position_manager is None:
+        raise RuntimeError(
+            "trading_bridge: v71.price_publisher requires position_manager "
+            "(v71.position_v71 must be ON)",
+        )
+    if handle.kiwoom_websocket is None:
+        raise RuntimeError(
+            "trading_bridge: v71.price_publisher requires kiwoom_websocket "
+            "(v71.kiwoom_websocket must be ON)",
+        )
+    if handle.session_factory is None:
+        raise RuntimeError(
+            "trading_bridge: v71.price_publisher requires session_factory "
+            "(DatabaseManager must be initialized)",
+        )
+
+    from src.core.v71.pricing import V71PricePublisher
+
+    publisher = V71PricePublisher(
+        position_manager=handle.position_manager,
+        websocket=handle.kiwoom_websocket,
+        sessionmaker=handle.session_factory,
+        publish_fn=publish_position_price_update,
+        clock=lambda: datetime.now(timezone.utc),
+        # P4 (recommended): VI gate. Optional -- None means fail-open
+        # (publish proceeds during VI). Wired when vi_monitor land.
+        vi_monitor=handle.vi_monitor,
+    )
+    await publisher.start()
+    return publisher
+
+
 # P-Wire-12 (Phase A Step F): V71CandleManager wiring constants.
 # KRX market sessions are KST; AWS Lightsail typically runs UTC, so EOD
 # base_date and trigger comparisons must explicitly use KST. The V71
@@ -3330,6 +3393,30 @@ async def attach_trading_engine() -> _TradingEngineHandle:
             "-- price-driven exits not active",
         )
 
+    # P-Wire-Price-Tick (2026-04-30): V71PricePublisher.
+    # 1Hz throttled batch UPDATE V71Position.{current_price/at/pnl_amount/
+    # pnl_pct} + WebSocket publish (PRD §11.3). Display-only -- never
+    # touches trading-decision columns (5 CRITICAL CONSTRAINTS in module
+    # docstring). Must wire AFTER ExitOrchestrator so handler order is
+    # orchestrator(decision) -> publisher(display) on the WS dispatcher.
+    if is_enabled("v71.price_publisher"):
+        try:
+            publisher = await _build_price_publisher(handle)
+        except Exception as exc:  # noqa: BLE001 -- boot failure surfaces
+            logger.error(
+                "trading_bridge: v71.price_publisher enabled but "
+                "construction failed: %s",
+                type(exc).__name__,
+            )
+            raise
+        handle.price_publisher = publisher
+        logger.info("trading_bridge: V71PricePublisher wired (1Hz batch)")
+    else:
+        logger.warning(
+            "trading_bridge: feature flag 'v71.price_publisher' disabled "
+            "-- frontend will see stale current_price (mock fallback in dev)",
+        )
+
     # P-Wire-8: V71DailySummary scheduler at 15:30 KST. Independent of
     # kiwoom -- only needs the notification stack + position/box
     # managers. Capital % is opt-in via the BuyExecutor's get_total_capital.
@@ -3557,6 +3644,20 @@ async def detach_trading_engine(handle: _TradingEngineHandle) -> None:
             )
     handle.daily_summary_scheduler = None
     handle.daily_summary = None
+
+    # P-Wire-Price-Tick (2026-04-30): stop V71PricePublisher BEFORE
+    # exit_orchestrator so the 1Hz flush task drains its in-flight DB
+    # UPDATE / publish without competing with orchestrator unsubscribe
+    # on the same WS handler list.
+    if handle.price_publisher is not None:
+        try:
+            await handle.price_publisher.stop()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "trading_bridge: price_publisher.stop() failed: %s",
+                type(exc).__name__,
+            )
+    handle.price_publisher = None
 
     # P-Wire-4a/4b/4c/6: drop executors + monitor + orchestrator +
     # supporting closures. All are stateless (no aclose / cancel

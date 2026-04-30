@@ -192,6 +192,24 @@ class V71Constants:
     10% of the 1-second NFR1 budget. Slow-path warning is logged when
     a single hot-path query exceeds this."""
 
+    # ---- V71PricePublisher (P-Wire-Price-Tick) sanity (security S2 MEDIUM) ----
+    PRICE_TICK_SANITY_MAX: Final[int] = 100_000_000
+    """Per-share KRW upper bound. KOSPI 단일 종목 시가 1억원/주 미만 —
+    이를 초과하는 PRICE_TICK은 키움 패킷 변조/오류로 판정 reject."""
+
+    PRICE_TICK_JUMP_REJECT_PCT: Final[float] = 0.50
+    """직전 받은 가격 대비 ±50% 점프 시 reject. VI 발동 갭과 별개로
+    단발 변조 방어. 0.5 = 50% (e.g. 10000 → 15000 또는 5000 거부)."""
+
+    # ---- V71PricePublisher 1Hz batch throttle ----
+    PRICE_PUBLISHER_FLUSH_INTERVAL_SECONDS: Final[float] = 1.0
+    """1Hz batch UPDATE + publish 간격 (PRD §11.3 명세 그대로).
+    20+ active positions 시 운영 측에서 0.5Hz auto-downgrade 가능."""
+
+    PRICE_PUBLISHER_DB_SEMAPHORE: Final[int] = 3
+    """동시 DB connection 한도 (Migration M3: pool_size=5+overflow=10=15 한도).
+    Semaphore(3)은 V71BuyExecutor + V71Reconciler와 경합 시 marginal headroom 확보."""
+
 
 class V71Timeframe(str, Enum):
     """V7.1 candle timeframe (V71 prefix per harness 1 + 격리 원칙).

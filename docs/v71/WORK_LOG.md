@@ -8,6 +8,68 @@
 
 ## 2026-04-30
 
+### P-Wire-Price-Tick: V71PricePublisher (PRICE_TICK → DB UPDATE + WebSocket publish)
+
+**사용자 결정**: V7.1 운영 환경 (AWS Lightsail, V7.1 systemd active, 운영 자금 ₩275,372) 에서 frontend Dashboard / Positions / TrackedStocks 등 모든 페이지가 mock 가격을 표시하는 결함을 fix. 사용자 명시 작업 단위 "B 작업 = WebSocket 가격 통합". 헌법 1 (사용자 판단 불가침) + 헌법 2 (NFR1 1초) 직결.
+
+**5 에이전트 검증** (PRD §6 워크플로우):
+- **architect** (PASS w/ WARNING): Q1=D 새 V71PricePublisher 모듈 (`src/core/v71/pricing/`, V71ExitOrchestrator SRP 보존), Q2=B PR1 활성 포지션부터, Q3=B 1Hz throttled UPDATE + delta-only publish, Q4=A per-stock_code 1Hz, Q5=A Zustand, Q6=C dual key (stock_code + position_id), Q7=A+B+D 조합 (WS push 우선 + DB hydrate + dev/prod 분기), Q8=PR1 = Backend + Positions + Dashboard.
+- **trading-logic-verifier** (PASS 조건부): 5 CRITICAL CONSTRAINT 도출 — P1 (UPDATE 4 컬럼 한정: current_price/at/pnl_amount/pnl_pct), P2 (별도 _publisher_locks, ExitOrchestrator _stock_locks 와 분리), P3 (weighted_avg_price 캐시 X, list_for_stock 매번 호출), P4 (VI 발동 중 publish skip), P5 (avg_price 직접 변경 0). 모두 코드에 강제 + docstring 명시.
+- **migration-strategy** (WARNING): 5 즉시 fix — 종목별 가격 mapping (사용자 제안 SQL `WHERE id IN (...) SET current_price=$1` 결함, ORM 사용으로 자동 해결), per-stock autocommit transaction (M2), Semaphore(3) DB pool 한도 (M3), throttle 동적 조정 (>20 positions → 0.5Hz, M5), feature_flag 추가 (M6).
+- **security-reviewer** (WARNING): CRITICAL S3 (NFR1 100ms 위반 위험 — DB UPDATE 별도 1Hz background task 분리), HIGH S4 (가격 평문 로그 차단 — type-only WARNING), HIGH S6 (HTTPS land follow-up 권고), MEDIUM S2 (PRICE_TICK_SANITY_MAX = 1억원 + ±50% jump reject).
+- **test-strategy** (가이드 119 cases 도출): P0 우선순위 14 cases 채택 (그룹 1.1 throttle / 1.4 PnL / 1.5 sanity / 1.7 flag / 1.8 ExitOrchestrator 격리 / P3 list_for_stock 매 flush / P4 VI gate / 회귀 #5 timestamp guard).
+
+**구현**:
+- `src/core/v71/pricing/__init__.py` + `src/core/v71/pricing/v71_price_publisher.py` (~370 lines, V71PricePublisher 클래스 + 5 CONSTRAINT 명시 docstring).
+  - **NFR1 3-tier**: handler (Tier 1, 메모리 캐시만 < 1ms) / publish + DB UPDATE는 1Hz background task (Tier 3).
+  - **per-stock autocommit transaction**: 종목 간 isolation, lock wait 차단 X.
+  - **delta-only UPDATE**: `last_published[stock_code] == price` 시 skip.
+  - **timestamp guard** (test-strategy 회귀 #5): `WHERE current_price_at IS NULL OR current_price_at < :new_at` — kt00018 5s vs WS 0B 1Hz race 안전.
+  - **Sanity**: `PRICE_TICK_SANITY_MAX = 100_000_000` (1억원/주) + `PRICE_TICK_JUMP_REJECT_PCT = 0.50` (직전가 대비 ±50% jump reject) 추가 in `v71_constants.py`.
+  - **VI gate (P4)**: `vi_monitor.is_vi_active(stock_code)` 시 publish skip. 헌법 4 (always-on): `is_vi_active` raise 시 fail-open.
+- `src/web/v71/trading_bridge.py`:
+  - `_TradingEngineHandle.price_publisher` 슬롯 추가.
+  - `_build_price_publisher(handle)` helper — cross-flag 3 (`v71.kiwoom_websocket` + `v71.position_v71` + `v71.price_publisher`).
+  - attach 호출: V71ExitOrchestrator wire 직후 (handler order = orchestrator(decision) → publisher(display)).
+  - detach: `price_publisher.stop()` FIRST → exit_orchestrator.stop → ws.aclose.
+- `config/feature_flags.yaml`: `v71.price_publisher: false` 추가 (안전 기본).
+- `frontend/src/stores/priceStore.ts` (~150 lines, Zustand v5). dual key (`byStockCode` + `byPositionId`) + selectors (`usePriceByStock`, `usePnlByPosition`) + `staleStatusFromTimestamp` + `hydrateFromPositions` + timestamp idempotency (frontend mirror of backend guard).
+- `frontend/src/hooks/usePriceTickSubscription.ts` (~70 lines): `useWsBootstrap` + `useWsChannels(['positions'])` + `useWsMessages` → `applyPriceUpdate` / `removePosition` (POSITION_PRICE_UPDATE / POSITION_CLOSED 이벤트).
+- `frontend/src/components/shell/AppShell.tsx`: `usePriceTickSubscription()` 호출 추가 (mounted once, AppShell lifetime).
+- `frontend/src/pages/Positions.tsx` + `frontend/src/pages/Dashboard.tsx`: mock priceByCode → priceStore 우선순위 4단계 (WS push → PositionOut.current_price → mock fallback → null).
+
+**테스트**:
+- `tests/v71/pricing/test_v71_price_publisher.py` (14 cases) — 14/14 PASS.
+  - 그룹 1.1 throttle (4): handler 메모리 캐시만, 가격 변동 없으면 publish 0, sanity max + ±50% jump reject.
+  - 그룹 1.4 PnL (2): pnl_amount/pct 계산, delta-only skip.
+  - 그룹 1.7 flag (1): require_enabled 가드.
+  - 그룹 1.8 lifecycle + isolation (3): start/stop idempotent, register_handler 호출, _publisher_locks 별도 attribute (P2).
+  - P3 (1): pyramid buy 후 list_for_stock 매번 호출 → 새 weighted_avg_price 반영.
+  - P4 (2): VI active 시 cache update skip, vi_monitor raise 시 fail-open.
+- `tests/v71/pricing/__init__.py` 신규.
+
+**검증**:
+- Frontend: `npm run typecheck` 0 errors.
+- Backend: `python -c "from src.core.v71.pricing import V71PricePublisher"` OK + `_build_price_publisher` import OK.
+- V7.1 회귀: 1225 passed + 133 skipped + 0 failed (baseline 1211 → 1225, 14 신규 PASS, 회귀 0).
+- Harness 7/7 PASS (Naming / Dependency Cycle / Trading Rule / Schema Migration / Feature Flag / Dead Code / G1 Storage SSoT).
+- ruff: src/core/v71/pricing/ + src/web/v71/trading_bridge.py + tests/v71/pricing/ 모두 0 errors (전체 baseline 152 = 동등 유지).
+- preview server: HMR 정상 (Dashboard / Positions hot updated, console error 0).
+
+**운영 영향 (자금 안전)**:
+- `v71.price_publisher: false` 기본 → 운영 영향 0.
+- 활성화 시: V71Position.{current_price/at/pnl_amount/pnl_pct} 1Hz throttled UPDATE + WebSocket publish. 표시용 컬럼 — 청산 판정 / 매수 발화 / 평단가 어떤 것에도 영향 X (P1~P5 강제). 
+- 운영 점진 활성화 권고: 5 active positions baseline → pool 메트릭 1주 수집 → 30 positions로 확장.
+
+**잔여 follow-up 단위 (별도 commit)**:
+- F1 (P-Wire-Price-Tick-Box-Proximity): `publish_box_entry_proximity` publisher wire — Dashboard "진입 임박 박스" 라이브 가격 표시 (architect Q2 PR2).
+- F2 (P-Wire-Price-Tick-FullCoverage): TrackedStocks / TrackedStockDetail / BoxWizard / Reports / OrderDialog의 mock priceByCode 교체 (architect Q8 PR3).
+- F3 (HTTPS, 옵션 E): nginx + Let's Encrypt — security S6 HIGH 운영 환경 평문 통신 fix.
+- F4 (WS Connection Cap): `MAX_CONNECTIONS_PER_USER=5` + per-connection 60 msg/min cap — security S7 MEDIUM.
+- F5 (P0 105 cases 추가): test-strategy 119 cases 중 14 채택, 나머지 105 (DB concurrency + Frontend Zustand + integration smoke + NFR1 latency 측정 + 회귀 위험 5 cases).
+
+---
+
 ### P-Wire-Box-4-Hotfix: V71PositionManager async 시그니처 회귀 결함 7건 fix (자금 안전 직결)
 
 **배포 후 정밀 검토에서 발견된 결함**: P-Wire-Box-4 commit b15fce8 운영 배포 + boot smoke 6/6 PASS 후 journal에서 `restart recovery had failures: ["step4_resubscribe: 'coroutine' object is not iterable"]` 로그 발견. V71PositionManager.list_open / list_events / get / list_for_stock이 모두 async로 전환됐는데 호출처 7곳에 await 누락. V7.1 회귀에서 안 잡힌 이유는 5 broken 테스트 파일에 pytestmark.skip을 추가했기 때문 (telegram_commands / daily_summary / restart_recovery 등이 호출처).
