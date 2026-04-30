@@ -813,12 +813,16 @@ export function Pagination({
   onPage: (p: number) => void;
 }) {
   const last = Math.max(1, Math.ceil(total / perPage));
-  const start = (page - 1) * perPage + 1;
+  const start = total === 0 ? 0 : (page - 1) * perPage + 1;
   const end = Math.min(total, page * perPage);
   return (
     <div className="pagination">
       <span>
-        {start}–{end} / 총 {total}
+        {total === 0
+          ? '전체 0건'
+          : start === 1 && end === total
+            ? `전체 ${total}건`
+            : `전체 ${total}건 중 ${start}-${end}번째 표시`}
       </span>
       <div className="pagination__btns">
         <button

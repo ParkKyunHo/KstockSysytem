@@ -71,8 +71,10 @@ function loadWidths(): number[] {
 }
 
 // 세로 height 리사이즈 (테이블 하단에 호버 시 ↕ 커서 + 드래그)
-const TABLE_HEIGHT_KEY = 'tracked-stocks/table-height/v1';
-const DEFAULT_HEIGHT = 480;
+// v2: default 480→260 — 3-5 row 데이터에 빈 공간 과다로 폰트가 위로
+// 쏠려 보이는 결함 fix. 사용자는 RowResizer로 더 늘려 볼 수 있음.
+const TABLE_HEIGHT_KEY = 'tracked-stocks/table-height/v2';
+const DEFAULT_HEIGHT = 260;
 const MIN_HEIGHT = 160;
 const MAX_HEIGHT = 1600;
 
