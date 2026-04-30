@@ -8,17 +8,22 @@
 #   .\hotfix.ps1 -NoRestart           # 파일만 전송
 #   .\hotfix.ps1 -WithSystemd         # v71.service 적용 + daemon-reload
 #   .\hotfix.ps1 -InitialDeploy       # 첫 V7.1 배포 (venv 패키지 설치 포함)
+#   .\hotfix.ps1 -ApplyMigration 021  # 신규 V7.1 마이그레이션 적용 (idempotent DDL)
+#   .\hotfix.ps1 -ForceMarketHours    # KST 09:00~15:30 가드 우회 (의식적 결정)
 #
 # Constitution:
 #   - .env 시크릿 마스킹 표시만, 평문 transcript 노출 X
 #   - shared/.env 갱신 시 권한 600 유지
 #   - systemd unit 갱신 시 백업 (.bak.YYYYMMDD)
 #   - V7.1 필수 변수 (KIWOOM_ENV / KIWOOM_ACCOUNT_NO / JWT_SECRET) 사전 검증 fail-loud
+#   - 장중 (KST 09:00~15:30 평일) 배포 차단 — systemd restart = WS 재연결 + 7-step 복구
 # ============================================================
 param(
     [switch]$NoRestart,
     [switch]$WithSystemd,
-    [switch]$InitialDeploy
+    [switch]$InitialDeploy,
+    [string]$ApplyMigration = "",
+    [switch]$ForceMarketHours
 )
 
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
@@ -52,6 +57,26 @@ Write-Host ""
 if (-not (Test-Path $LIGHTSAIL_KEY)) {
     Write-Host "[ERROR] SSH key missing: $LIGHTSAIL_KEY" -ForegroundColor Red
     exit 1
+}
+
+# ------------------------------------------------------------
+# [0/6] 장중 배포 가드 (KST 09:00~15:30 평일)
+# ------------------------------------------------------------
+if (-not $ForceMarketHours) {
+    $kst = [System.TimeZoneInfo]::FindSystemTimeZoneById("Korea Standard Time")
+    $now_kst = [System.TimeZoneInfo]::ConvertTime((Get-Date), $kst)
+    $is_weekend = $now_kst.DayOfWeek -eq 'Saturday' -or $now_kst.DayOfWeek -eq 'Sunday'
+    $market_open = New-Object System.DateTime $now_kst.Year, $now_kst.Month, $now_kst.Day, 9, 0, 0
+    $market_close = New-Object System.DateTime $now_kst.Year, $now_kst.Month, $now_kst.Day, 15, 30, 0
+    if (-not $is_weekend -and $now_kst -ge $market_open -and $now_kst -le $market_close) {
+        Write-Host "[ERROR] 장중 배포 금지 (KST $($now_kst.ToString('yyyy-MM-dd HH:mm:ss ddd')))" -ForegroundColor Red
+        Write-Host "        systemd restart = WS 재연결 + 7-step 복구 + Telegram 명령 차단 30초" -ForegroundColor Yellow
+        Write-Host "        의식적 결정으로 강제하려면 -ForceMarketHours 사용" -ForegroundColor Yellow
+        exit 1
+    }
+    Write-Host "[0/6] market hours guard OK (장 마감 또는 주말)" -ForegroundColor Green
+} else {
+    Write-Host "[0/6] market hours guard FORCED (-ForceMarketHours)" -ForegroundColor Yellow
 }
 
 # ------------------------------------------------------------
@@ -204,6 +229,24 @@ echo "systemd unit updated"
         exit 1
     }
     Write-Host "      OK" -ForegroundColor Green
+}
+
+# ------------------------------------------------------------
+# [5c/6] Optional: V7.1 DB migration apply (-ApplyMigration NNN)
+# ------------------------------------------------------------
+if ($ApplyMigration -ne "") {
+    Write-Host "[5c/6] V7.1 migration $ApplyMigration apply..." -ForegroundColor Yellow
+    $py = "C:\Program Files\Python311\python.exe"
+    if (-not (Test-Path $py)) {
+        Write-Host "[ERROR] Python 3.11 missing locally: $py" -ForegroundColor Red
+        exit 1
+    }
+    & $py "$LOCAL_PROJECT\scripts\deploy\apply_v71_migrations.py" --apply $ApplyMigration
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "[ERROR] migration $ApplyMigration apply failed (exit=$LASTEXITCODE)" -ForegroundColor Red
+        exit 1
+    }
+    Write-Host "      OK (migration $ApplyMigration applied)" -ForegroundColor Green
 }
 
 # ------------------------------------------------------------

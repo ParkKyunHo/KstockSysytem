@@ -17,11 +17,22 @@
 #   - Phase 6 완료 후: reporting → true
 
 v71:
+  # ───────────────────────────────────────────────────────────────────
+  # P-Wire-Box-1 INVARIANT (자금 안전 — 위반 시 rollback 불가능):
+  #   V71BoxManager가 DB-backed로 전환되어 사용자 박스가 DB에 즉시 표시되지만,
+  #   자동 박스 생성 + 자동 매수 경로는 P-Wire-Box-2/3/4 land 전까지 차단해야 함.
+  #   P-Wire-Box-2 land 전까지 다음 5 flag는 반드시 false 유지:
+  #     box_entry_detector / pullback_strategy / breakout_strategy /
+  #     path_b_daily / buy_executor_v71
+  #   사용자 수동 박스 등록만 허용. 활성 시 자동 매수 발화 → 자금 위험.
+  #   trading_bridge.py가 boot 시점에 invariant 위반 감지 시 CRITICAL 알림.
+  # ───────────────────────────────────────────────────────────────────
+
   # Phase 3: 거래 룰 (02_TRADING_RULES.md)
-  box_system: false           # §3 박스 시스템 (사용자 정의 진입 영역)
-  pullback_strategy: false    # §4.1 PATH_A 눌림 진입
-  breakout_strategy: false    # §4.2 PATH_A 돌파 진입
-  path_b_daily: false         # §4.3 PATH_B 일봉 중기
+  box_system: false           # §3 박스 시스템 (사용자 정의 진입 영역) — P-Wire-Box-1 land 후 활성 가능
+  pullback_strategy: false    # §4.1 PATH_A 눌림 진입 — P-Wire-Box-INVARIANT 적용
+  breakout_strategy: false    # §4.2 PATH_A 돌파 진입 — P-Wire-Box-INVARIANT 적용
+  path_b_daily: false         # §4.3 PATH_B 일봉 중기 — P-Wire-Box-INVARIANT 적용
   exit_v71: false             # §5 단계별 손절 + 분할 익절 + V7.1 ATR 배수
   position_v71: false         # §6 평단가 가중평균 + 이벤트 리셋
   manual_trade_handler: false # §7 수동 거래 시나리오 A/B/C/D
@@ -46,11 +57,11 @@ v71:
 
   # Phase 5 후속 / Phase 7 wiring: 키움 거래 인프라
   kiwoom_exchange: false       # P-Wire-1 — V71KiwoomClient + V71OrderManager + V71KiwoomExchangeAdapter
-  buy_executor_v71: false      # P-Wire-4a — V71BuyExecutor + 4 callable deps + tracked_stock_resolver
+  buy_executor_v71: false      # P-Wire-4a — V71BuyExecutor — P-Wire-Box-INVARIANT 적용 (자동 매수 발화 경로)
   exit_executor_v71: false     # P-Wire-4b — V71ExitExecutor (stop loss / TS / partial profit-take)
   kiwoom_websocket: false      # P-Wire-5 — V71KiwoomWebSocket realtime channels (PRICE / ORDER / BALANCE / VI)
   exit_orchestrator: false     # P-Wire-6 — V71ExitOrchestrator (PRICE_TICK → ExitCalculator → ExitExecutor)
 
   # Phase A 산출 (V7.0 폐기 후 V7.1 candle/market 인프라)
   candle_builder: false        # P-Wire-12 — V71CandleManager attach (PATH_A 3분봉 + PATH_B 일봉, 자동 박스 감지)
-  box_entry_detector: false    # P-Wire-13 — V71BoxEntryDetector pair (PATH_A + PATH_B subscribers → BuyExecutor)
+  box_entry_detector: false    # P-Wire-13 — V71BoxEntryDetector — P-Wire-Box-INVARIANT 적용 (자동 진입 차단 경로)

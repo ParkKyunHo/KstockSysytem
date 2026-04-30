@@ -21,6 +21,7 @@ HARNESSES = [
     ("Harness 4: Schema Migration", "schema_migration_validator.py"),
     ("Harness 5: Feature Flag", "feature_flag_enforcer.py"),
     ("Harness 6: Dead Code", "dead_code_detector.py"),
+    ("Harness 8 (G1): Storage SSoT", "storage_invariant_enforcer.py"),
 ]
 HARNESS_7 = ("Harness 7: Test Coverage", "test_coverage_enforcer.py")
 
