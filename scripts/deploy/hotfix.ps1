@@ -1,4 +1,4 @@
-# ============================================================
+﻿# ============================================================
 # K_stock_trading V7.1 hotfix deploy (V7.0 launcher 폐기 후 갱신)
 # ============================================================
 # Phase: 운영 진입 Step 3 (V7.1 코드 배포)
@@ -26,8 +26,8 @@ param(
     [switch]$ForceMarketHours
 )
 
-[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
-$OutputEncoding = [System.Text.Encoding]::UTF8
+[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
+$OutputEncoding = [System.Text.UTF8Encoding]::new($false)
 chcp 65001 > $null
 
 $ErrorActionPreference = "Stop"
@@ -66,8 +66,8 @@ if (-not $ForceMarketHours) {
     $kst = [System.TimeZoneInfo]::FindSystemTimeZoneById("Korea Standard Time")
     $now_kst = [System.TimeZoneInfo]::ConvertTime((Get-Date), $kst)
     $is_weekend = $now_kst.DayOfWeek -eq 'Saturday' -or $now_kst.DayOfWeek -eq 'Sunday'
-    $market_open = New-Object System.DateTime $now_kst.Year, $now_kst.Month, $now_kst.Day, 9, 0, 0
-    $market_close = New-Object System.DateTime $now_kst.Year, $now_kst.Month, $now_kst.Day, 15, 30, 0
+    $market_open = [datetime]::new($now_kst.Year, $now_kst.Month, $now_kst.Day, 9, 0, 0)
+    $market_close = [datetime]::new($now_kst.Year, $now_kst.Month, $now_kst.Day, 15, 30, 0)
     if (-not $is_weekend -and $now_kst -ge $market_open -and $now_kst -le $market_close) {
         Write-Host "[ERROR] 장중 배포 금지 (KST $($now_kst.ToString('yyyy-MM-dd HH:mm:ss ddd')))" -ForegroundColor Red
         Write-Host "        systemd restart = WS 재연결 + 7-step 복구 + Telegram 명령 차단 30초" -ForegroundColor Yellow
@@ -177,10 +177,21 @@ $shared_mirror = $shared_template `
     -replace 'REMOTE_SHARED_ENV', $REMOTE_SHARED_ENV `
     -replace 'REMOTE_BASE', $REMOTE_BASE `
     -replace 'DATE_TAG', $DATE_TAG
-# bash via stdin (newline-safe, avoids PowerShell arg flattening)
-$shared_mirror | & ssh @SSH_ARGS "${LIGHTSAIL_USER}@${LIGHTSAIL_HOST}" "bash"
+# Write to a temp file with ASCII (no BOM) then scp + execute remotely.
+# stdin-pipe approach lost to PowerShell 5.1 BOM injection on UTF-8 files.
+$tempScript = [System.IO.Path]::GetTempFileName() + ".sh"
+[System.IO.File]::WriteAllText($tempScript, $shared_mirror, [System.Text.UTF8Encoding]::new($false))
+& scp @SSH_ARGS $tempScript "${LIGHTSAIL_USER}@${LIGHTSAIL_HOST}:/tmp/mirror.sh"
 if ($LASTEXITCODE -ne 0) {
-    Write-Host "[ERROR] shared/.env mirror failed (exit=$LASTEXITCODE)" -ForegroundColor Red
+    Remove-Item $tempScript -ErrorAction SilentlyContinue
+    Write-Host "[ERROR] mirror.sh scp failed (exit=$LASTEXITCODE)" -ForegroundColor Red
+    exit 1
+}
+& ssh @SSH_ARGS "${LIGHTSAIL_USER}@${LIGHTSAIL_HOST}" "bash /tmp/mirror.sh && rm /tmp/mirror.sh"
+$mirrorRc = $LASTEXITCODE
+Remove-Item $tempScript -ErrorAction SilentlyContinue
+if ($mirrorRc -ne 0) {
+    Write-Host "[ERROR] shared/.env mirror failed (exit=$mirrorRc)" -ForegroundColor Red
     exit 1
 }
 Write-Host "      OK" -ForegroundColor Green
@@ -198,9 +209,19 @@ cd REMOTE_CURRENT
 ./venv/bin/python -c "import uvicorn, fastapi, asyncpg, psycopg, pyotp; print('V7.1 deps OK')"
 '@
     $pip_cmd = $pip_template -replace 'REMOTE_CURRENT', $REMOTE_CURRENT
-    $pip_cmd | & ssh @SSH_ARGS "${LIGHTSAIL_USER}@${LIGHTSAIL_HOST}" "bash"
+    $pipScript = [System.IO.Path]::GetTempFileName() + ".sh"
+    [System.IO.File]::WriteAllText($pipScript, $pip_cmd, [System.Text.UTF8Encoding]::new($false))
+    & scp @SSH_ARGS $pipScript "${LIGHTSAIL_USER}@${LIGHTSAIL_HOST}:/tmp/pip_install.sh"
     if ($LASTEXITCODE -ne 0) {
-        Write-Host "[ERROR] pip install failed (exit=$LASTEXITCODE)" -ForegroundColor Red
+        Remove-Item $pipScript -ErrorAction SilentlyContinue
+        Write-Host "[ERROR] pip_install.sh scp failed" -ForegroundColor Red
+        exit 1
+    }
+    & ssh @SSH_ARGS "${LIGHTSAIL_USER}@${LIGHTSAIL_HOST}" "bash /tmp/pip_install.sh && rm /tmp/pip_install.sh"
+    $pipRc = $LASTEXITCODE
+    Remove-Item $pipScript -ErrorAction SilentlyContinue
+    if ($pipRc -ne 0) {
+        Write-Host "[ERROR] pip install failed (exit=$pipRc)" -ForegroundColor Red
         exit 1
     }
     Write-Host "      OK" -ForegroundColor Green
@@ -223,9 +244,19 @@ rm -f /tmp/v71.service
 echo "systemd unit updated"
 '@
     $unit_apply = $unit_template -replace 'DATE_TAG', $DATE_TAG
-    $unit_apply | & ssh @SSH_ARGS "${LIGHTSAIL_USER}@${LIGHTSAIL_HOST}" "bash"
+    $unitScript = [System.IO.Path]::GetTempFileName() + ".sh"
+    [System.IO.File]::WriteAllText($unitScript, $unit_apply, [System.Text.UTF8Encoding]::new($false))
+    & scp @SSH_ARGS $unitScript "${LIGHTSAIL_USER}@${LIGHTSAIL_HOST}:/tmp/unit_apply.sh"
     if ($LASTEXITCODE -ne 0) {
-        Write-Host "[ERROR] systemd unit apply failed (exit=$LASTEXITCODE)" -ForegroundColor Red
+        Remove-Item $unitScript -ErrorAction SilentlyContinue
+        Write-Host "[ERROR] unit_apply.sh scp failed" -ForegroundColor Red
+        exit 1
+    }
+    & ssh @SSH_ARGS "${LIGHTSAIL_USER}@${LIGHTSAIL_HOST}" "bash /tmp/unit_apply.sh && rm /tmp/unit_apply.sh"
+    $unitRc = $LASTEXITCODE
+    Remove-Item $unitScript -ErrorAction SilentlyContinue
+    if ($unitRc -ne 0) {
+        Write-Host "[ERROR] systemd unit apply failed (exit=$unitRc)" -ForegroundColor Red
         exit 1
     }
     Write-Host "      OK" -ForegroundColor Green
