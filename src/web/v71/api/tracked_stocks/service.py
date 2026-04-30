@@ -7,6 +7,7 @@ from decimal import Decimal
 from typing import Any
 from uuid import UUID
 
+from sqlalchemy import update as sql_update, delete as sql_delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.database.models_v71 import (
@@ -14,6 +15,8 @@ from src.database.models_v71 import (
     SupportBox,
     TrackedStatus,
     TrackedStock,
+    TradeEvent,
+    V71Position,
 )
 
 from ...audit import record_audit
@@ -195,6 +198,14 @@ async def stop_tracking(
     ip_address: str | None,
     user_agent: str | None,
 ) -> None:
+    """Two-phase: TRACKING/BOX_SET/POSITION_* → EXITED (soft delete);
+    re-call on EXITED → hard delete (DB row 영구 제거).
+
+    Hard delete preserves audit (positions / trade_events.tracked_stock_id
+    SET NULL) and cascades support_boxes (FK ondelete=CASCADE on the
+    tracked_stocks side). The user-facing menu surfaces this as two
+    distinct actions (\"추적 종료\" vs \"삭제\") but reuses one endpoint.
+    """
     ts = await repo.get_by_id(session, tracked_stock_id)
     if ts is None:
         raise NotFoundError(
@@ -209,7 +220,44 @@ async def stop_tracking(
             details={"position_count": pos_count, "total_quantity": qty},
         )
 
-    # PRD §3.5: 모든 미진입 박스 CANCELLED + status=EXITED + 시세 구독 해제
+    # Phase 2: EXITED 종목 → hard delete. Preserve closed positions /
+    # trade_events for audit by null-ing the FK before DELETE (FK is
+    # nullable on both sides). support_boxes is ondelete=CASCADE so
+    # the child rows are removed by Postgres.
+    if ts.status == TrackedStatus.EXITED:
+        await session.execute(
+            sql_update(V71Position)
+            .where(V71Position.tracked_stock_id == ts.id)
+            .values(tracked_stock_id=None),
+        )
+        await session.execute(
+            sql_update(TradeEvent)
+            .where(TradeEvent.tracked_stock_id == ts.id)
+            .values(tracked_stock_id=None),
+        )
+        before_state = {
+            "status": ts.status.value,
+            "stock_code": ts.stock_code,
+            "stock_name": ts.stock_name,
+        }
+        await session.execute(
+            sql_delete(TrackedStock).where(TrackedStock.id == ts.id),
+        )
+        await session.commit()
+        await record_audit(
+            action=AuditAction.TRACKING_REMOVED,
+            user_id=user_id,
+            target_type="tracked_stock",
+            target_id=tracked_stock_id,
+            before_state=before_state,
+            after_state={"status": "DELETED"},
+            ip_address=ip_address,
+            user_agent=user_agent,
+        )
+        return
+
+    # Phase 1: PRD §3.5 — soft delete (status=EXITED) + cancel waiting
+    # boxes + 시세 구독 해제.
     now = datetime.now(timezone.utc)
     cancelled_ids: list[str] = []
     for box in ts.boxes:
