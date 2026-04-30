@@ -113,7 +113,10 @@ class TrackedSummary:
 
 
 # Misc callables (kept as type aliases for readability).
-ListTrackedFn = Callable[[], list[TrackedSummary]]
+# P-Wire-Box-3: list_tracked is async — the implementation now hits the
+# DB (build_tracked_summaries) so the snapshot reflects the current
+# tracked_stocks / support_boxes / positions state.
+ListTrackedFn = Callable[[], Awaitable[list[TrackedSummary]]]
 SafeModeGetFn = Callable[[], bool]
 SafeModeSetFn = Callable[[bool], Awaitable[None]]
 CancelOrderFn = Callable[[str], Awaitable[bool]]
@@ -448,7 +451,7 @@ class V71TelegramCommands:
         await self._safe_send(chat_id, format_positions_response(positions))
 
     async def _cmd_tracking(self, chat_id: str, _args: list[str]) -> None:
-        items = self._ctx.list_tracked()
+        items = await self._ctx.list_tracked()
         await self._safe_send(chat_id, format_tracking_response(items))
 
     async def _cmd_pending(self, chat_id: str, _args: list[str]) -> None:

@@ -1873,11 +1873,10 @@ async def _build_daily_summary(
     )
 
     clock = handle.clock if handle.clock is not None else V71RealClock()
-    # list_tracked: TrackedSummary list is a follow-up (DB query +
-    # box_count aggregation). Returning empty keeps the summary running
-    # without that section so production gets daily PnL today.
-    def _list_tracked() -> list[Any]:
-        return []
+    # P-Wire-Box-3: list_tracked now hits the DB through the shared
+    # session_factory the box_manager already owns.
+    from src.web.v71.tracked_summary import make_list_tracked_callable
+    _list_tracked = make_list_tracked_callable(handle.box_manager._sm)  # noqa: SLF001
 
     # get_total_capital is a kiwoom-backed callable assembled in
     # _build_buy_executor. Reuse its closure so capital appears in the
@@ -2230,10 +2229,13 @@ async def _build_telegram_commands(
             )
             return False
 
-    def _list_tracked() -> list[Any]:
-        # TrackedSummary build is a follow-up unit; empty list means
-        # /tracking returns an empty (but valid) response body.
-        return []
+    # P-Wire-Box-3: list_tracked hits the DB via build_tracked_summaries.
+    from src.web.v71.tracked_summary import (
+        make_list_tracked_callable as _make_list_tracked_for_telegram,
+    )
+    _list_tracked = _make_list_tracked_for_telegram(
+        handle.box_manager._sm,  # noqa: SLF001
+    )
 
     cmd_ctx = CommandContext(
         box_manager=handle.box_manager,

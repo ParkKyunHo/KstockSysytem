@@ -170,6 +170,18 @@ _AUTHORISED_CHAT = "1234567890"
 _UNAUTHORISED_CHAT = "9999999999"
 
 
+def _async_value(value):
+    """Helper: returns an async callable that returns ``value``.
+
+    P-Wire-Box-3 changed list_tracked to async; tests that previously
+    used ``lambda: result`` now wrap with this so the awaitable shape
+    matches the production callable.
+    """
+    async def _impl():
+        return value
+    return _impl
+
+
 def _make_record(
     *,
     severity: str = "HIGH",
@@ -244,7 +256,7 @@ def _build_commands(
         safe_mode_get=safe_mode_flag.get,
         safe_mode_set=safe_mode_flag.set,
         cancel_order=cancel,
-        list_tracked=lambda: (list_tracked_result or []),
+        list_tracked=_async_value(list_tracked_result or []),
         report_handler=report_handler,
     )
     cmds = V71TelegramCommands(context=ctx)
@@ -307,11 +319,9 @@ class TestAuthorisation:
     async def test_handler_exception_is_swallowed_and_reported(self) -> None:
         _, ctx, bot, *_ = _build_commands()
         # Sabotage list_tracked so /tracking blows up.
-        object.__setattr__(
-            ctx,
-            "list_tracked",
-            lambda: (_ for _ in ()).throw(RuntimeError("boom")),
-        )
+        async def _boom():
+            raise RuntimeError("boom")
+        object.__setattr__(ctx, "list_tracked", _boom)
         await bot.handlers["tracking"](_AUTHORISED_CHAT, [])
         # User got the error message; the polling loop did NOT crash.
         assert bot.sent

@@ -8,6 +8,40 @@
 
 ## 2026-04-30
 
+### P-Wire-Box-3: TrackedSummary list 구현 (DB JOIN)
+
+**목표**: trading_bridge의 `_list_tracked() -> []` stub 2곳을 DB JOIN 결과로 교체. 텔레그램 `/tracking` + `DailySummary` 추적 종목 섹션이 실제 DB 상태 반영.
+
+**구현**:
+- `src/web/v71/tracked_summary.py` 신규: `build_tracked_summaries(session_factory) -> list[TrackedSummary]` async + `make_list_tracked_callable` factory.
+  - tracked_stocks (status != EXITED) + support_boxes (WAITING) + V71Position (status != CLOSED) 3 SELECT 후 Python에서 group.
+  - 한 (tracked_stock, path_type) 쌍 별 한 TrackedSummary 행 (이중 경로 PATH_A + PATH_B 같은 종목은 두 행).
+  - 박스 0 + position만 있으면 `path_type="MANUAL"` 한 행.
+  - 박스 0 + position 0 (TRACKING 단계)도 한 행 (사용자가 등록한 후 박스 미설정 상태 가시).
+- `src/core/v71/notification/v71_telegram_commands.py`: `ListTrackedFn = Callable[[], Awaitable[list[TrackedSummary]]]` (async). `_cmd_tracking`에서 `await self._ctx.list_tracked()`.
+- `src/core/v71/notification/v71_daily_summary.py`: 동일 변경 + `_build_body` async 전환 + `send()`에서 `await`.
+- `src/web/v71/trading_bridge.py`: `_build_daily_summary` + `_build_telegram_commands_v71` 두 곳에서 `_list_tracked = make_list_tracked_callable(handle.box_manager._sm)` (V71BoxManager의 sessionmaker 재사용).
+
+**테스트**:
+- `tests/v71/web/test_tracked_summary.py` 신규 6 cases:
+  - 빈 DB 빈 결과
+  - **사용자 보고 회귀 직접 검증**: 박스 등록한 종목이 /tracking에 표시
+  - 이중 경로 (PATH_A + PATH_B) 두 행 emit
+  - EXITED 제외
+  - MANUAL position만 있는 종목 → "MANUAL" path_type
+  - INVALIDATED 박스는 box_count에서 제외 (WAITING만)
+- `tests/v71/test_v71_telegram_commands.py`: `_async_value` helper + `lambda` → async 패턴 변환.
+
+**검증**: V7.1 1336/1336 PASS (1330 + 6 신규) + Harness 7/7 + ruff 0 errors.
+
+**잔여 (별도 단위)**:
+- P-Wire-Box-4: V71PositionManager 같은 패턴 (G1 GRACE) → DB-backed.
+- P-Wire-Manual-Buy-Notification: V71OrderManager `on_manual_order` callback wire.
+
+P-Wire-Box-1/2/3 완료로 사용자 보고 결함 #1 (박스 등록 → 텔레그램 0) **완전 해소**: 웹 등록 → DB 즉시 → V71BoxManager (P-Wire-Box-1) → service 위임 (P-Wire-Box-2) → /tracking + /pending DB 가시 (P-Wire-Box-3).
+
+---
+
 ### P-Wire-Box-2: 웹 service → V71BoxManager 위임
 
 **목표**: `src/web/v71/api/boxes/service.py`의 `create_box / patch_box / delete_box`가 `repo.insert_box` 직접 호출 → `V71BoxManager` API 위임으로 전환. P-Wire-Box-1이 박스 데이터 경로를 DB-backed로 통합했지만, 웹 service는 여전히 V71BoxManager 우회 — 이 단위에서 위임 완성.

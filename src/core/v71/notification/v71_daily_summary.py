@@ -27,7 +27,7 @@ Pairs with :mod:`v71_daily_summary_scheduler` for the 15:30 trigger.
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Protocol
@@ -69,10 +69,10 @@ class Notifier(Protocol):
     ) -> None: ...
 
 
-# ``list_tracked() -> list[TrackedSummary]`` -- same provider that
-# /tracking uses; reused so the daily summary stays in sync with the
-# user's mental model of the tracked universe.
-ListTrackedFn = Callable[[], list[TrackedSummary]]
+# ``list_tracked() -> Awaitable[list[TrackedSummary]]`` -- same provider
+# that /tracking uses; reused so the daily summary stays in sync with
+# the user's mental model. P-Wire-Box-3 made this async (DB query).
+ListTrackedFn = Callable[[], Awaitable[list[TrackedSummary]]]
 
 # ``get_tomorrow_events() -> list[str]`` -- free-form lines (e.g.
 # "09:00 LG엔솔 실적 발표"). Returns empty list when no schedule.
@@ -286,7 +286,7 @@ class V71DailySummary:
         not fatal).
         """
         now = self._ctx.clock.now()
-        body = self._build_body(now=now)
+        body = await self._build_body(now=now)
         await self._ctx.notifier.notify(
             severity="LOW",
             event_type="DAILY_SUMMARY",
@@ -300,7 +300,7 @@ class V71DailySummary:
     # Body construction
     # ------------------------------------------------------------------
 
-    def _build_body(self, *, now: datetime) -> str:
+    async def _build_body(self, *, now: datetime) -> str:
         events_today = _filter_events_today(
             self._ctx.position_manager.list_events(), now=now
         )
@@ -331,7 +331,7 @@ class V71DailySummary:
                 log.exception("get_tomorrow_events raised; skipping section")
 
         try:
-            tracked = list(self._ctx.list_tracked())
+            tracked = list(await self._ctx.list_tracked())
         except Exception:  # noqa: BLE001
             log.exception("list_tracked raised; rendering empty")
             tracked = []
