@@ -70,14 +70,104 @@ function loadWidths(): number[] {
   return [...DEFAULT_WIDTHS];
 }
 
+// 세로 height 리사이즈 (테이블 하단에 호버 시 ↕ 커서 + 드래그)
+const TABLE_HEIGHT_KEY = 'tracked-stocks/table-height/v1';
+const DEFAULT_HEIGHT = 480;
+const MIN_HEIGHT = 160;
+const MAX_HEIGHT = 1600;
+
+function loadHeight(): number {
+  try {
+    const raw = localStorage.getItem(TABLE_HEIGHT_KEY);
+    if (raw != null) {
+      const n = Number(raw);
+      if (Number.isFinite(n) && n >= MIN_HEIGHT && n <= MAX_HEIGHT) return n;
+    }
+  } catch {
+    // localStorage corruption / quota
+  }
+  return DEFAULT_HEIGHT;
+}
+
+function clampHeight(h: number): number {
+  return Math.max(MIN_HEIGHT, Math.min(MAX_HEIGHT, h));
+}
+
+function RowResizer({
+  onResize,
+}: {
+  onResize: (deltaPx: number) => void;
+}) {
+  const [hover, setHover] = useState(false);
+  const [active, setActive] = useState(false);
+  const onMouseDown = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setActive(true);
+    let lastY = e.clientY;
+    const onMove = (ev: MouseEvent) => {
+      const delta = ev.clientY - lastY;
+      if (delta !== 0) {
+        lastY = ev.clientY;
+        onResize(delta);
+      }
+    };
+    const onUp = () => {
+      setActive(false);
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    };
+    document.body.style.cursor = 'ns-resize';
+    document.body.style.userSelect = 'none';
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  };
+  const isLit = hover || active;
+  return (
+    <div
+      onMouseDown={onMouseDown}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+      style={{
+        height: 10,
+        cursor: 'ns-resize',
+        userSelect: 'none',
+        display: 'flex',
+        justifyContent: 'center',
+        alignItems: 'center',
+        // 가로 풀 너비 — 테이블 어느 위치에 호버해도 잡힘
+      }}
+      title="드래그해서 표 높이 조정"
+    >
+      <div
+        style={{
+          width: 80,
+          height: 3,
+          borderRadius: 2,
+          background: isLit
+            ? 'var(--cds-border-interactive, #4589ff)'
+            : 'var(--cds-border-subtle-01, #525252)',
+          opacity: isLit ? 1 : 0.6,
+          transition: 'opacity 0.12s, background 0.12s',
+        }}
+      />
+    </div>
+  );
+}
+
 function ColResizer({
   onResize,
 }: {
   onResize: (deltaPx: number) => void;
 }) {
+  const [hover, setHover] = useState(false);
+  const [active, setActive] = useState(false);
   const onMouseDown = (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
+    setActive(true);
     let lastX = e.clientX;
     const onMove = (ev: MouseEvent) => {
       const delta = ev.clientX - lastX;
@@ -87,6 +177,7 @@ function ColResizer({
       }
     };
     const onUp = () => {
+      setActive(false);
       window.removeEventListener('mousemove', onMove);
       window.removeEventListener('mouseup', onUp);
       document.body.style.cursor = '';
@@ -97,22 +188,43 @@ function ColResizer({
     window.addEventListener('mousemove', onMove);
     window.addEventListener('mouseup', onUp);
   };
+  // Visible 2px vertical indicator centered in an 8px hit area.
+  // Always shows as a faint guide; brightens on hover/drag so the
+  // affordance is obvious without any hover discovery.
+  const isLit = hover || active;
   return (
-    <span
+    <div
       onMouseDown={onMouseDown}
       onClick={(e) => e.stopPropagation()}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
       style={{
         position: 'absolute',
         right: 0,
         top: 0,
         bottom: 0,
-        width: 5,
+        width: 8,
         cursor: 'col-resize',
         userSelect: 'none',
-        zIndex: 1,
+        zIndex: 2,
+        display: 'flex',
+        justifyContent: 'center',
+        alignItems: 'center',
       }}
       title="드래그해서 컬럼 너비 조정"
-    />
+    >
+      <div
+        style={{
+          width: 2,
+          height: '60%',
+          background: isLit
+            ? 'var(--cds-border-interactive, #4589ff)'
+            : 'var(--cds-border-subtle-01, #525252)',
+          opacity: isLit ? 1 : 0.5,
+          transition: 'opacity 0.12s, background 0.12s',
+        }}
+      />
+    </div>
   );
 }
 
@@ -152,6 +264,18 @@ export function TrackedStocks() {
       next[idx] = Math.max(MIN_WIDTH, next[idx] + delta);
       return next;
     });
+
+  // 표 높이 — 사용자 명시 요청 (하단 가장자리 호버 → ↕ 커서 → 드래그).
+  const [tableHeight, setTableHeight] = useState<number>(() => loadHeight());
+  useEffect(() => {
+    try {
+      localStorage.setItem(TABLE_HEIGHT_KEY, String(tableHeight));
+    } catch {
+      // best-effort
+    }
+  }, [tableHeight]);
+  const resizeTableHeight = (delta: number) =>
+    setTableHeight((prev) => clampHeight(prev + delta));
   const removeTracked = useDeleteTrackedStock({
     onSuccess: () => {
       const wasDelete = confirmDel?.mode === 'delete';
@@ -261,7 +385,10 @@ export function TrackedStocks() {
             />
           </div>
         </div>
-        <div className="table-wrap">
+        <div
+          className="table-wrap"
+          style={{ height: tableHeight, overflowY: 'auto', overflowX: 'auto' }}
+        >
           <table
             className="cds-table"
             style={{ tableLayout: 'fixed', width: 'max-content', minWidth: '100%' }}
@@ -419,6 +546,7 @@ export function TrackedStocks() {
             </tbody>
           </table>
         </div>
+        <RowResizer onResize={resizeTableHeight} />
         <Pagination
           total={filtered.length}
           page={page}
