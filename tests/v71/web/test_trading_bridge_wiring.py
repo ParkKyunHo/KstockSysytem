@@ -1975,6 +1975,7 @@ class TestExitOrchestratorWiring:
         exit_ctx = ExitExecutorContext(
             exchange=MagicMock(),
             box_manager=MagicMock(),
+            position_manager=MagicMock(),
             notifier=notifier, clock=clock,
             on_position_closed=None,
         )

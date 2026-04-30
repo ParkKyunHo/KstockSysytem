@@ -1,61 +1,137 @@
-"""V71PositionManager -- positions table CRUD + invariants.
+"""V71PositionManager -- DB-backed positions + trade_events.
 
 Spec:
+  - 02_TRADING_RULES.md §5  (post-buy management)
   - 02_TRADING_RULES.md §6  (avg-price + event reset)
-  - 03_DATA_MODEL.md §2.3  (positions table)
-  - 07_SKILLS_SPEC.md §4   (avg_price_skill)
+  - 02_TRADING_RULES.md §11 (position lifecycle)
+  - 03_DATA_MODEL.md §2.3   (positions table)
+  - 03_DATA_MODEL.md §2.4   (trade_events table)
+  - 07_SKILLS_SPEC.md §4    (avg_price_skill)
 
-Phase: P3.4
+Phase: P-Wire-Box-4 (2026-04-30) -- DB-backed conversion of P3.4
+       in-memory dict. Single source of truth is now PostgreSQL
+       (PRD 03 §0.1 #4). Caller-facing API is async + returns frozen
+       :class:`PositionState` snapshots. ORM rows live only inside
+       the manager's transaction contexts.
 
-All writes to ``positions`` go through this class -- direct mutation
-of ``weighted_avg_price`` from business code is forbidden.
-:mod:`avg_price_skill` is the only place the math lives.
+Architecture (architect Q1-Q12 + trading-logic verifier blockers):
+  Q1: Frozen :class:`PositionState` DTO returned to callers
+      (BoxRecord pattern mirror).
+  Q2: ``position_repository`` SQL helpers in a dedicated module.
+  Q3: Optional ``session=`` parameter so V71BuyExecutor can wrap
+      ``add_position + box_manager.mark_triggered`` in a single
+      atomic transaction. External sessions are validated with
+      ``session.in_transaction()`` (security H1).
+  Q4: trade_events INSERT in the same transaction as the position
+      INSERT/UPDATE (FK + audit consistency).
+  Q5: avg_price_skill is the only place the math lives.
+      ``update_position_after_buy/sell`` is called inside the
+      manager; ORM mutation happens once, with the skill result.
+  Q6: ``PositionStatus`` re-exported from ``models_v71`` so SQLEnum
+      and Python comparisons share the same class object.
+  Q7: ``tracked_stock_id`` and ``triggered_box_id`` are ``None`` on
+      manual buys (Scenario D); never empty strings.
+  Q8: TS state nullable preserved.
+  Q10: NFR1 measurement on ``apply_buy/apply_sell`` (warn > 100 ms).
 
-P3.4 keeps the store in-memory (dict[position_id, PositionState]).
-A later phase swaps the dict for a Supabase-backed implementation; this
-class's public surface (PositionStore Protocol + apply_buy / apply_sell
-/ close_position) stays stable so callers don't change.
+  Blocker 1 (CHECK constraint): ``status`` and ``total_quantity``
+      are written together in the same flush so PostgreSQL
+      ``position_closed_consistency`` is never transiently violated.
+  Blocker 5 (string vs Enum): all status comparisons use
+      ``PositionStatus.OPEN`` etc., never the bare string.
+  Blocker 9 (Decimal round-trip): ``state.from_orm`` is the single
+      conversion site.
 
-Trade events:
-    Each buy / sell appends a `TradeEvent` to the in-memory log.
-    P3.4 writes to a Python list; later phases hydrate to the
-    ``trade_events`` table.
+AUTHORIZATION INVARIANT (12_SECURITY.md §4):
+    This manager performs NO authorization checks itself. Callers
+    (V71BuyExecutor, V71ExitExecutor, V71Reconciler) are themselves
+    system-only paths. Adding authorization here is FORBIDDEN.
+
+LOG REDACT POLICY (12_SECURITY.md §6.3):
+    Log records about positions never include the price / quantity
+    / capital fields in plain text.
 """
 
 from __future__ import annotations
 
-import uuid
-from dataclasses import dataclass
-from datetime import datetime
+import logging
+import time
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass as _dataclass
+from datetime import datetime, timezone
+from decimal import Decimal
+from typing import TYPE_CHECKING
 
-from src.core.v71.position.state import PositionState
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+from src.core.v71.position import position_repository as repo
+from src.core.v71.position.state import (
+    _PATH_TO_SOURCE,
+    PositionState,
+    PositionStatus,
+    from_orm,
+)
 from src.core.v71.skills.avg_price_skill import (
-    PositionUpdate,
     update_position_after_buy,
     update_position_after_sell,
 )
 from src.core.v71.skills.exit_calc_skill import stage_after_partial_exit
 from src.core.v71.v71_constants import V71Constants
+from src.database.models_v71 import (
+    PositionSource,
+    TradeEventType,
+)
 from src.utils.feature_flags import require_enabled
 
-# ---------------------------------------------------------------------------
-# Trade events
-# ---------------------------------------------------------------------------
+if TYPE_CHECKING:
+    pass
 
-# Allowed buy event types (§6.2 + Scenario A).
+
+log = logging.getLogger(__name__)
+
+_NFR1_HOT_PATH_BUDGET = V71Constants.NFR1_HOT_PATH_BUDGET_SECONDS
+
+# Allowed buy / sell event types — kept as string sets for backward
+# compatibility with caller code; mapped to TradeEventType enum at the
+# trade_events INSERT site.
 BUY_EVENT_TYPES = frozenset(
-    {"BUY_EXECUTED", "PYRAMID_BUY", "MANUAL_PYRAMID_BUY"}
+    {"BUY_EXECUTED", "PYRAMID_BUY", "MANUAL_PYRAMID_BUY", "MANUAL_BUY"}
 )
-
-# Allowed sell event types -- maps to whether they advance the stop ladder.
 SELL_EVENT_TYPES = frozenset(
     {"PROFIT_TAKE_5", "PROFIT_TAKE_10", "STOP_LOSS", "TS_EXIT", "MANUAL_SELL"}
 )
 
 
-@dataclass(frozen=True)
+# String event_type → TradeEventType enum. MANUAL_SELL maps to
+# MANUAL_FULL_EXIT or MANUAL_PARTIAL_EXIT depending on remaining qty
+# (caller decides; helper below).
+_BUY_EVENT_MAP: dict[str, TradeEventType] = {
+    "BUY_EXECUTED": TradeEventType.BUY_EXECUTED,
+    "PYRAMID_BUY": TradeEventType.PYRAMID_BUY,
+    "MANUAL_PYRAMID_BUY": TradeEventType.MANUAL_PYRAMID_BUY,
+    "MANUAL_BUY": TradeEventType.MANUAL_BUY,
+}
+_SELL_EVENT_MAP: dict[str, TradeEventType] = {
+    "PROFIT_TAKE_5": TradeEventType.PROFIT_TAKE_5,
+    "PROFIT_TAKE_10": TradeEventType.PROFIT_TAKE_10,
+    "STOP_LOSS": TradeEventType.STOP_LOSS,
+    "TS_EXIT": TradeEventType.TS_EXIT,
+}
+
+
+# ---------------------------------------------------------------------------
+# DTO mirror of trade_events (caller-facing TradeEvent type)
+# ---------------------------------------------------------------------------
+
+# Re-export the frozen dataclass shape callers used pre-P-Wire-Box-4.
+# Implementation now reads from the trade_events ORM table; the in-memory
+# dataclass survives so existing code paths (telegram /today, /recent,
+# DailySummary) keep their type hints stable.
+
+
+@_dataclass(frozen=True)
 class TradeEvent:
-    """One row of the future ``trade_events`` table."""
+    """Frozen snapshot of a ``trade_events`` row."""
 
     event_type: str
     position_id: str
@@ -64,12 +140,27 @@ class TradeEvent:
     price: int
     timestamp: datetime
     events_reset: bool = False
-    """Set when an add-buy triggered the §6 reset (logged for audit)."""
+
+
+def _trade_event_from_orm(orm) -> TradeEvent:  # type: ignore[no-untyped-def]
+    """Convert ORM TradeEvent → frozen TradeEvent (DTO)."""
+    payload = orm.payload or {}
+    events_reset = bool(payload.get("events_reset", False))
+    return TradeEvent(
+        event_type=orm.event_type.value if hasattr(orm.event_type, "value") else str(orm.event_type),
+        position_id=str(orm.position_id) if orm.position_id is not None else "",
+        stock_code=orm.stock_code,
+        quantity=int(orm.quantity) if orm.quantity is not None else 0,
+        price=int(orm.price) if orm.price is not None else 0,
+        timestamp=orm.occurred_at,
+        events_reset=events_reset,
+    )
 
 
 # ---------------------------------------------------------------------------
-# Errors
+# Errors (preserved surface)
 # ---------------------------------------------------------------------------
+
 
 class PositionNotFoundError(KeyError):
     """No position with the given id."""
@@ -83,101 +174,168 @@ class InvalidEventTypeError(ValueError):
 # V71PositionManager
 # ---------------------------------------------------------------------------
 
-class V71PositionManager:
-    """In-memory positions store + avg-price-skill applicator.
 
-    Implements :class:`PositionStore` from
-    :mod:`src.core.v71.strategies.v71_buy_executor` so a buy executor
-    can call ``add_position`` directly.
+class V71PositionManager:
+    """DB-backed manager for ``positions`` rows (+ trade_events audit).
+
+    See module docstring for architectural decisions. Callers see
+    ``async`` methods returning frozen :class:`PositionState`. The
+    manager's optional ``session=`` parameter lets V71BuyExecutor wrap
+    ``add_position + box_manager.mark_triggered`` in a single atomic
+    transaction (Q3).
     """
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        session_factory: async_sessionmaker[AsyncSession],
+        clock: Callable[[], datetime] | None = None,
+    ) -> None:
         require_enabled("v71.position_v71")
-        self._positions: dict[str, PositionState] = {}
-        self._events: list[TradeEvent] = []
+        if session_factory is None:
+            raise ValueError("session_factory is required")
+        self._sm = session_factory
+        self._clock = clock or (lambda: datetime.now(timezone.utc))
 
-    # ------------------------------------------------------------------
-    # PositionStore Protocol  (consumed by V71BuyExecutor)
-    # ------------------------------------------------------------------
+    # -- session helpers -------------------------------------------------
 
-    async def rollback_in_memory_position(self, position_id: str) -> None:
-        """Compensating rollback used by V71BuyExecutor when the
-        subsequent ``box_manager.mark_triggered`` fails (P-Wire-Box-1).
+    @staticmethod
+    def _ensure_in_transaction(session: AsyncSession) -> None:
+        """Security H1: external session must own a transaction.
 
-        Removes the position record AND the most recently-appended
-        BUY_EXECUTED event tied to it. Idempotent: rolling back an
-        unknown position_id is a no-op (the in-memory state is already
-        the desired post-rollback shape).
-
-        Removed in P-Wire-Box-4 once positions live in the same DB
-        transaction as the box update.
+        ``with_for_update`` is silently lost when the session has no
+        active begin() — failing loud is safer than a broken lock.
         """
-        state = self._positions.pop(position_id, None)
-        if state is None:
-            return
-        # Remove the most recent BUY_EXECUTED event for this position.
-        # In normal flow add_position appends exactly one such event
-        # immediately before mark_triggered runs; scanning from the end
-        # keeps this safe under any future reordering.
-        for idx in range(len(self._events) - 1, -1, -1):
-            event = self._events[idx]
-            if (
-                event.position_id == position_id
-                and event.event_type == "BUY_EXECUTED"
-            ):
-                del self._events[idx]
-                break
+        if not session.in_transaction():
+            raise ValueError(
+                "external session must be inside a transaction "
+                "(call session.begin() before passing it to V71PositionManager)"
+            )
+
+    async def _with_session(
+        self,
+        provided: AsyncSession | None,
+        inner: Callable[..., Awaitable[object]],
+        **kwargs: object,
+    ) -> object:
+        if provided is not None:
+            self._ensure_in_transaction(provided)
+            return await inner(provided, **kwargs)
+        async with self._sm() as session, session.begin():
+            return await inner(session, **kwargs)
+
+    # ------------------------------------------------------------------
+    # Mutations
+    # ------------------------------------------------------------------
 
     async def add_position(
         self,
         *,
         stock_code: str,
-        tracked_stock_id: str,
-        triggered_box_id: str,
-        path_type: str,
+        stock_name: str | None = None,
+        tracked_stock_id: str | None,
+        triggered_box_id: str | None,
+        path_type: str,  # "PATH_A" | "PATH_B" | "MANUAL"
         quantity: int,
         weighted_avg_price: int,
         opened_at: datetime,
-    ) -> str:
-        """Insert a new OPEN position. Returns ``position_id``."""
+        actual_capital_invested: int | None = None,
+        session: AsyncSession | None = None,
+    ) -> PositionState:
+        """Insert a new OPEN position + BUY_EXECUTED trade_event in one
+        transaction. Returns the frozen state.
+
+        The ``session=`` parameter is the Q3 atomic seam: V71BuyExecutor
+        passes its outer session so this INSERT and a subsequent
+        ``box_manager.mark_triggered`` either both commit or both roll
+        back (orphan-box-vs-orphan-position elimination).
+        """
         if quantity <= 0:
             raise ValueError("quantity must be positive")
         if weighted_avg_price <= 0:
             raise ValueError("weighted_avg_price must be positive")
 
-        position_id = str(uuid.uuid4())
-        fixed_stop = int(
-            round(weighted_avg_price * (1.0 + V71Constants.STOP_LOSS_INITIAL_PCT))
-        )
-        state = PositionState(
-            position_id=position_id,
+        return await self._with_session(
+            session,
+            self._add_position_inner,
             stock_code=stock_code,
+            stock_name=stock_name or stock_code,
             tracked_stock_id=tracked_stock_id,
             triggered_box_id=triggered_box_id,
             path_type=path_type,
+            quantity=quantity,
             weighted_avg_price=weighted_avg_price,
-            initial_avg_price=weighted_avg_price,
+            opened_at=opened_at,
+            actual_capital_invested=(
+                actual_capital_invested
+                if actual_capital_invested is not None
+                else weighted_avg_price * quantity
+            ),
+        )
+
+    async def _add_position_inner(
+        self,
+        session: AsyncSession,
+        *,
+        stock_code: str,
+        stock_name: str,
+        tracked_stock_id: str | None,
+        triggered_box_id: str | None,
+        path_type: str,
+        quantity: int,
+        weighted_avg_price: int,
+        opened_at: datetime,
+        actual_capital_invested: int,
+    ) -> PositionState:
+        # Map path_type → PositionSource. Unknown path_type defaults to
+        # MANUAL so callers cannot silently invent enum values.
+        source_value = _PATH_TO_SOURCE.get(path_type, "MANUAL")
+        try:
+            source = PositionSource(source_value)
+        except ValueError as exc:
+            raise ValueError(
+                f"unknown path_type {path_type!r} (expected PATH_A / PATH_B / MANUAL)"
+            ) from exc
+
+        fixed_stop = int(
+            round(weighted_avg_price * (1.0 + V71Constants.STOP_LOSS_INITIAL_PCT))
+        )
+        orm = repo.insert_position(
+            session,
+            stock_code=stock_code,
+            stock_name=stock_name,
+            tracked_stock_id=tracked_stock_id,
+            triggered_box_id=triggered_box_id,
+            source=source,
+            weighted_avg_price=weighted_avg_price,
             total_quantity=quantity,
             fixed_stop_price=fixed_stop,
-            status="OPEN",
-            opened_at=opened_at,
+            actual_capital_invested=actual_capital_invested,
         )
-        self._positions[position_id] = state
-        self._events.append(
-            TradeEvent(
-                event_type="BUY_EXECUTED",
-                position_id=position_id,
-                stock_code=stock_code,
-                quantity=quantity,
-                price=weighted_avg_price,
-                timestamp=opened_at,
-            )
+        await session.flush()
+        await session.refresh(orm)
+        # trade_event same-tx INSERT (Q4)
+        repo.insert_event(
+            session,
+            event_type=TradeEventType.BUY_EXECUTED,
+            position_id=orm.id,
+            stock_code=stock_code,
+            quantity=quantity,
+            price=weighted_avg_price,
+            occurred_at=opened_at,
+            avg_price_after=weighted_avg_price,
         )
-        return position_id
-
-    # ------------------------------------------------------------------
-    # apply_buy / apply_sell
-    # ------------------------------------------------------------------
+        await session.flush()
+        log.info(
+            "v71_position_added",
+            extra={
+                "position_id": str(orm.id),
+                "stock_code": stock_code,
+                "tracked_stock_id": str(tracked_stock_id) if tracked_stock_id else None,
+                "path_type": path_type,
+            },
+        )
+        return from_orm(orm)
 
     async def apply_buy(
         self,
@@ -187,35 +345,80 @@ class V71PositionManager:
         buy_quantity: int,
         event_type: str = "PYRAMID_BUY",
         when: datetime | None = None,
-    ) -> PositionUpdate:
+        session: AsyncSession | None = None,
+    ) -> PositionState:
         """Add to an existing position (§6.2 weighted avg + event reset).
 
-        Args:
-            event_type: one of ``BUY_EVENT_TYPES`` -- distinguishes
-                automated PYRAMID_BUY from MANUAL_PYRAMID_BUY (Scenario A).
+        Calls avg_price_skill.update_position_after_buy and persists
+        the result + trade_event in one transaction.
         """
         if event_type not in BUY_EVENT_TYPES:
             raise InvalidEventTypeError(
                 f"buy event_type must be one of {sorted(BUY_EVENT_TYPES)}; "
                 f"got {event_type!r}"
             )
-        state = self._get(position_id)
-        update = update_position_after_buy(
-            state, buy_price=buy_price, buy_quantity=buy_quantity
+        return await self._with_session(
+            session,
+            self._apply_buy_inner,
+            position_id=position_id,
+            buy_price=buy_price,
+            buy_quantity=buy_quantity,
+            event_type=event_type,
+            when=when or self._clock(),
         )
-        self._apply(state, update)
-        self._events.append(
-            TradeEvent(
-                event_type=event_type,
-                position_id=position_id,
-                stock_code=state.stock_code,
+
+    async def _apply_buy_inner(
+        self,
+        session: AsyncSession,
+        *,
+        position_id: str,
+        buy_price: int,
+        buy_quantity: int,
+        event_type: str,
+        when: datetime,
+    ) -> PositionState:
+        t0 = time.perf_counter()
+        try:
+            orm = await repo.fetch_position(session, position_id, for_update=True)
+            if orm is None:
+                raise PositionNotFoundError(f"No position with id {position_id!r}")
+            state_before = from_orm(orm)
+            avg_before = state_before.weighted_avg_price
+            update = update_position_after_buy(
+                state_before, buy_price=buy_price, buy_quantity=buy_quantity,
+            )
+            self._apply_update_to_orm(orm, update)
+            # apply_buy never closes a position; status stays OPEN /
+            # PARTIAL_CLOSED. PRD §6.2 — pyramid revives PARTIAL_CLOSED
+            # back to OPEN (full lots restored, ladder reset to stage 1).
+            if state_before.status is PositionStatus.PARTIAL_CLOSED:
+                orm.status = PositionStatus.OPEN
+            await session.flush()
+            await session.refresh(orm)
+            repo.insert_event(
+                session,
+                event_type=_BUY_EVENT_MAP.get(event_type, TradeEventType.PYRAMID_BUY),
+                position_id=orm.id,
+                stock_code=orm.stock_code,
                 quantity=buy_quantity,
                 price=buy_price,
-                timestamp=when or datetime.now(),
+                occurred_at=when,
                 events_reset=update.events_reset,
+                avg_price_before=avg_before,
+                avg_price_after=int(orm.weighted_avg_price),
             )
-        )
-        return update
+            await session.flush()
+            return from_orm(orm)
+        finally:
+            elapsed = time.perf_counter() - t0
+            if elapsed > _NFR1_HOT_PATH_BUDGET:
+                log.warning(
+                    "v71_position_apply_buy_slow",
+                    extra={
+                        "position_id": position_id,
+                        "elapsed_seconds": round(elapsed, 4),
+                    },
+                )
 
     async def apply_sell(
         self,
@@ -225,166 +428,383 @@ class V71PositionManager:
         sell_price: int,
         event_type: str,
         when: datetime | None = None,
-    ) -> PositionUpdate:
+        session: AsyncSession | None = None,
+    ) -> PositionState:
         """Reduce a position's quantity (§6.4 avg unchanged).
 
-        Advances the stop ladder when ``event_type`` is a profit-take:
+        Advances the stop ladder for profit-takes (§5.4):
             PROFIT_TAKE_5  -> profit_5_executed = True, stop -> -2%
             PROFIT_TAKE_10 -> profit_10_executed = True, stop -> +4%
             STOP_LOSS / TS_EXIT / MANUAL_SELL -> ladder unchanged.
 
-        Sets ``status = CLOSED`` + records ``closed_at`` when total reaches 0.
+        Sets ``status = CLOSED`` + ``closed_at`` when total reaches 0.
+        ``status`` and ``total_quantity`` are written in the same flush
+        so PostgreSQL ``position_closed_consistency`` CHECK is never
+        transiently violated (blocker 1).
         """
         if event_type not in SELL_EVENT_TYPES:
             raise InvalidEventTypeError(
                 f"sell event_type must be one of {sorted(SELL_EVENT_TYPES)}; "
                 f"got {event_type!r}"
             )
-        state = self._get(position_id)
-        update = update_position_after_sell(state, sell_quantity=sell_quantity)
-
-        # Advance ladder for profit-takes (§5.4) before applying.
-        new_p5 = state.profit_5_executed
-        new_p10 = state.profit_10_executed
-        if event_type == "PROFIT_TAKE_5":
-            new_p5 = True
-        elif event_type == "PROFIT_TAKE_10":
-            new_p10 = True
-
-        new_fixed_stop = (
-            stage_after_partial_exit(new_p5, new_p10, state.weighted_avg_price)
-            if event_type in {"PROFIT_TAKE_5", "PROFIT_TAKE_10"}
-            else state.fixed_stop_price
+        return await self._with_session(
+            session,
+            self._apply_sell_inner,
+            position_id=position_id,
+            sell_quantity=sell_quantity,
+            sell_price=sell_price,
+            event_type=event_type,
+            when=when or self._clock(),
         )
 
-        # Build the effective update and apply.
-        effective = PositionUpdate(
-            weighted_avg_price=update.weighted_avg_price,
-            initial_avg_price=update.initial_avg_price,
-            total_quantity=update.total_quantity,
-            fixed_stop_price=new_fixed_stop,
-            profit_5_executed=new_p5,
-            profit_10_executed=new_p10,
-            ts_activated=update.ts_activated,
-            ts_base_price=update.ts_base_price,
-            ts_stop_price=update.ts_stop_price,
-            ts_active_multiplier=update.ts_active_multiplier,
-            events_reset=False,
-        )
-        self._apply(state, effective)
+    async def _apply_sell_inner(
+        self,
+        session: AsyncSession,
+        *,
+        position_id: str,
+        sell_quantity: int,
+        sell_price: int,
+        event_type: str,
+        when: datetime,
+    ) -> PositionState:
+        t0 = time.perf_counter()
+        try:
+            orm = await repo.fetch_position(session, position_id, for_update=True)
+            if orm is None:
+                raise PositionNotFoundError(f"No position with id {position_id!r}")
+            state_before = from_orm(orm)
+            avg_before = state_before.weighted_avg_price
+            update = update_position_after_sell(
+                state_before, sell_quantity=sell_quantity,
+            )
 
-        # Lifecycle transitions.
-        now = when or datetime.now()
-        if state.total_quantity == 0:
-            state.status = "CLOSED"
-            state.closed_at = now
-        elif state.status == "OPEN":
-            state.status = "PARTIAL_CLOSED"
+            # Profit-take ladder advance (§5.4).
+            # Trading-logic blocker 8: PROFIT_TAKE_10 implies PROFIT_TAKE_5
+            # was already executed (§5.2 then §5.3 sequence). Even if a
+            # caller skips the sequence (unit-test bug, calculator regression),
+            # we force ``profit_5_executed`` so the ladder lookup never
+            # produces an undefined state.
+            new_p5 = state_before.profit_5_executed
+            new_p10 = state_before.profit_10_executed
+            if event_type == "PROFIT_TAKE_5":
+                new_p5 = True
+            elif event_type == "PROFIT_TAKE_10":
+                new_p5 = True
+                new_p10 = True
 
-        self._events.append(
-            TradeEvent(
-                event_type=event_type,
-                position_id=position_id,
-                stock_code=state.stock_code,
+            new_fixed_stop = (
+                stage_after_partial_exit(new_p5, new_p10, state_before.weighted_avg_price)
+                if event_type in {"PROFIT_TAKE_5", "PROFIT_TAKE_10"}
+                else state_before.fixed_stop_price
+            )
+
+            # Apply skill update + ladder advance to ORM.
+            orm.weighted_avg_price = Decimal(update.weighted_avg_price)
+            orm.initial_avg_price = Decimal(update.initial_avg_price)
+            orm.total_quantity = int(update.total_quantity)
+            orm.fixed_stop_price = Decimal(new_fixed_stop)
+            orm.profit_5_executed = bool(new_p5)
+            orm.profit_10_executed = bool(new_p10)
+            orm.ts_activated = bool(update.ts_activated)
+            orm.ts_base_price = (
+                Decimal(update.ts_base_price)
+                if update.ts_base_price is not None
+                else None
+            )
+            orm.ts_stop_price = (
+                Decimal(update.ts_stop_price)
+                if update.ts_stop_price is not None
+                else None
+            )
+            orm.ts_active_multiplier = (
+                Decimal(str(update.ts_active_multiplier))
+                if update.ts_active_multiplier is not None
+                else None
+            )
+
+            # Lifecycle (blocker 1: status + total_quantity together).
+            if update.total_quantity == 0:
+                orm.status = PositionStatus.CLOSED
+                orm.closed_at = when
+                if orm.close_reason is None:
+                    orm.close_reason = event_type
+            elif state_before.status is PositionStatus.OPEN:
+                orm.status = PositionStatus.PARTIAL_CLOSED
+            await session.flush()
+            await session.refresh(orm)
+
+            # Map sell event_type to ORM enum. MANUAL_SELL splits by
+            # remaining quantity (full vs partial).
+            if event_type == "MANUAL_SELL":
+                ev_enum = (
+                    TradeEventType.MANUAL_FULL_EXIT
+                    if update.total_quantity == 0
+                    else TradeEventType.MANUAL_PARTIAL_EXIT
+                )
+            else:
+                ev_enum = _SELL_EVENT_MAP[event_type]
+            repo.insert_event(
+                session,
+                event_type=ev_enum,
+                position_id=orm.id,
+                stock_code=orm.stock_code,
                 quantity=sell_quantity,
                 price=sell_price,
-                timestamp=now,
+                occurred_at=when,
+                avg_price_before=avg_before,
+                avg_price_after=int(orm.weighted_avg_price),
             )
-        )
-        return effective
+            await session.flush()
+            return from_orm(orm)
+        finally:
+            elapsed = time.perf_counter() - t0
+            if elapsed > _NFR1_HOT_PATH_BUDGET:
+                log.warning(
+                    "v71_position_apply_sell_slow",
+                    extra={
+                        "position_id": position_id,
+                        "elapsed_seconds": round(elapsed, 4),
+                    },
+                )
 
-    # ------------------------------------------------------------------
-    # Lifecycle helpers
-    # ------------------------------------------------------------------
-
-    def close_position(
+    async def close_position(
         self,
         position_id: str,
         *,
         when: datetime | None = None,
+        reason: str | None = None,
+        session: AsyncSession | None = None,
     ) -> PositionState:
         """Mark a zero-quantity position as CLOSED.
 
-        Idempotent: closing an already-CLOSED position is a no-op.
+        Idempotent — closing an already-CLOSED position is a no-op.
         Raises if quantity is non-zero (caller must apply_sell first).
         """
-        state = self._get(position_id)
-        if state.total_quantity != 0:
+        return await self._with_session(
+            session,
+            self._close_position_inner,
+            position_id=position_id,
+            when=when or self._clock(),
+            reason=reason,
+        )
+
+    async def _close_position_inner(
+        self,
+        session: AsyncSession,
+        *,
+        position_id: str,
+        when: datetime,
+        reason: str | None,
+    ) -> PositionState:
+        orm = await repo.fetch_position(session, position_id, for_update=True)
+        if orm is None:
+            raise PositionNotFoundError(f"No position with id {position_id!r}")
+        if int(orm.total_quantity) != 0:
             raise ValueError(
                 f"Cannot close position {position_id} with non-zero quantity "
-                f"({state.total_quantity})"
+                f"({orm.total_quantity})"
             )
-        if state.status != "CLOSED":
-            state.status = "CLOSED"
-            state.closed_at = when or datetime.now()
-        return state
+        if orm.status is not PositionStatus.CLOSED:
+            orm.status = PositionStatus.CLOSED
+            orm.closed_at = when
+            if reason is not None and orm.close_reason is None:
+                orm.close_reason = reason
+            await session.flush()
+            await session.refresh(orm)
+        return from_orm(orm)
 
     # ------------------------------------------------------------------
     # Queries
     # ------------------------------------------------------------------
 
-    def get(self, position_id: str) -> PositionState:
-        return self._get(position_id)
+    async def get(
+        self,
+        position_id: str,
+        *,
+        session: AsyncSession | None = None,
+    ) -> PositionState:
+        return await self._with_session(
+            session, self._get_inner, position_id=position_id,
+        )
 
-    def get_by_stock(
-        self, stock_code: str, path_type: str
+    async def _get_inner(
+        self, session: AsyncSession, *, position_id: str,
+    ) -> PositionState:
+        orm = await repo.fetch_position(session, position_id)
+        if orm is None:
+            raise PositionNotFoundError(f"No position with id {position_id!r}")
+        return from_orm(orm)
+
+    async def get_by_stock(
+        self,
+        stock_code: str,
+        path_type: str,
+        *,
+        session: AsyncSession | None = None,
     ) -> PositionState | None:
-        """Return the active (OPEN/PARTIAL_CLOSED) position for the
-        given (stock_code, path_type) pair, or None.
+        return await self._with_session(
+            session,
+            self._get_by_stock_inner,
+            stock_code=stock_code,
+            path_type=path_type,
+        )
 
-        Same-stock-same-path active positions are unique by tracked-stock
-        construction (gist EXCLUDE on tracked_stocks).
+    async def _get_by_stock_inner(
+        self,
+        session: AsyncSession,
+        *,
+        stock_code: str,
+        path_type: str,
+    ) -> PositionState | None:
+        source_value = _PATH_TO_SOURCE.get(path_type, path_type)
+        orm = await repo.fetch_active_for_stock_path(
+            session, stock_code, source_value,
+        )
+        return from_orm(orm) if orm is not None else None
+
+    async def list_open(
+        self,
+        *,
+        limit: int = 1000,
+        session: AsyncSession | None = None,
+    ) -> list[PositionState]:
+        return await self._with_session(
+            session, self._list_open_inner, limit=limit,
+        )
+
+    async def _list_open_inner(
+        self,
+        session: AsyncSession,
+        *,
+        limit: int,
+    ) -> list[PositionState]:
+        rows = await repo.list_open(session, limit=limit)
+        return [from_orm(o) for o in rows]
+
+    async def list_for_stock(
+        self,
+        stock_code: str,
+        *,
+        include_closed: bool = False,
+        session: AsyncSession | None = None,
+    ) -> list[PositionState]:
+        return await self._with_session(
+            session,
+            self._list_for_stock_inner,
+            stock_code=stock_code,
+            include_closed=include_closed,
+        )
+
+    async def lock_active_for_stock(
+        self,
+        stock_code: str,
+        *,
+        session: AsyncSession,
+    ) -> list[PositionState]:
+        """``SELECT ... FOR UPDATE`` on every active (non-CLOSED) position
+        for ``stock_code``. Caller owns the transaction.
+
+        Used by V71Reconciler Scenario B (이중 경로 비례 차감) so the
+        drain-MANUAL-then-split allocation is race-free against
+        ExitExecutor / BuyExecutor running concurrently.
+
+        Raises ``ValueError`` if ``session`` is not in a transaction
+        (security H1: silently-lost FOR UPDATE is worse than no lock).
         """
-        for pos in self._positions.values():
-            if pos.status == "CLOSED":
-                continue
-            if pos.stock_code == stock_code and pos.path_type == path_type:
-                return pos
-        return None
+        self._ensure_in_transaction(session)
+        rows = await repo.fetch_active_for_stock(
+            session, stock_code, for_update=True,
+        )
+        return [from_orm(o) for o in rows]
 
-    def list_open(self) -> list[PositionState]:
-        """All positions that are still OPEN or PARTIAL_CLOSED."""
-        return [p for p in self._positions.values() if p.status != "CLOSED"]
+    async def _list_for_stock_inner(
+        self,
+        session: AsyncSession,
+        *,
+        stock_code: str,
+        include_closed: bool,
+    ) -> list[PositionState]:
+        rows = await repo.list_for_stock(
+            session, stock_code, include_closed=include_closed,
+        )
+        return [from_orm(o) for o in rows]
 
-    def list_for_stock(self, stock_code: str) -> list[PositionState]:
-        return [p for p in self._positions.values() if p.stock_code == stock_code]
+    async def list_events(
+        self,
+        *,
+        position_id: str | None = None,
+        since: datetime | None = None,
+        limit: int = 1000,
+        session: AsyncSession | None = None,
+    ) -> list[TradeEvent]:
+        return await self._with_session(
+            session,
+            self._list_events_inner,
+            position_id=position_id,
+            since=since,
+            limit=limit,
+        )
 
-    def list_events(self, *, position_id: str | None = None) -> list[TradeEvent]:
-        if position_id is None:
-            return list(self._events)
-        return [e for e in self._events if e.position_id == position_id]
+    async def _list_events_inner(
+        self,
+        session: AsyncSession,
+        *,
+        position_id: str | None,
+        since: datetime | None,
+        limit: int,
+    ) -> list[TradeEvent]:
+        if position_id is not None:
+            rows = await repo.list_events_for_position(session, position_id)
+        elif since is not None:
+            rows = await repo.list_events_since(session, since=since, limit=limit)
+        else:
+            # No filter: return events for last 24 hours by default
+            now = self._clock()
+            from datetime import timedelta
+            rows = await repo.list_events_since(
+                session, since=now - timedelta(days=1), limit=limit,
+            )
+        return [_trade_event_from_orm(o) for o in rows]
 
     # ------------------------------------------------------------------
-    # Internals
+    # Internal helpers
     # ------------------------------------------------------------------
-
-    def _get(self, position_id: str) -> PositionState:
-        try:
-            return self._positions[position_id]
-        except KeyError as e:
-            raise PositionNotFoundError(
-                f"No position with id {position_id!r}"
-            ) from e
 
     @staticmethod
-    def _apply(state: PositionState, update: PositionUpdate) -> None:
-        state.weighted_avg_price = update.weighted_avg_price
-        state.initial_avg_price = update.initial_avg_price
-        state.total_quantity = update.total_quantity
-        state.fixed_stop_price = update.fixed_stop_price
-        state.profit_5_executed = update.profit_5_executed
-        state.profit_10_executed = update.profit_10_executed
-        state.ts_activated = update.ts_activated
-        state.ts_base_price = update.ts_base_price
-        state.ts_stop_price = update.ts_stop_price
-        state.ts_active_multiplier = update.ts_active_multiplier
+    def _apply_update_to_orm(orm, update) -> None:  # type: ignore[no-untyped-def]
+        """Apply a PositionUpdate (avg_price_skill result) to an ORM row.
+
+        Single mutation site so blocker 9 (Decimal/int round-trip) is
+        contained — float ts_active_multiplier goes through ``str()``
+        before Decimal cast to keep the precision PRD §5.5 intends.
+        """
+        orm.weighted_avg_price = Decimal(update.weighted_avg_price)
+        orm.initial_avg_price = Decimal(update.initial_avg_price)
+        orm.total_quantity = int(update.total_quantity)
+        orm.fixed_stop_price = Decimal(update.fixed_stop_price)
+        orm.profit_5_executed = bool(update.profit_5_executed)
+        orm.profit_10_executed = bool(update.profit_10_executed)
+        orm.ts_activated = bool(update.ts_activated)
+        orm.ts_base_price = (
+            Decimal(update.ts_base_price) if update.ts_base_price is not None else None
+        )
+        orm.ts_stop_price = (
+            Decimal(update.ts_stop_price) if update.ts_stop_price is not None else None
+        )
+        orm.ts_active_multiplier = (
+            Decimal(str(update.ts_active_multiplier))
+            if update.ts_active_multiplier is not None
+            else None
+        )
 
 
 __all__ = [
     "BUY_EVENT_TYPES",
-    "SELL_EVENT_TYPES",
     "InvalidEventTypeError",
     "PositionNotFoundError",
+    "PositionState",
+    "PositionStatus",
+    "SELL_EVENT_TYPES",
     "TradeEvent",
     "V71PositionManager",
 ]

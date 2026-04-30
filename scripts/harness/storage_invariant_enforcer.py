@@ -53,7 +53,8 @@ KNOWN_PERSISTENT_TYPES: dict[str, str] = {
 # Removed as each unit lands. New violations not on this list BLOCK.
 KNOWN_VIOLATIONS_TO_RESOLVE: dict[str, str] = {
     # box_manager.py:99 was resolved by P-Wire-Box-1 (DB-backed conversion).
-    "src/core/v71/position/v71_position_manager.py:96": "P-Wire-Box-4",
+    # v71_position_manager.py:96 was resolved by P-Wire-Box-4 (DB-backed
+    # conversion + atomic transactions Q3/Q9).
 }
 
 # Files exempt entirely (e.g. ORM definitions themselves).

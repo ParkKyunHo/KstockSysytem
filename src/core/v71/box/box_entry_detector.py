@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Awaitable, Callable
+from datetime import datetime, timedelta, timezone
 
 from src.core.v71.box.box_manager import BoxRecord, V71BoxManager
 from src.core.v71.candle.types import V71Candle as Candle
@@ -47,6 +48,12 @@ from src.core.v71.v71_constants import V71Timeframe
 from src.utils.feature_flags import require_enabled
 
 log = logging.getLogger(__name__)
+
+# Default block window after a BuyExecutor compensation event
+# (atomic transaction failure). Long enough for the operator to react,
+# short enough that a transient DB hiccup doesn't permanently disable
+# a healthy box.
+_DEFAULT_COOLDOWN_SECONDS = 300.0
 
 
 # Async callback shape: detector -> buy executor.
@@ -91,7 +98,46 @@ class V71BoxEntryDetector:
         self._market_context = market_context
         # Per-stock previous-candle cache (PULLBACK PATH_A needs it).
         self._prev: dict[str, Candle] = {}
+        # Per-box cooldown until-times. Populated by ``set_cooldown``
+        # from the BuyExecutor compensation path. In-memory only —
+        # a process restart clears the dict, which is intentional:
+        # a fresh process should re-evaluate from the current DB state
+        # rather than honor stale safety windows.
+        self._cooldown_until: dict[str, datetime] = {}
         self._started = False
+
+    # ------------------------------------------------------------------
+    # Cooldown (P-Wire-Box-4)
+    # ------------------------------------------------------------------
+
+    def set_cooldown(
+        self, box_id: str, seconds: float = _DEFAULT_COOLDOWN_SECONDS,
+    ) -> None:
+        """Block ``box_id`` from firing for ``seconds`` (default 300s).
+
+        Called by V71BuyExecutor's compensation path on atomic-transaction
+        failure so the next PRICE_TICK does not immediately retry the
+        same box (trading-logic blocker 1: infinite-retry guard).
+        Repeated calls extend the window — the latest ``until`` wins.
+        """
+        until = datetime.now(timezone.utc) + timedelta(seconds=seconds)
+        self._cooldown_until[box_id] = until
+        log.warning(
+            "v71_box_cooldown_set: box=%s seconds=%s until=%s",
+            box_id, seconds, until.isoformat(),
+        )
+
+    def _is_in_cooldown(self, box_id: str) -> bool:
+        """True iff ``box_id`` was set_cooldown()'d and the window
+        hasn't expired. Expired entries are pruned on read so the dict
+        stays bounded."""
+        until = self._cooldown_until.get(box_id)
+        if until is None:
+            return False
+        if datetime.now(timezone.utc) < until:
+            return True
+        self._cooldown_until.pop(box_id, None)
+        return False
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -168,6 +214,10 @@ class V71BoxEntryDetector:
         market_ctx = self._market_context(completed_candle)
         outcomes: list[object] = []
         for box_record in boxes:
+            # P-Wire-Box-4 cooldown — block re-fire after a
+            # BuyExecutor compensation event.
+            if self._is_in_cooldown(box_record.id):
+                continue
             decision = self._evaluate_one(
                 box_record=box_record,
                 current_candle=completed_candle,

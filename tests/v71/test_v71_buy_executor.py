@@ -86,10 +86,25 @@ class FakeNotifier:
 class FakePositionStore:
     added: list[dict] = field(default_factory=list)
 
-    async def add_position(self, **kwargs) -> str:
+    async def add_position(self, **kwargs):
+        from src.core.v71.position.state import PositionState, PositionStatus
+
         pos_id = f"pos-{len(self.added) + 1}"
         self.added.append({"id": pos_id, **kwargs})
-        return pos_id
+        # P-Wire-Box-4: PositionStore protocol now returns PositionState.
+        return PositionState(
+            position_id=pos_id,
+            stock_code=kwargs["stock_code"],
+            tracked_stock_id=kwargs.get("tracked_stock_id"),
+            triggered_box_id=kwargs.get("triggered_box_id"),
+            path_type=kwargs.get("path_type", "PATH_A"),
+            weighted_avg_price=int(kwargs["weighted_avg_price"]),
+            initial_avg_price=int(kwargs["weighted_avg_price"]),
+            total_quantity=int(kwargs["quantity"]),
+            fixed_stop_price=int(kwargs["weighted_avg_price"] * 0.95),
+            status=PositionStatus.OPEN,
+            opened_at=kwargs["opened_at"],
+        )
 
 
 class FakeExchange:

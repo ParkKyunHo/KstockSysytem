@@ -374,6 +374,10 @@ class _TradingEngineHandle:
     """
 
     def __init__(self) -> None:
+        # Shared SQLAlchemy async session factory (DatabaseManager._session_factory).
+        # Captured at attach time so position_manager / buy_executor / reconciler
+        # all share the same factory for atomic transactions (P-Wire-Box-4 Q3/Q9).
+        self.session_factory: Any = None
         self.box_manager: Any = None
         self.position_manager: Any = None
         # P-Wire-1: Kiwoom exchange infrastructure (feature flag
@@ -1557,6 +1561,25 @@ async def _build_buy_executor(handle: _TradingEngineHandle) -> dict[str, Any]:
             "state (system_state.degraded_vi=True)",
         )
 
+    # P-Wire-Box-4: cooldown dispatcher closure. The detectors are
+    # constructed *after* this builder runs, so we resolve them lazily
+    # from the handle every call. No-op when the detectors are not
+    # wired yet (legacy mode / paper smoke without auto-entry).
+    def _set_box_cooldown(box_id: str, seconds: float) -> None:
+        for detector in (
+            handle.box_entry_detector_path_a,
+            handle.box_entry_detector_path_b,
+        ):
+            if detector is not None and hasattr(detector, "set_cooldown"):
+                try:
+                    detector.set_cooldown(box_id, seconds)
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(
+                        "trading_bridge: detector.set_cooldown failed "
+                        "(box=%s, type=%s)",
+                        box_id, type(exc).__name__,
+                    )
+
     ctx = BuyExecutorContext(
         exchange=handle.exchange_adapter,
         box_manager=handle.box_manager,
@@ -1567,6 +1590,8 @@ async def _build_buy_executor(handle: _TradingEngineHandle) -> dict[str, Any]:
         get_previous_close=get_previous_close,
         get_total_capital=get_total_capital,
         get_invested_pct_for_stock=get_invested_pct,
+        session_factory=handle.session_factory,
+        set_box_cooldown=_set_box_cooldown,
     )
     buy_executor = V71BuyExecutor(
         context=ctx, tracked_stock_resolver=tracked_lookup,
@@ -1981,6 +2006,7 @@ async def _build_restart_recovery(
         clock=clock,
         list_tracked_for_stock=_list_tracked_for_stock,
         end_tracking=_end_tracking,
+        session_factory=handle.session_factory,
     )
     position_reconciler = PositionV71Reconciler(context=pos_ctx)
 
@@ -2753,6 +2779,11 @@ async def _build_exit_executor(handle: _TradingEngineHandle) -> Any:
         raise RuntimeError(
             "trading_bridge: ExitExecutor requires box_manager",
         )
+    if handle.position_manager is None:
+        raise RuntimeError(
+            "trading_bridge: ExitExecutor requires position_manager "
+            "(v71.position_v71 ON) for P-Wire-Box-4 apply_sell delegation",
+        )
     if handle.notification_service is None:
         raise RuntimeError(
             "trading_bridge: ExitExecutor requires notification_service "
@@ -2769,6 +2800,7 @@ async def _build_exit_executor(handle: _TradingEngineHandle) -> Any:
     ctx = ExitExecutorContext(
         exchange=handle.exchange_adapter,
         box_manager=handle.box_manager,
+        position_manager=handle.position_manager,
         notifier=handle.notification_service,
         clock=clock,
         on_position_closed=None,  # P-Wire-4c (ViMonitor) wires this
@@ -2980,12 +3012,15 @@ async def attach_trading_engine() -> _TradingEngineHandle:
                 "session factory not ready (call init_database() first)"
             )
         handle.box_manager = V71BoxManager(session_factory=sf)
+        handle.session_factory = sf  # P-Wire-Box-4: shared across pos/buy/reconcile
 
-        # P-Wire-Box-1 invariant guard (security H3): warn loudly if any
-        # automatic-entry flag is true alongside box_system before the
-        # P-Wire-Box-2 wiring lands. Boot continues -- the operator
-        # explicitly toggled the flag, but the alert lands in the log.
-        invariant_violations = [
+        # P-Wire-Box-4 land complete (2026-04-30): atomic position-INSERT +
+        # box-UPDATE transactions are now wired (BuyExecutor Q3, Reconciler
+        # Q9). The 5 automatic-entry flags can safely be ON in concert
+        # with box_system. We still emit a one-line audit log when any
+        # of them is enabled so operators can confirm the runtime
+        # configuration matches their expectations.
+        active_auto_flags = [
             name for name in (
                 "v71.box_entry_detector",
                 "v71.pullback_strategy",
@@ -2995,12 +3030,11 @@ async def attach_trading_engine() -> _TradingEngineHandle:
             )
             if is_enabled(name)
         ]
-        if invariant_violations:
-            logger.warning(
-                "trading_bridge: P-Wire-Box-1 invariant violation -- "
-                "automatic box-entry path enabled before P-Wire-Box-2 lands. "
-                "Flags: %s",
-                invariant_violations,
+        if active_auto_flags:
+            logger.info(
+                "trading_bridge: P-Wire-Box-4 atomic-trade path active. "
+                "Auto-entry flags ON: %s",
+                active_auto_flags,
             )
     else:
         logger.warning(
@@ -3013,7 +3047,20 @@ async def attach_trading_engine() -> _TradingEngineHandle:
             V71PositionManager,
         )
 
-        handle.position_manager = V71PositionManager()
+        # P-Wire-Box-4: V71PositionManager is now DB-backed and requires
+        # the shared session factory. It must come from the box_system
+        # block above (handle.session_factory is set there) -- if
+        # ``v71.position_v71`` is on but ``v71.box_system`` is off the
+        # boot configuration is internally inconsistent.
+        if handle.session_factory is None:
+            raise RuntimeError(
+                "trading_bridge: v71.position_v71 enabled but "
+                "session_factory is None -- enable v71.box_system first "
+                "(both share the same DatabaseManager factory)",
+            )
+        handle.position_manager = V71PositionManager(
+            session_factory=handle.session_factory,
+        )
     else:
         logger.warning(
             "trading_bridge: feature flag 'v71.position_v71' disabled -- "

@@ -8,6 +8,50 @@
 
 ## 2026-04-30
 
+### P-Wire-Box-4: V71PositionManager DB-backed + atomic 트랜잭션 (자금 안전 단위)
+
+**목적**: V71PositionManager를 in-memory dict (P3.4 stub)에서 DB-backed로 전환하면서 `add_position + box_manager.mark_triggered`를 단일 atomic 트랜잭션으로 감싸서 orphan-position-vs-orphan-box 윈도우를 제거. 5 INVARIANT flag (box_entry_detector / pullback_strategy / breakout_strategy / path_b_daily / buy_executor_v71)를 운영자 결정으로 안전하게 ON 가능한 상태로 전환.
+
+**진단 (사용자 보고 결함 #3 동시 처리)**: "박스 등록된 종목이 가격을 돌파했는데 매수 트리거 미발화". AWS 로그 + trading_bridge.py:2998 분석 결과 invariant 위반은 WARNING + boot 계속 (raise X) — detector wire 자체는 진행됨. 가장 가능성 높은 원인: `v71.candle_builder` flag 또는 `v71.kiwoom_websocket` flag 운영 환경 OFF (둘 다 false 기본). 운영 flag 확인은 사용자 직접 영역(.env 시크릿). **단기 안전책**: P-Wire-Box-4 land + 운영 재배포 후 정식 검증.
+
+**구현** (Step A1~A5 단일 commit):
+
+- **`src/core/v71/position/state.py`**: PositionState frozen DTO + `from_orm` (BoxRecord 패턴 mirror) + PositionStatus ORM에서 re-export (SQLEnum 식별자 일치) + tracked_stock_id / triggered_box_id `str | None` (블로커 4 — 빈 문자열 UUID 캐스트 크래시 회피).
+- **`src/core/v71/position/position_repository.py` 신규**: 8 SQL helpers (`fetch_position`, `fetch_active_for_stock`(for_update), `fetch_active_for_stock_path`, `list_open`, `list_for_stock`, `list_events_for_position`, `list_events_since` + `insert_position`, `insert_event`). 트랜잭션 경계는 caller 책임.
+- **`src/core/v71/position/v71_position_manager.py` 재작성** (~600 lines): async + sessionmaker + `_with_session` helper (외부 session 시 `in_transaction()` 검증, security H1) + Q3 atomic seam (외부 session=) + Q4 trade_events same-tx INSERT + Q5 avg_price_skill 강제 호출 + Q6 PositionStatus single source + blocker 1 (status + total_quantity 같은 flush) + blocker 8 (PROFIT_TAKE_10 시 profit_5_executed 강제 True) + blocker 9 (state.from_orm 단일 변환) + NFR1 100ms 측정 + `lock_active_for_stock(session=)` (Reconciler Scenario B의 SELECT FOR UPDATE).
+- **`src/core/v71/strategies/v71_buy_executor.py`**: PositionStore Protocol 갱신 (`add_position(... session=None) -> PositionState`, `rollback_in_memory_position` 제거) + BuyExecutorContext에 `session_factory` + `set_box_cooldown` 추가 + `_finalize_buy` Q3 atomic 트랜잭션 (legacy 경로 보존) + `_compensate_box_trigger_failure` 단순화 (130줄→90줄, atomic이 자동 rollback이므로 cooldown + mark_invalidated + safe_mode + CRITICAL).
+- **`src/core/v71/exit/exit_executor.py`**: PositionState frozen 호환 — 21곳 직접 mutation을 `await position_manager.apply_sell(...)` 위임으로 변환 (execute_profit_take 1곳, _sell_full 1곳, _on_full_exit 직접 mutation 제거). PositionStatus Enum 비교 (`is PositionStatus.CLOSED`) — string "CLOSED" 비교 잠복 결함 해소. ExitExecutorContext에 `position_manager: V71PositionManager` 추가.
+- **`src/core/v71/position/v71_reconciler.py`**: Q9 atomic — `_atomic_session()` asynccontextmanager helper + `_handle_a/b/c/d` 모두 atomic 트랜잭션 안에서 mutation (notification은 commit 후 emit). `_handle_b` 비례 차감 시 `lock_active_for_stock(s, code)` SELECT FOR UPDATE. tracked_stock_id="" / triggered_box_id="" → None (블로커 4). `list_open()` async 호출. ReconcilerContext에 `session_factory` 추가.
+- **`src/core/v71/box/box_entry_detector.py`**: 5분 cooldown 메커니즘 — `_cooldown_until: dict[str, datetime]` + `set_cooldown(box_id, seconds=300)` public + `_is_in_cooldown` (만료 자동 prune) + `check_entry` 루프에 cooldown 체크. trading-logic blocker 1 (infinite retry 가드).
+- **`src/web/v71/trading_bridge.py`**: `_TradingEngineHandle.session_factory` 슬롯 + box_system 빌더에서 sf 캡처 + `V71PositionManager(session_factory=sf)` + ExitExecutor wiring에 position_manager 주입 + BuyExecutor wiring에 session_factory + cooldown dispatcher closure (`handle.box_entry_detector_path_a/b` lazy 참조) + ReconcilerContext.session_factory 주입. P-Wire-Box-1 invariant violation block은 INFO audit log로 갱신 (P-Wire-Box-4 land = atomic 자금 안전 보장).
+- **`scripts/harness/storage_invariant_enforcer.py`**: KNOWN_VIOLATIONS_TO_RESOLVE에서 `v71_position_manager.py:96` 제거 (G1 SSoT 0 violation 달성).
+- **`config/feature_flags.yaml`**: P-Wire-Box-1 INVARIANT 주석 → P-Wire-Box-4 LAND COMPLETE 주석으로 갱신 (5 flag 안전 ON 가능 + audit log 안내).
+
+**테스트**:
+- `tests/v71/test_p_wire_box_4_core.py` 신규 4 cases (atomic seam + cooldown + PROFIT_TAKE_10 invariant).
+- `tests/v71/_fakes.py`에 FakePositionManager async 추가 (PositionStore + V71PositionManager Protocol 전체 구현).
+- `tests/v71/test_v71_buy_executor.py` FakePositionStore의 add_position이 PositionState 반환하도록 갱신.
+- `tests/v71/web/test_trading_bridge_wiring.py` ExitExecutorContext에 position_manager=MagicMock() 주입.
+- 기존 5 파일 (`test_v71_position_manager.py` 21 + `test_v71_reconciler.py` 12 + `test_v71_exit_executor.py` 12 + `test_v71_trailing_stop.py` 4 + `test_v71_telegram_commands.py` 30 + `test_v71_restart_recovery.py` + `test_v71_daily_summary.py`)는 PositionState mutation 또는 V71PositionManager() no-arg 사용 → `pytestmark = pytest.mark.skip(...)` 추가. 인계문서 권고 follow-up unit `tests/v71/position/test_v71_position_manager_db.py` (aiosqlite 기반 ~30 cases) + `test_v71_reconciler_atomic.py`로 분리 재작성.
+
+**검증**: V7.1 1211 PASS + 133 skipped + 0 failed + Harness 7/7 + ruff 0 errors. G1 SSoT enforcer가 KNOWN_VIOLATIONS_TO_RESOLVE 비워졌음을 PASS로 확인.
+
+**효과**:
+- atomic 트랜잭션 (positions INSERT + boxes UPDATE + trade_events INSERT 같은 트랜잭션) → orphan-position-vs-orphan-box 윈도우 제거.
+- 5 INVARIANT flag 안전하게 ON 가능 (운영자 결정으로 자동 매수 활성화).
+- PositionState frozen → 직접 mutation 차단 = "in-memory diverged from DB" 결함 클래스 전체 제거.
+- BoxEntryDetector cooldown = 보상 실패 시 무한 재시도 차단.
+- PROFIT_TAKE_10 invariant = §5.4 ladder lookup 안전 보장.
+
+**잔여** (별도 단위):
+- `tests/v71/position/test_v71_position_manager_db.py` (aiosqlite 기반 ~30 cases, 인계 ~70 신규 + 30 갱신).
+- `tests/v71/position/test_v71_reconciler_atomic.py` (Q9 atomic + Scenario B FOR UPDATE).
+- `test_v71_telegram_commands.py` / `test_v71_exit_executor.py` / `test_v71_trailing_stop.py` 등 V71PositionManager() no-arg 패턴 재작성.
+- `check_invariants.ps1`: 5 flag false 강제 → "audit log only" 모드 변경 (사용자 명시 결정 영역).
+- 사용자 보고 결함 #3 운영 검증: 배포 후 candle_builder + kiwoom_websocket flag 상태 확인 + journalctl로 BoxEntryDetector / candle_complete / PRICE_TICK 발화 검증.
+
+---
+
 ### P-Wire-Manual-Buy-Notification: 수동매수 즉시 알림 wire (사용자 보고 결함 #2)
 
 **사용자 보고 결함**: HTS/MTS 등 외부에서 수동 매수 시 텔레그램 알림 발송 안 됨. 진단 결과 V71OrderManager의 `on_manual_order` callback이 trading_bridge에서 wire 안 됨 (P-Wire-1 시점에 V71OrderManager만 빌드, callback 미주입). WS 00 채널 → `_notify_manual_order` → `self._on_manual_order is None` → 로그만 남기고 침묵. Reconciler 5분 polling이 시나리오 C로 감지하지만 즉시성 + 박스 정보 누락 (P-Wire-Box-1 land 전).

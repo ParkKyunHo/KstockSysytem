@@ -8,25 +8,29 @@ Spec:
   - 04_ARCHITECTURE.md §5.3
   - 07_SKILLS_SPEC.md §1 (kiwoom_api_skill)
 
-Phase: P3.3
+Phase: P-Wire-Box-4 (was P3.3 in-memory) — :class:`PositionState` is
+       a frozen DTO and direct attribute mutation raises. State updates
+       go through :meth:`V71PositionManager.apply_sell` which writes
+       to ``positions`` + ``trade_events`` in a single transaction
+       (Q3 — exit symmetry with the buy path).
 
 Order policy mirrors V71BuyExecutor (§4.2) but in reverse:
     SELL limit at bid_1 (매수 1호가) x ORDER_RETRY_COUNT,
     then market fallback. Stop / TS exits go market-only for fastest fill.
 
-State updates on the in-memory :class:`PositionState`:
-    - profit_5_executed / profit_10_executed flags
-    - fixed_stop_price (recomputed via stage_after_partial_exit)
+State writes routed through :class:`V71PositionManager` (P-Wire-Box-4):
+    - profit_5_executed / profit_10_executed flags (advanced by
+      ``apply_sell(event_type=PROFIT_TAKE_5/10)``)
+    - fixed_stop_price (advanced by manager via stage_after_partial_exit)
     - total_quantity (decremented by sold qty)
-    - status (OPEN -> PARTIAL_CLOSED -> CLOSED)
-    - closed_at (on full exit)
+    - status (OPEN -> PARTIAL_CLOSED -> CLOSED — manager sets when
+      total_quantity reaches 0)
+    - closed_at (on full exit — manager sets atomically with status)
 
 On full exit additionally:
     - all sibling WAITING boxes -> CANCELLED (§5.9)
     - on_position_closed callback fired (price-feed unsubscribe etc.)
     - CRITICAL or HIGH notification
-
-P3.4 V71PositionManager will swap the in-memory mutation for DB writes.
 """
 
 from __future__ import annotations
@@ -37,11 +41,9 @@ from dataclasses import dataclass, field
 from enum import Enum
 
 from src.core.v71.box.box_manager import V71BoxManager
-from src.core.v71.position.state import PositionState
-from src.core.v71.skills.exit_calc_skill import (
-    ProfitTakeResult,
-    stage_after_partial_exit,
-)
+from src.core.v71.position.state import PositionState, PositionStatus
+from src.core.v71.position.v71_position_manager import V71PositionManager
+from src.core.v71.skills.exit_calc_skill import ProfitTakeResult
 from src.core.v71.skills.kiwoom_api_skill import (
     ExchangeAdapter,
     KiwoomAPIError,
@@ -110,6 +112,11 @@ class ExitExecutorContext:
 
     exchange: ExchangeAdapter
     box_manager: V71BoxManager
+    position_manager: V71PositionManager
+    """P-Wire-Box-4: state writes go through :meth:`apply_sell`. The
+    manager owns the same-tx semantics for ``positions`` + ``trade_events``
+    + ladder advance (§5.4) so direct ORM mutation here is forbidden."""
+
     notifier: Notifier
     clock: Clock
 
@@ -206,24 +213,28 @@ class V71ExitExecutor:
                 f"NO_FILL_AFTER_{seq.attempts}_ATTEMPTS",
             )
 
-        # State updates (§5.4 + §5.9 partial path).
-        position.total_quantity -= seq.filled_quantity
-        if profit_take.level == "PROFIT_5":
-            position.profit_5_executed = True
-        elif profit_take.level == "PROFIT_10":
-            position.profit_10_executed = True
-
-        position.fixed_stop_price = stage_after_partial_exit(
-            position.profit_5_executed,
-            position.profit_10_executed,
-            position.weighted_avg_price,
+        # P-Wire-Box-4: state advance routed through the manager. apply_sell
+        # writes positions + trade_events in one transaction and advances
+        # the §5.4 ladder for PROFIT_TAKE_5 / PROFIT_TAKE_10.
+        # Map the calculator's level ("PROFIT_5" / "PROFIT_10") to the
+        # manager's event_type ("PROFIT_TAKE_5" / "PROFIT_TAKE_10").
+        manager_event = (
+            "PROFIT_TAKE_5"
+            if profit_take.level == "PROFIT_5"
+            else "PROFIT_TAKE_10"
+        )
+        new_state = await self._ctx.position_manager.apply_sell(
+            position.position_id,
+            sell_quantity=seq.filled_quantity,
+            sell_price=seq.weighted_avg_price,
+            event_type=manager_event,
+            when=self._ctx.clock.now(),
         )
 
-        if position.total_quantity == 0:
-            await self._on_full_exit(position)
+        if new_state.status is PositionStatus.CLOSED:
+            await self._on_full_exit(new_state)
             status = ExitOutcomeStatus.FILLED
         else:
-            position.status = "PARTIAL_CLOSED"
             status = (
                 ExitOutcomeStatus.FILLED
                 if seq.filled_quantity == sell_qty
@@ -233,19 +244,19 @@ class V71ExitExecutor:
         await self._ctx.notifier.notify(
             severity="HIGH",
             event_type=profit_take.level,  # "PROFIT_5" or "PROFIT_10"
-            stock_code=position.stock_code,
+            stock_code=new_state.stock_code,
             message=(
-                f"[{position.stock_code}] {profit_take.level} 청산 "
+                f"[{new_state.stock_code}] {profit_take.level} 청산 "
                 f"{seq.filled_quantity}주 @ {seq.weighted_avg_price}원 "
-                f"(잔여 {position.total_quantity}주)"
+                f"(잔여 {new_state.total_quantity}주)"
             ),
-            rate_limit_key=f"profit_take:{position.stock_code}:{profit_take.level}",
+            rate_limit_key=f"profit_take:{new_state.stock_code}:{profit_take.level}",
         )
 
         return ExitOutcome(
             status=status,
-            stock_code=position.stock_code,
-            position_id=position.position_id,
+            stock_code=new_state.stock_code,
+            position_id=new_state.position_id,
             reason=profit_take.level,
             sold_quantity=seq.filled_quantity,
             weighted_avg_sell_price=seq.weighted_avg_price,
@@ -287,30 +298,38 @@ class V71ExitExecutor:
                 position, reason, f"NO_FILL_AFTER_{seq.attempts}_ATTEMPTS"
             )
 
-        position.total_quantity -= seq.filled_quantity
+        # P-Wire-Box-4: state advance through manager.apply_sell.
+        # ``reason`` is one of STOP_LOSS / TS_EXIT — both valid manager
+        # event_types (no mapping needed, unlike profit-take).
+        new_state = await self._ctx.position_manager.apply_sell(
+            position.position_id,
+            sell_quantity=seq.filled_quantity,
+            sell_price=seq.weighted_avg_price,
+            event_type=reason,
+            when=self._ctx.clock.now(),
+        )
 
-        if position.total_quantity == 0:
-            await self._on_full_exit(position)
+        if new_state.status is PositionStatus.CLOSED:
+            await self._on_full_exit(new_state)
             status = ExitOutcomeStatus.FILLED
         else:
-            position.status = "PARTIAL_CLOSED"
             status = ExitOutcomeStatus.PARTIAL_FILLED
 
         await self._ctx.notifier.notify(
             severity=severity,
             event_type=event_type,
-            stock_code=position.stock_code,
+            stock_code=new_state.stock_code,
             message=(
-                f"[{position.stock_code}] {reason} 청산 "
+                f"[{new_state.stock_code}] {reason} 청산 "
                 f"{seq.filled_quantity}주 @ {seq.weighted_avg_price}원"
             ),
-            rate_limit_key=f"exit:{position.stock_code}:{reason}",
+            rate_limit_key=f"exit:{new_state.stock_code}:{reason}",
         )
 
         return ExitOutcome(
             status=status,
-            stock_code=position.stock_code,
-            position_id=position.position_id,
+            stock_code=new_state.stock_code,
+            position_id=new_state.position_id,
             reason=reason,
             sold_quantity=seq.filled_quantity,
             weighted_avg_sell_price=seq.weighted_avg_price,
@@ -391,14 +410,20 @@ class V71ExitExecutor:
     # ------------------------------------------------------------------
 
     async def _on_full_exit(self, position: PositionState) -> None:
-        position.status = "CLOSED"
-        position.closed_at = self._ctx.clock.now()
+        """Cleanup after a full exit.
 
+        P-Wire-Box-4: status / closed_at were already written by
+        ``manager.apply_sell`` (atomic with trade_event). This callback
+        runs the §5.9 sibling-box cancellation + the optional
+        ``on_position_closed`` callback (price-feed unsubscribe etc.).
+        """
         # §5.9: cancel sibling WAITING boxes on the same tracked_stock.
-        await self._ctx.box_manager.cancel_waiting_for_tracked(
-            position.tracked_stock_id,
-            reason="POSITION_CLOSED",
-        )
+        # MANUAL positions have no tracked_stock_id (None) — skip.
+        if position.tracked_stock_id is not None:
+            await self._ctx.box_manager.cancel_waiting_for_tracked(
+                position.tracked_stock_id,
+                reason="POSITION_CLOSED",
+            )
 
         # P3.6: price-feed unsubscribe / dashboard refresh.
         if self._ctx.on_position_closed is not None:

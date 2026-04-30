@@ -29,9 +29,11 @@ Responsibilities:
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime
+from typing import TYPE_CHECKING
 
 from src.core.v71.box.box_manager import BoxStatus, V71BoxManager
 from src.core.v71.position.state import PositionState
@@ -46,6 +48,9 @@ from src.core.v71.skills.reconciliation_skill import (
 )
 from src.core.v71.strategies.v71_buy_executor import Clock, Notifier
 from src.utils.feature_flags import require_enabled
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 # ---------------------------------------------------------------------------
 # Tracked-store callback shape
@@ -88,6 +93,18 @@ class ReconcilerContext:
     end_tracking: EndTrackingFn
     """Marks a tracked_stocks row as EXITED."""
 
+    session_factory: async_sessionmaker[AsyncSession] | None = None
+    """P-Wire-Box-4 (Q9): when supplied, each ``_handle_X`` mutation
+    runs inside a single atomic session — position changes (apply_buy /
+    apply_sell / add_position) and box changes (mark_invalidated /
+    cancel_waiting_for_tracked) commit together or roll back together.
+    Scenario B's proportional split also acquires
+    ``SELECT ... FOR UPDATE`` via ``fetch_active_for_stock`` so the
+    drain-MANUAL-then-split allocation is race-free against
+    ExitExecutor / BuyExecutor running concurrently. Notifications
+    fire after the commit so a rolled-back transaction never produces
+    a misleading user-facing message."""
+
 
 # ---------------------------------------------------------------------------
 # V71Reconciler
@@ -99,6 +116,27 @@ class V71Reconciler:
     def __init__(self, *, context: ReconcilerContext) -> None:
         require_enabled("v71.reconciliation_v71")
         self._ctx = context
+
+    # ------------------------------------------------------------------
+    # Atomic helper (P-Wire-Box-4 Q9)
+    # ------------------------------------------------------------------
+
+    @asynccontextmanager
+    async def _atomic_session(self) -> AsyncIterator[AsyncSession | None]:
+        """Yield a single ``AsyncSession`` in a transaction when
+        ``session_factory`` is wired; ``None`` otherwise (legacy test path).
+
+        All mutations inside one ``_handle_X`` use the yielded session
+        so they commit together or roll back together. Notifications
+        are emitted **after** the context manager exits — a rolled-back
+        transaction never leaves a misleading "수동 매수 감지" alert
+        in the user's Telegram.
+        """
+        if self._ctx.session_factory is not None:
+            async with self._ctx.session_factory() as s, s.begin():
+                yield s
+        else:
+            yield None
 
     # ------------------------------------------------------------------
     # Main entry point
@@ -113,13 +151,18 @@ class V71Reconciler:
 
         Returns one :class:`ReconciliationResult` per stock processed
         (including E_FULL_MATCH, for audit completeness).
+
+        P-Wire-Box-4: ``list_open`` now async (DB-backed manager). The
+        snapshot is read at the top of reconcile so per-stock dispatch
+        sees a consistent view; mutations inside ``_handle_X`` re-read
+        with ``SELECT ... FOR UPDATE`` (Scenario B) when needed.
         """
-        # Build a stock-code map from both sides so we don't miss either.
         broker_by_stock: dict[str, KiwoomBalance] = {
             kb.stock_code: kb for kb in broker_balances
         }
         system_by_stock: dict[str, SystemPosition] = {}
-        for pos in self._ctx.position_manager.list_open():
+        open_positions = await self._ctx.position_manager.list_open()
+        for pos in open_positions:
             system_by_stock.setdefault(
                 pos.stock_code,
                 SystemPosition(stock_code=pos.stock_code, positions=[]),
@@ -209,13 +252,15 @@ class V71Reconciler:
         target_position = next(
             p for p in system.positions if p.path_type == target_path
         )
-        await self._ctx.position_manager.apply_buy(
-            target_position.position_id,
-            buy_price=add_price,
-            buy_quantity=added_qty,
-            event_type="MANUAL_PYRAMID_BUY",
-            when=self._ctx.clock.now(),
-        )
+        async with self._atomic_session() as s:
+            await self._ctx.position_manager.apply_buy(
+                target_position.position_id,
+                buy_price=add_price,
+                buy_quantity=added_qty,
+                event_type="MANUAL_PYRAMID_BUY",
+                when=self._ctx.clock.now(),
+                session=s,
+            )
         await self._notify(
             severity="HIGH",
             event_type="MANUAL_PYRAMID_BUY",
@@ -267,68 +312,93 @@ class V71Reconciler:
         sold_qty: int,
         system: SystemPosition,
     ) -> ReconciliationResult:
-        """Drain MANUAL first, then proportionally split leftover (§7.3)."""
+        """Drain MANUAL first, then proportionally split leftover (§7.3).
+
+        P-Wire-Box-4 (Q9): the entire allocation runs in a single
+        atomic session. Inside the transaction we re-fetch active
+        positions with ``SELECT ... FOR UPDATE`` so concurrent
+        ExitExecutor / BuyExecutor calls cannot reduce the available
+        quantity beneath the value we just split.
+        """
         actions: list[str] = []
         remaining = sold_qty
 
-        # Step 1: drain MANUAL records first (FIFO order).
-        for pos in [p for p in system.positions if p.path_type == "MANUAL"]:
-            if remaining <= 0:
-                break
-            take = min(remaining, pos.total_quantity)
-            await self._ctx.position_manager.apply_sell(
-                pos.position_id,
-                sell_quantity=take,
-                sell_price=0,  # unknown -- broker-side sell, no fill price
-                event_type="MANUAL_SELL",
-                when=self._ctx.clock.now(),
-            )
-            actions.append(
-                f"manual_sell {take} on MANUAL position {pos.position_id}"
-            )
-            remaining -= take
+        async with self._atomic_session() as s:
+            # P-Wire-Box-4 trading-logic blocker: re-fetch the live
+            # positions with FOR UPDATE so the proportional split sees
+            # the exact same quantities it locks. The outer ``system``
+            # snapshot is still used for the proportion calculation
+            # (it was the basis for case classification), but mutations
+            # target the locked rows.
+            if s is not None:
+                live = await self._ctx.position_manager.lock_active_for_stock(
+                    stock_code, session=s,
+                )
+                live_by_id = {p.position_id: p for p in live}
+            else:
+                live_by_id = {p.position_id: p for p in system.positions}
 
-        if remaining == 0:
-            await self._notify_b(stock_code, sold_qty, actions)
-            return ReconciliationResult(
-                stock_code=stock_code,
-                case=ReconciliationCase.B_SYSTEM_PLUS_MANUAL_SELL,
-                actions_taken=actions,
-            )
+            def _resolve(pos: PositionState) -> PositionState:
+                """Prefer the locked snapshot when we have one."""
+                return live_by_id.get(pos.position_id, pos)
 
-        # Step 2: split the leftover across PATH_A / PATH_B.
-        path_a = next(
-            (p for p in system.positions if p.path_type == "PATH_A"), None
-        )
-        path_b = next(
-            (p for p in system.positions if p.path_type == "PATH_B"), None
-        )
-        path_a_qty = path_a.total_quantity if path_a else 0
-        path_b_qty = path_b.total_quantity if path_b else 0
+            # Step 1: drain MANUAL records first (FIFO order).
+            for snap in [p for p in system.positions if p.path_type == "MANUAL"]:
+                if remaining <= 0:
+                    break
+                pos = _resolve(snap)
+                take = min(remaining, pos.total_quantity)
+                if take <= 0:
+                    continue
+                await self._ctx.position_manager.apply_sell(
+                    pos.position_id,
+                    sell_quantity=take,
+                    sell_price=0,  # broker-side sell, no fill price known
+                    event_type="MANUAL_SELL",
+                    when=self._ctx.clock.now(),
+                    session=s,
+                )
+                actions.append(
+                    f"manual_sell {take} on MANUAL position {pos.position_id}"
+                )
+                remaining -= take
 
-        sell_a, sell_b = compute_proportional_split(
-            remaining, path_a_qty, path_b_qty
-        )
-        if sell_a > 0:
-            assert path_a is not None
-            await self._ctx.position_manager.apply_sell(
-                path_a.position_id,
-                sell_quantity=sell_a,
-                sell_price=0,
-                event_type="MANUAL_SELL",
-                when=self._ctx.clock.now(),
-            )
-            actions.append(f"manual_sell {sell_a} on PATH_A")
-        if sell_b > 0:
-            assert path_b is not None
-            await self._ctx.position_manager.apply_sell(
-                path_b.position_id,
-                sell_quantity=sell_b,
-                sell_price=0,
-                event_type="MANUAL_SELL",
-                when=self._ctx.clock.now(),
-            )
-            actions.append(f"manual_sell {sell_b} on PATH_B")
+            if remaining > 0:
+                # Step 2: split the leftover across PATH_A / PATH_B.
+                path_a = next(
+                    (p for p in system.positions if p.path_type == "PATH_A"),
+                    None,
+                )
+                path_b = next(
+                    (p for p in system.positions if p.path_type == "PATH_B"),
+                    None,
+                )
+                path_a_qty = path_a.total_quantity if path_a else 0
+                path_b_qty = path_b.total_quantity if path_b else 0
+
+                sell_a, sell_b = compute_proportional_split(
+                    remaining, path_a_qty, path_b_qty
+                )
+                if sell_a > 0 and path_a is not None:
+                    await self._ctx.position_manager.apply_sell(
+                        path_a.position_id,
+                        sell_quantity=sell_a,
+                        sell_price=0,
+                        event_type="MANUAL_SELL",
+                        when=self._ctx.clock.now(),
+                        session=s,
+                    )
+                    actions.append(f"manual_sell {sell_a} on PATH_A")
+                if sell_b > 0 and path_b is not None:
+                    await self._ctx.position_manager.apply_sell(
+                        path_b.position_id,
+                        sell_quantity=sell_b,
+                        sell_price=0,
+                        event_type="MANUAL_SELL",
+                        when=self._ctx.clock.now(),
+                        session=s,
+                    )
+                    actions.append(f"manual_sell {sell_b} on PATH_B")
 
         await self._notify_b(stock_code, sold_qty, actions)
         return ReconciliationResult(
@@ -360,45 +430,59 @@ class V71Reconciler:
         broker: KiwoomBalance,
         tracked: list[TrackedInfo],
     ) -> ReconciliationResult:
-        """End tracking, invalidate boxes, create MANUAL position (§7.4)."""
+        """End tracking, invalidate boxes, create MANUAL position (§7.4).
+
+        P-Wire-Box-4 (Q9): box invalidation + MANUAL position INSERT
+        commit together. ``end_tracking`` runs outside the atomic
+        scope because it is the caller's callback (no shared session
+        contract) — the worst-case mismatch is a TRACKING row that
+        survives a crash, which the next reconcile sweep cleans up.
+        """
+        from src.database.models_v71 import PathType as _PathType
+
         ended_tracking_id: str | None = None
         invalidated_box_ids: list[str] = []
         actions: list[str] = []
+        manual_position_id: str
 
+        # Step 1: end_tracking (caller-supplied callback, no session).
         for tinfo in tracked:
-            await self._ctx.end_tracking(tinfo.tracked_stock_id, "MANUAL_BUY_DETECTED")
+            await self._ctx.end_tracking(
+                tinfo.tracked_stock_id, "MANUAL_BUY_DETECTED",
+            )
             actions.append(f"end_tracking {tinfo.tracked_stock_id}")
             ended_tracking_id = tinfo.tracked_stock_id
 
-            # Invalidate every WAITING box on this tracked record.
-            # P-Wire-Box-1: PathType Enum from the ORM (was bare strings
-            # — DB-backed manager compares Enum, so strings would
-            # silently miss).
-            from src.database.models_v71 import PathType as _PathType
-            path_a_boxes = await self._ctx.box_manager.list_waiting_for_tracked(
-                tinfo.tracked_stock_id, _PathType.PATH_A,
-            )
-            path_b_boxes = await self._ctx.box_manager.list_waiting_for_tracked(
-                tinfo.tracked_stock_id, _PathType.PATH_B,
-            )
-            for box in path_a_boxes + path_b_boxes:
-                await self._ctx.box_manager.mark_invalidated(
-                    box.id, reason="MANUAL_BUY_DETECTED",
+        # Step 2: atomic — box invalidation + MANUAL position INSERT.
+        async with self._atomic_session() as s:
+            for tinfo in tracked:
+                path_a_boxes = await self._ctx.box_manager.list_waiting_for_tracked(
+                    tinfo.tracked_stock_id, _PathType.PATH_A, session=s,
                 )
-                invalidated_box_ids.append(box.id)
-                actions.append(f"invalidate_box {box.id}")
+                path_b_boxes = await self._ctx.box_manager.list_waiting_for_tracked(
+                    tinfo.tracked_stock_id, _PathType.PATH_B, session=s,
+                )
+                for box in path_a_boxes + path_b_boxes:
+                    await self._ctx.box_manager.mark_invalidated(
+                        box.id, reason="MANUAL_BUY_DETECTED", session=s,
+                    )
+                    invalidated_box_ids.append(box.id)
+                    actions.append(f"invalidate_box {box.id}")
 
-        # Create MANUAL position.  tracked_stock_id is preserved (history),
-        # though the position is no longer tied to system management.
-        manual_position_id = await self._ctx.position_manager.add_position(
-            stock_code=stock_code,
-            tracked_stock_id=tracked[0].tracked_stock_id if tracked else "",
-            triggered_box_id="",  # no box triggered -- manual buy
-            path_type="MANUAL",
-            quantity=broker.quantity,
-            weighted_avg_price=broker.avg_price,
-            opened_at=self._ctx.clock.now(),
-        )
+            # MANUAL position. tracked_stock_id is None per blocker 4 —
+            # the legacy "" convention crashed on UUID cast. The history
+            # link survives via trade_events / box_id chain instead.
+            position_state = await self._ctx.position_manager.add_position(
+                stock_code=stock_code,
+                tracked_stock_id=None,
+                triggered_box_id=None,
+                path_type="MANUAL",
+                quantity=broker.quantity,
+                weighted_avg_price=broker.avg_price,
+                opened_at=self._ctx.clock.now(),
+                session=s,
+            )
+            manual_position_id = position_state.position_id
         actions.append(f"add_manual_position {manual_position_id}")
 
         await self._notify(
@@ -428,16 +512,25 @@ class V71Reconciler:
     async def _handle_d(
         self, stock_code: str, broker: KiwoomBalance,
     ) -> ReconciliationResult:
-        """Pure MANUAL position creation (§7.5)."""
-        manual_position_id = await self._ctx.position_manager.add_position(
-            stock_code=stock_code,
-            tracked_stock_id="",  # no tracked record
-            triggered_box_id="",
-            path_type="MANUAL",
-            quantity=broker.quantity,
-            weighted_avg_price=broker.avg_price,
-            opened_at=self._ctx.clock.now(),
-        )
+        """Pure MANUAL position creation (§7.5).
+
+        P-Wire-Box-4 blocker 4: ``tracked_stock_id`` and
+        ``triggered_box_id`` are ``None`` (no tracked record exists).
+        The legacy "" convention crashed on UUID cast — the manager's
+        repo layer rejects empty strings now.
+        """
+        async with self._atomic_session() as s:
+            position_state = await self._ctx.position_manager.add_position(
+                stock_code=stock_code,
+                tracked_stock_id=None,
+                triggered_box_id=None,
+                path_type="MANUAL",
+                quantity=broker.quantity,
+                weighted_avg_price=broker.avg_price,
+                opened_at=self._ctx.clock.now(),
+                session=s,
+            )
+            manual_position_id = position_state.position_id
         await self._notify(
             severity="HIGH",
             event_type="MANUAL_BUY_UNTRACKED",

@@ -388,3 +388,284 @@ class FakeBoxManager:
         )
         self._boxes[box_id] = new_record
         return new_record
+
+
+# ---------------------------------------------------------------------------
+# FakePositionManager: in-memory async stub of V71PositionManager.
+# ---------------------------------------------------------------------------
+#
+# Mirror of FakeBoxManager — keeps the pre-P-Wire-Box-4 in-memory storage
+# but exposes the new async + frozen-PositionState API surface. Tests that
+# drive the manager directly (BuyExecutor, ExitExecutor, Reconciler, ...)
+# can swap V71PositionManager() -> FakePositionManager() with minimal
+# diff. add_position / apply_buy / apply_sell return frozen
+# PositionState snapshots; list_open is async; lock_active_for_stock
+# returns the same as fetch_active_for_stock (no FOR UPDATE in memory).
+
+
+class FakePositionManager:
+    """In-memory async stub of :class:`V71PositionManager`."""
+
+    def __init__(self) -> None:
+        from src.utils.feature_flags import require_enabled
+
+        require_enabled("v71.position_v71")
+        from src.core.v71.position.state import PositionState
+
+        self._positions: dict[str, PositionState] = {}
+        self._events: list = []
+
+    @staticmethod
+    def _new_id() -> str:
+        return str(uuid.uuid4())
+
+    async def add_position(
+        self,
+        *,
+        stock_code: str,
+        stock_name: str | None = None,
+        tracked_stock_id: str | None,
+        triggered_box_id: str | None,
+        path_type: str,
+        quantity: int,
+        weighted_avg_price: int,
+        opened_at: datetime,
+        actual_capital_invested: int | None = None,
+        session=None,
+    ):
+        from src.core.v71.position.state import PositionState, PositionStatus
+        from src.core.v71.v71_constants import V71Constants
+
+        if quantity <= 0:
+            raise ValueError("quantity must be positive")
+        if weighted_avg_price <= 0:
+            raise ValueError("weighted_avg_price must be positive")
+
+        position_id = self._new_id()
+        fixed_stop = int(
+            round(weighted_avg_price * (1.0 + V71Constants.STOP_LOSS_INITIAL_PCT))
+        )
+        state = PositionState(
+            position_id=position_id,
+            stock_code=stock_code,
+            tracked_stock_id=tracked_stock_id,
+            triggered_box_id=triggered_box_id,
+            path_type=path_type,
+            weighted_avg_price=int(weighted_avg_price),
+            initial_avg_price=int(weighted_avg_price),
+            total_quantity=int(quantity),
+            fixed_stop_price=fixed_stop,
+            status=PositionStatus.OPEN,
+            opened_at=opened_at,
+        )
+        self._positions[position_id] = state
+        return state
+
+    async def apply_buy(
+        self,
+        position_id: str,
+        *,
+        buy_price: int,
+        buy_quantity: int,
+        event_type: str = "PYRAMID_BUY",
+        when=None,
+        session=None,
+    ):
+        from dataclasses import replace
+
+        from src.core.v71.position.state import PositionStatus
+        from src.core.v71.position.v71_position_manager import (
+            BUY_EVENT_TYPES,
+            InvalidEventTypeError,
+            PositionNotFoundError,
+        )
+        from src.core.v71.skills.avg_price_skill import (
+            update_position_after_buy,
+        )
+
+        if event_type not in BUY_EVENT_TYPES:
+            raise InvalidEventTypeError(f"buy event_type invalid: {event_type}")
+        state = self._positions.get(position_id)
+        if state is None:
+            raise PositionNotFoundError(position_id)
+        update = update_position_after_buy(
+            state, buy_price=buy_price, buy_quantity=buy_quantity,
+        )
+        new_state = replace(
+            state,
+            weighted_avg_price=update.weighted_avg_price,
+            initial_avg_price=update.initial_avg_price,
+            total_quantity=update.total_quantity,
+            fixed_stop_price=update.fixed_stop_price,
+            profit_5_executed=update.profit_5_executed,
+            profit_10_executed=update.profit_10_executed,
+            ts_activated=update.ts_activated,
+            ts_base_price=update.ts_base_price,
+            ts_stop_price=update.ts_stop_price,
+            ts_active_multiplier=update.ts_active_multiplier,
+            status=(
+                PositionStatus.OPEN
+                if state.status is PositionStatus.PARTIAL_CLOSED
+                else state.status
+            ),
+        )
+        self._positions[position_id] = new_state
+        return new_state
+
+    async def apply_sell(
+        self,
+        position_id: str,
+        *,
+        sell_quantity: int,
+        sell_price: int,
+        event_type: str,
+        when=None,
+        session=None,
+    ):
+        from dataclasses import replace
+
+        from src.core.v71.position.state import PositionStatus
+        from src.core.v71.position.v71_position_manager import (
+            SELL_EVENT_TYPES,
+            InvalidEventTypeError,
+            PositionNotFoundError,
+        )
+        from src.core.v71.skills.avg_price_skill import (
+            update_position_after_sell,
+        )
+        from src.core.v71.skills.exit_calc_skill import (
+            stage_after_partial_exit,
+        )
+
+        if event_type not in SELL_EVENT_TYPES:
+            raise InvalidEventTypeError(f"sell event_type invalid: {event_type}")
+        state = self._positions.get(position_id)
+        if state is None:
+            raise PositionNotFoundError(position_id)
+        update = update_position_after_sell(state, sell_quantity=sell_quantity)
+
+        new_p5 = state.profit_5_executed
+        new_p10 = state.profit_10_executed
+        if event_type == "PROFIT_TAKE_5":
+            new_p5 = True
+        elif event_type == "PROFIT_TAKE_10":
+            new_p5 = True
+            new_p10 = True
+        new_fixed_stop = (
+            stage_after_partial_exit(new_p5, new_p10, state.weighted_avg_price)
+            if event_type in {"PROFIT_TAKE_5", "PROFIT_TAKE_10"}
+            else state.fixed_stop_price
+        )
+        if update.total_quantity == 0:
+            status = PositionStatus.CLOSED
+            closed_at = when or datetime.now(timezone.utc)
+        elif state.status is PositionStatus.OPEN:
+            status = PositionStatus.PARTIAL_CLOSED
+            closed_at = state.closed_at
+        else:
+            status = state.status
+            closed_at = state.closed_at
+        new_state = replace(
+            state,
+            weighted_avg_price=update.weighted_avg_price,
+            initial_avg_price=update.initial_avg_price,
+            total_quantity=update.total_quantity,
+            fixed_stop_price=new_fixed_stop,
+            profit_5_executed=new_p5,
+            profit_10_executed=new_p10,
+            ts_activated=update.ts_activated,
+            ts_base_price=update.ts_base_price,
+            ts_stop_price=update.ts_stop_price,
+            ts_active_multiplier=update.ts_active_multiplier,
+            status=status,
+            closed_at=closed_at,
+        )
+        self._positions[position_id] = new_state
+        return new_state
+
+    async def close_position(
+        self, position_id: str, *, when=None, reason=None, session=None,
+    ):
+        from dataclasses import replace
+
+        from src.core.v71.position.state import PositionStatus
+        from src.core.v71.position.v71_position_manager import (
+            PositionNotFoundError,
+        )
+
+        state = self._positions.get(position_id)
+        if state is None:
+            raise PositionNotFoundError(position_id)
+        if state.total_quantity != 0:
+            raise ValueError("close_position requires zero quantity")
+        if state.status is not PositionStatus.CLOSED:
+            new_state = replace(
+                state,
+                status=PositionStatus.CLOSED,
+                closed_at=when or datetime.now(timezone.utc),
+            )
+            self._positions[position_id] = new_state
+            return new_state
+        return state
+
+    async def get(self, position_id: str, *, session=None):
+        from src.core.v71.position.v71_position_manager import (
+            PositionNotFoundError,
+        )
+
+        state = self._positions.get(position_id)
+        if state is None:
+            raise PositionNotFoundError(position_id)
+        return state
+
+    async def get_by_stock(
+        self, stock_code: str, path_type: str, *, session=None,
+    ):
+        from src.core.v71.position.state import PositionStatus
+
+        for state in self._positions.values():
+            if (
+                state.stock_code == stock_code
+                and state.path_type == path_type
+                and state.status is not PositionStatus.CLOSED
+            ):
+                return state
+        return None
+
+    async def list_open(self, *, limit: int = 1000, session=None):
+        from src.core.v71.position.state import PositionStatus
+
+        return [
+            s for s in self._positions.values()
+            if s.status is not PositionStatus.CLOSED
+        ][:limit]
+
+    async def list_for_stock(
+        self,
+        stock_code: str,
+        *,
+        include_closed: bool = False,
+        session=None,
+    ):
+        from src.core.v71.position.state import PositionStatus
+
+        result = [s for s in self._positions.values() if s.stock_code == stock_code]
+        if not include_closed:
+            result = [s for s in result if s.status is not PositionStatus.CLOSED]
+        return result
+
+    async def lock_active_for_stock(
+        self, stock_code: str, *, session,
+    ):
+        # In-memory: no FOR UPDATE semantics. Return active list.
+        return await self.list_for_stock(stock_code, include_closed=False)
+
+    async def list_events(
+        self,
+        *,
+        position_id: str | None = None,
+        since: datetime | None = None,
+        limit: int = 1000,
+        session=None,
+    ):
+        return list(self._events)[:limit]
