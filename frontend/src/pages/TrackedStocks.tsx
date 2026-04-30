@@ -70,6 +70,25 @@ function loadWidths(): number[] {
   return [...DEFAULT_WIDTHS];
 }
 
+// Mobile / touch device 감지 — pointer:coarse OR 좁은 viewport(<=768).
+// 두 조건 OR — 실 mobile은 pointer:coarse, 데스크톱 dev tools mobile
+// emulation은 viewport 기준으로 잡힘. matchMedia change reactive.
+const _MOBILE_QUERY = '(pointer: coarse), (max-width: 768px)';
+function useMobileLayout() {
+  const [isMobile, setIsMobile] = useState<boolean>(() =>
+    typeof window !== 'undefined' &&
+    window.matchMedia(_MOBILE_QUERY).matches,
+  );
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const mq = window.matchMedia(_MOBILE_QUERY);
+    const onChange = (e: MediaQueryListEvent) => setIsMobile(e.matches);
+    mq.addEventListener('change', onChange);
+    return () => mq.removeEventListener('change', onChange);
+  }, []);
+  return isMobile;
+}
+
 // 세로 height 리사이즈 (테이블 하단에 호버 시 ↕ 커서 + 드래그)
 // v2: default 480→260 — 3-5 row 데이터에 빈 공간 과다로 폰트가 위로
 // 쏠려 보이는 결함 fix. 사용자는 RowResizer로 더 늘려 볼 수 있음.
@@ -106,6 +125,8 @@ function RowResizer({
   onResize: (deltaPx: number) => void;
   children?: React.ReactNode;
 }) {
+  const isMobile = useMobileLayout();
+  if (isMobile) return <>{children}</>;
   const onMouseDown = (e: React.MouseEvent) => {
     // chevron / 다른 button 클릭은 resize 무시 — pagination 기능 보존.
     if ((e.target as HTMLElement).closest('button')) return;
@@ -145,8 +166,10 @@ function ColResizer({
 }: {
   onResize: (deltaPx: number) => void;
 }) {
+  const isMobile = useMobileLayout();
   const [hover, setHover] = useState(false);
   const [active, setActive] = useState(false);
+  if (isMobile) return null;
   const onMouseDown = (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();

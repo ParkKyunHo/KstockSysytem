@@ -319,14 +319,23 @@ textarea.cds-input { height: auto; min-height: 64px; padding: 12px 16px; resize:
 /* ============== DataTable ================ */
 .cds-data-table { background: var(--cds-layer-01); }
 .table-toolbar {
-  display: flex; align-items: center;
+  display: flex; align-items: center; flex-wrap: wrap;
   background: var(--cds-layer-01);
   border-bottom: 1px solid var(--cds-border-subtle-00);
-  height: 48px;
+  min-height: 48px;
 }
-.table-toolbar .cds-search { flex: 1; border-bottom: 0; height: 48px; border-right: 1px solid var(--cds-border-subtle-00); }
+.table-toolbar .cds-search { flex: 1 1 240px; border-bottom: 1px solid var(--cds-border-subtle-00); height: 48px; border-right: 1px solid var(--cds-border-subtle-00); }
 .table-toolbar .cds-search input { height: 48px; }
-.table-toolbar__tools { display: flex; }
+.table-toolbar__tools { display: flex; flex-shrink: 0; margin-left: auto; }
+.table-toolbar .cds-dropdown__trigger {
+  height: 48px;
+  border-bottom: 0;
+  min-width: 0;
+  padding: 0 12px;
+}
+.table-toolbar .cds-dropdown:not(:last-child) {
+  border-right: 1px solid var(--cds-border-subtle-00);
+}
 .table-toolbar__btn { width: 48px; height: 48px; background: transparent; border: 0; cursor: pointer; display: flex; align-items: center; justify-content: center; }
 .table-toolbar__btn:hover { background: var(--cds-background-hover); }
 .table-toolbar__btn .cds-icon { fill: var(--cds-icon-primary); }
@@ -345,7 +354,11 @@ textarea.cds-input { height: auto; min-height: 64px; padding: 12px 16px; resize:
 .cds-table tbody tr:hover { background: var(--cds-layer-hover-01); }
 .cds-table tbody tr.is-selected { background: var(--cds-layer-selected-01); box-shadow: inset 3px 0 0 var(--cds-border-interactive); }
 .cds-table .num, .cds-table .price { font-family: var(--font-mono); font-feature-settings: "tnum"; text-align: right; }
-.table-wrap { overflow-x: auto; }
+.table-wrap {
+  overflow-x: auto;
+  touch-action: pan-x pan-y;
+  -webkit-overflow-scrolling: touch;
+}
 
 .pagination {
   display: flex; align-items: center; justify-content: space-between;
