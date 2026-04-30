@@ -216,8 +216,12 @@ class BuyExecutorContext:
     get_total_capital: Callable[[], int]
     """Total capital base used for box position sizing."""
 
-    get_invested_pct_for_stock: Callable[[str], float]
-    """Currently invested percentage of total capital for the stock."""
+    get_invested_pct_for_stock: Callable[[str], Awaitable[float]]
+    """Currently invested percentage of total capital for the stock.
+
+    P-Wire-Box-4: async after V71PositionManager went DB-backed.
+    Awaiting a single ``list_for_stock`` query stays inside the
+    NFR1 1-second hot-path budget (~10 ms typical)."""
 
     session_factory: async_sessionmaker[AsyncSession] | None = None
     """P-Wire-Box-4 (Q3): when supplied, ``_finalize_buy`` opens a single
@@ -646,7 +650,7 @@ class V71BuyExecutor:
         self, box: BoxRecord, stock_code: str
     ) -> BuyOutcome | None:
         """Return an ABANDONED_CAP outcome if buying would exceed §3.4 cap."""
-        invested_pct = self._ctx.get_invested_pct_for_stock(stock_code)
+        invested_pct = await self._ctx.get_invested_pct_for_stock(stock_code)
         # Conservative: assume the box's full position_size_pct will be
         # invested -- if invested_pct + box.position_size_pct exceeds the
         # cap, deny up front. (Partial fills are impossible to predict.)

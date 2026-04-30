@@ -1161,61 +1161,84 @@ class TestTotalCapitalCache:
 
 class TestInvestedPctFactory:
     @staticmethod
-    def _pos(stock, qty, price, status="OPEN"):
+    def _pos(stock, qty, price, status=None):
+        # P-Wire-Box-4: status comparisons are against PositionStatus enum.
+        # Default to OPEN; "CLOSED"/"PARTIAL_CLOSED" callers map to the
+        # enum members so the factory's `is not PositionStatus.CLOSED`
+        # guard works as intended.
         from types import SimpleNamespace
+
+        from src.core.v71.position.state import PositionStatus
+
+        if status is None:
+            enum_status = PositionStatus.OPEN
+        elif isinstance(status, PositionStatus):
+            enum_status = status
+        else:
+            enum_status = PositionStatus[status]
         return SimpleNamespace(
             stock_code=stock,
             weighted_avg_price=price,
             total_quantity=qty,
-            status=status,
+            status=enum_status,
         )
 
-    def test_capital_zero_returns_zero(self):
-        from unittest.mock import MagicMock
+    @pytest.mark.asyncio
+    async def test_capital_zero_returns_zero(self):
+        from unittest.mock import AsyncMock, MagicMock
 
         from src.web.v71.trading_bridge import _build_invested_pct_factory
 
         pm = MagicMock()
-        pm.list_for_stock.return_value = [self._pos("005930", 10, 70000)]
+        pm.list_for_stock = AsyncMock(
+            return_value=[self._pos("005930", 10, 70000)],
+        )
         factory = _build_invested_pct_factory(pm, lambda: 0)
-        assert factory("005930") == 0.0
+        assert await factory("005930") == 0.0
 
-    def test_empty_positions_returns_zero(self):
-        from unittest.mock import MagicMock
+    @pytest.mark.asyncio
+    async def test_empty_positions_returns_zero(self):
+        from unittest.mock import AsyncMock, MagicMock
 
         from src.web.v71.trading_bridge import _build_invested_pct_factory
 
         pm = MagicMock()
-        pm.list_for_stock.return_value = []
+        pm.list_for_stock = AsyncMock(return_value=[])
         factory = _build_invested_pct_factory(pm, lambda: 1000000)
-        assert factory("005930") == 0.0
+        assert await factory("005930") == 0.0
 
-    def test_open_and_partial_summed(self):
-        from unittest.mock import MagicMock
+    @pytest.mark.asyncio
+    async def test_open_and_partial_summed(self):
+        from unittest.mock import AsyncMock, MagicMock
 
         from src.web.v71.trading_bridge import _build_invested_pct_factory
 
         pm = MagicMock()
-        pm.list_for_stock.return_value = [
-            self._pos("005930", 10, 50000, "OPEN"),         # 500,000
-            self._pos("005930", 5, 60000, "PARTIAL_CLOSED"),  # 300,000
-        ]
+        pm.list_for_stock = AsyncMock(
+            return_value=[
+                self._pos("005930", 10, 50000, "OPEN"),            # 500,000
+                self._pos("005930", 5, 60000, "PARTIAL_CLOSED"),   # 300,000
+            ],
+        )
         factory = _build_invested_pct_factory(pm, lambda: 2000000)
         # (500_000 + 300_000) / 2_000_000 * 100 = 40.0
-        assert factory("005930") == 40.0
+        assert await factory("005930") == 40.0
 
-    def test_closed_excluded(self):
-        from unittest.mock import MagicMock
+    @pytest.mark.asyncio
+    async def test_closed_excluded(self):
+        from unittest.mock import AsyncMock, MagicMock
 
         from src.web.v71.trading_bridge import _build_invested_pct_factory
 
         pm = MagicMock()
-        pm.list_for_stock.return_value = [
-            self._pos("005930", 10, 50000, "OPEN"),       # included 500k
-            self._pos("005930", 20, 50000, "CLOSED"),     # excluded 1M
-        ]
+        pm.list_for_stock = AsyncMock(
+            return_value=[
+                self._pos("005930", 10, 50000, "OPEN"),       # included 500k
+                self._pos("005930", 20, 50000, "CLOSED"),     # excluded 1M
+            ],
+        )
         factory = _build_invested_pct_factory(pm, lambda: 1000000)
-        assert factory("005930") == 50.0
+        assert await factory("005930") == 50.0
 
 
 # ---------------------------------------------------------------------------

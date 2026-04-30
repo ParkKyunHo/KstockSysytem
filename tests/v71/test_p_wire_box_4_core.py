@@ -186,6 +186,11 @@ class _SessionFactory:
         return self.captured
 
 
+async def _async_zero_pct(_stock_code: str) -> float:
+    """P-Wire-Box-4: get_invested_pct_for_stock is now async."""
+    return 0.0
+
+
 class TestAtomicFinalizeBuy:
     @pytest.mark.asyncio
     async def test_session_factory_wraps_position_and_box_in_one_tx(self):
@@ -278,7 +283,7 @@ class TestAtomicFinalizeBuy:
             is_vi_active=lambda _s: False,
             get_previous_close=lambda _s: 18_000,
             get_total_capital=lambda: 100_000_000,
-            get_invested_pct_for_stock=lambda _s: 0.0,
+            get_invested_pct_for_stock=_async_zero_pct,
             session_factory=factory,
         )
         executor = V71BuyExecutor(

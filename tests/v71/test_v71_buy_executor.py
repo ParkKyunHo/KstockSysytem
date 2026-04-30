@@ -282,7 +282,7 @@ def _build_executor(
     exchange: FakeExchange,
     box_manager: V71BoxManager,
     is_vi_active: Callable[[str], bool] = lambda _s: False,
-    invested_pct: Callable[[str], float] = lambda _s: 0.0,
+    invested_pct=None,
     total_capital: int = 100_000_000,
     previous_close: int = 18000,
     clock: FakeClock | None = None,
@@ -290,6 +290,24 @@ def _build_executor(
     notifier = FakeNotifier()
     position_store = FakePositionStore()
     clock = clock or FakeClock(now_value=datetime(2026, 4, 27, 14, 30))
+
+    # P-Wire-Box-4: get_invested_pct_for_stock is now async. Wrap a
+    # plain sync callable (or a constant) so legacy test fixtures keep
+    # working without rewriting every caller.
+    if invested_pct is None:
+        async def _default_invested_pct(_s):
+            return 0.0
+        invested_pct_async = _default_invested_pct
+    elif callable(invested_pct):
+        async def _wrap_invested_pct(stock_code):
+            result = invested_pct(stock_code)
+            if hasattr(result, "__await__"):
+                return await result
+            return result
+        invested_pct_async = _wrap_invested_pct
+    else:
+        raise TypeError("invested_pct must be a callable or None")
+
     ctx = BuyExecutorContext(
         exchange=exchange,
         box_manager=box_manager,
@@ -299,7 +317,7 @@ def _build_executor(
         is_vi_active=is_vi_active,
         get_previous_close=lambda _s: previous_close,
         get_total_capital=lambda: total_capital,
-        get_invested_pct_for_stock=invested_pct,
+        get_invested_pct_for_stock=invested_pct_async,
     )
     executor = V71BuyExecutor(
         context=ctx,

@@ -1212,26 +1212,33 @@ def _build_total_capital_cache(kiwoom_client: Any) -> Any:
 def _build_invested_pct_factory(
     position_manager: Any, get_total_capital: Any,
 ) -> Any:
-    """Return ``Callable[[str], float]`` computing per-stock invested
-    percentage of total capital.
+    """Return ``Callable[[str], Awaitable[float]]`` computing per-stock
+    invested percentage of total capital.
 
     Formula: ``sum(weighted_avg_price * total_quantity for OPEN/PARTIAL_CLOSED
     positions on stock_code) / total_capital * 100``.
+
+    P-Wire-Box-4: ``position_manager.list_for_stock`` is now async, so
+    this callable is async too. BuyExecutor's ``_check_cap`` runs inside
+    ``_finalize_buy`` which is already async; awaiting a single DB
+    query (~10 ms) stays well under the NFR1 1-second budget.
 
     Returns ``0.0`` when total_capital is 0 (cache uninitialised) -- this
     feeds straight into PATH_A cap check, which then trips on
     ``box.position_size_pct`` alone.
     """
-    def get_invested_pct_for_stock(stock_code: str) -> float:
+    from src.core.v71.position.state import PositionStatus
+
+    async def get_invested_pct_for_stock(stock_code: str) -> float:
         capital = get_total_capital()
         if capital <= 0:
             return 0.0
-        positions = position_manager.list_for_stock(stock_code)
+        positions = await position_manager.list_for_stock(stock_code)
         cost = sum(
             int(getattr(p, "weighted_avg_price", 0))
             * int(getattr(p, "total_quantity", 0))
             for p in positions
-            if getattr(p, "status", "OPEN") != "CLOSED"
+            if getattr(p, "status", None) is not PositionStatus.CLOSED
         )
         return (cost / capital) * 100.0
 
@@ -2117,7 +2124,8 @@ async def _build_restart_recovery(
         from src.core.v71.exchange.kiwoom_websocket import (
             V71KiwoomChannelType,
         )
-        open_positions = handle.position_manager.list_open()
+        # P-Wire-Box-4: list_open is async after the DB-backed conversion.
+        open_positions = await handle.position_manager.list_open()
         stock_codes = {p.stock_code for p in open_positions}
         count = 0
         for code in stock_codes:

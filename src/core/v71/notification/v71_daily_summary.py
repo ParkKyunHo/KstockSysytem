@@ -301,13 +301,13 @@ class V71DailySummary:
     # ------------------------------------------------------------------
 
     async def _build_body(self, *, now: datetime) -> str:
-        events_today = _filter_events_today(
-            self._ctx.position_manager.list_events(), now=now
-        )
+        # P-Wire-Box-4: list_events / get are now async (DB-backed).
+        all_events = await self._ctx.position_manager.list_events()
+        events_today = _filter_events_today(all_events, now=now)
         buys = [e for e in events_today if e.event_type in BUY_EVENT_TYPES]
         sells = [e for e in events_today if e.event_type in SELL_EVENT_TYPES]
 
-        avg_index = self._build_avg_price_index(events_today)
+        avg_index = await self._build_avg_price_index(events_today)
         realised_pnl = sum(
             (
                 compute_event_pnl(e, avg_price_for_position=avg_index) or 0
@@ -346,19 +346,19 @@ class V71DailySummary:
             tomorrow_events=tomorrow_events,
         )
 
-    def _build_avg_price_index(
+    async def _build_avg_price_index(
         self, events_today: list[TradeEvent]
     ) -> dict[str, int]:
         """Map ``position_id -> weighted_avg_price`` for PnL computation.
 
-        Uses :meth:`V71PositionManager.get` to look up each unique id.
+        P-Wire-Box-4: ``V71PositionManager.get`` is now async.
         Skips ids that aren't found (defensive -- Constitution 4).
         """
         ids = {e.position_id for e in events_today}
         avg_index: dict[str, int] = {}
         for pid in ids:
             try:
-                pos = self._ctx.position_manager.get(pid)
+                pos = await self._ctx.position_manager.get(pid)
             except KeyError:
                 continue
             avg_index[pid] = pos.weighted_avg_price

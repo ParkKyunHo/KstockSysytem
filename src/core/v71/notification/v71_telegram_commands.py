@@ -431,7 +431,8 @@ class V71TelegramCommands:
         triggered = sum(
             1 for b in all_boxes if b.status is BoxStatus.TRIGGERED
         )
-        positions = self._ctx.position_manager.list_open()
+        # P-Wire-Box-4: position_manager.list_open is now async.
+        positions = await self._ctx.position_manager.list_open()
         queue_pending = await self._count_pending_notifications()
 
         text = format_status_response(
@@ -447,7 +448,7 @@ class V71TelegramCommands:
         await self._safe_send(chat_id, text)
 
     async def _cmd_positions(self, chat_id: str, _args: list[str]) -> None:
-        positions = self._ctx.position_manager.list_open()
+        positions = await self._ctx.position_manager.list_open()
         await self._safe_send(chat_id, format_positions_response(positions))
 
     async def _cmd_tracking(self, chat_id: str, _args: list[str]) -> None:
@@ -459,7 +460,7 @@ class V71TelegramCommands:
         await self._safe_send(chat_id, format_pending_response(boxes))
 
     async def _cmd_today(self, chat_id: str, _args: list[str]) -> None:
-        events = self._filter_events_since(self._start_of_today())
+        events = await self._filter_events_since(self._start_of_today())
         await self._safe_send(
             chat_id,
             format_trade_events_response(
@@ -471,7 +472,7 @@ class V71TelegramCommands:
         cutoff = self._ctx.clock.now() - timedelta(
             days=self._ctx.recent_window_days
         )
-        events = self._filter_events_since(cutoff)
+        events = await self._filter_events_since(cutoff)
         await self._safe_send(
             chat_id,
             format_trade_events_response(
@@ -600,8 +601,11 @@ class V71TelegramCommands:
         now = self._ctx.clock.now()
         return now.replace(hour=0, minute=0, second=0, microsecond=0)
 
-    def _filter_events_since(self, cutoff: datetime) -> list[TradeEvent]:
-        events = self._ctx.position_manager.list_events()
+    async def _filter_events_since(
+        self, cutoff: datetime,
+    ) -> list[TradeEvent]:
+        # P-Wire-Box-4: list_events is async after the DB-backed conversion.
+        events = await self._ctx.position_manager.list_events()
         return [e for e in events if e.timestamp >= cutoff]
 
 

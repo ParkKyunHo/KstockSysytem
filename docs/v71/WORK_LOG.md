@@ -8,6 +8,42 @@
 
 ## 2026-04-30
 
+### P-Wire-Box-4-Hotfix: V71PositionManager async 시그니처 회귀 결함 7건 fix (자금 안전 직결)
+
+**배포 후 정밀 검토에서 발견된 결함**: P-Wire-Box-4 commit b15fce8 운영 배포 + boot smoke 6/6 PASS 후 journal에서 `restart recovery had failures: ["step4_resubscribe: 'coroutine' object is not iterable"]` 로그 발견. V71PositionManager.list_open / list_events / get / list_for_stock이 모두 async로 전환됐는데 호출처 7곳에 await 누락. V7.1 회귀에서 안 잡힌 이유는 5 broken 테스트 파일에 pytestmark.skip을 추가했기 때문 (telegram_commands / daily_summary / restart_recovery 등이 호출처).
+
+**결함 영향**:
+| 위치 | 영향 | 위험도 |
+|---|---|---|
+| `trading_bridge.py:2120` (restart recovery `_resubscribe_market_data`) | systemd 재시작 후 PRICE_TICK 재구독 실패 → STOP_LOSS/TS 청산 못 받음 | **CRITICAL — 자금 손실 확대** |
+| `trading_bridge.py:1229` (`_build_invested_pct_factory`) | BuyExecutor `_check_cap` 30% cap 검증 무력화 → 매수 발화 시 cap 초과 가능 | **HIGH — 자금 위험** |
+| `v71_telegram_commands.py:434, 450, 604` | /status, /positions, /today, /recent 명령 모두 fail | MEDIUM |
+| `v71_daily_summary.py:305, 361` | 매일 15:30 일일 요약 fail | LOW |
+
+**구현**:
+- `src/web/v71/trading_bridge.py:2120`: `await handle.position_manager.list_open()` (자금 안전 직결).
+- `src/web/v71/trading_bridge.py` `_build_invested_pct_factory`: sync `Callable[[str], float]` → async `Callable[[str], Awaitable[float]]` 전환. PositionStatus enum 비교로 (string "CLOSED" 잠복 결함 해소).
+- `src/core/v71/strategies/v71_buy_executor.py`: BuyExecutorContext.get_invested_pct_for_stock 타입을 `Callable[[str], Awaitable[float]]`로 변경 + `_check_cap`에서 await 호출. NFR1 1초 hot path budget 안 (~10 ms 단일 DB 쿼리).
+- `src/core/v71/notification/v71_telegram_commands.py`: `_cmd_status`, `_cmd_positions` await 추가 + `_filter_events_since` sync → async 전환 + 호출처 (`_cmd_today`, `_cmd_recent`) 갱신.
+- `src/core/v71/notification/v71_daily_summary.py`: `_build_body` await 추가 + `_build_avg_price_index` sync → async 전환.
+
+**테스트**:
+- `tests/v71/test_p_wire_box_4_core.py`: `_async_zero_pct` helper 신규 + atomic finalize_buy 테스트의 lambda를 async로 변경.
+- `tests/v71/test_v71_buy_executor.py` `_build_executor`: invested_pct 인자 자동 wrap (sync lambda + async 모두 지원, 18개 기존 테스트 호환).
+- `tests/v71/web/test_trading_bridge_wiring.py` `TestInvestedPctFactory` 4 cases: `@pytest.mark.asyncio` + AsyncMock + PositionStatus enum 사용으로 변환.
+
+**검증**:
+- V7.1 1211 PASS + 133 skipped + 0 failed (변경 없음).
+- Harness 7/7 PASS.
+- ruff 0 errors (수정 파일 한정).
+- 26 fix 테스트 직접 검증 PASS.
+
+**잔여 (별도 단위)**:
+- 5 broken 테스트 파일 (test_v71_position_manager.py / test_v71_reconciler.py / test_v71_exit_executor.py / test_v71_trailing_stop.py / test_v71_telegram_commands.py / test_v71_restart_recovery.py / test_v71_daily_summary.py) 재작성 — aiosqlite 기반 db-backed 패턴.
+- 5 broken 파일이 P-Wire-Box-4 commit + 이번 fix까지 검증 못 했으므로 재작성 시 모든 await 호출처 + atomic 트랜잭션 + lock_active_for_stock + cooldown 통합 검증 필수.
+
+---
+
 ### P-Wire-Box-4: V71PositionManager DB-backed + atomic 트랜잭션 (자금 안전 단위)
 
 **목적**: V71PositionManager를 in-memory dict (P3.4 stub)에서 DB-backed로 전환하면서 `add_position + box_manager.mark_triggered`를 단일 atomic 트랜잭션으로 감싸서 orphan-position-vs-orphan-box 윈도우를 제거. 5 INVARIANT flag (box_entry_detector / pullback_strategy / breakout_strategy / path_b_daily / buy_executor_v71)를 운영자 결정으로 안전하게 ON 가능한 상태로 전환.
