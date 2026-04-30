@@ -524,13 +524,13 @@ export function TrackedStocks() {
             </tbody>
           </table>
         </div>
-        <RowResizer onResize={resizeTableHeight} />
         <Pagination
           total={filtered.length}
           page={page}
           perPage={perPage}
           onPage={setPage}
         />
+        <RowResizer onResize={resizeTableHeight} />
       </div>
 
       {showNew ? (
