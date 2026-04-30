@@ -95,14 +95,21 @@ function clampHeight(h: number): number {
   return Math.max(MIN_HEIGHT, Math.min(MAX_HEIGHT, h));
 }
 
+// RowResizer — pagination 영역 자체를 drag handle로 사용 (사용자 요청).
+// 8px 별도 빈 영역 대신 children(Pagination)을 wrap하여 같은 40px 안에서
+// 호버 시 ↕ cursor + 드래그로 표 높이 조정. 내부 button(chevron) 클릭은
+// closest('button') 체크로 stopPropagation — pagination 기능 보존.
 function RowResizer({
   onResize,
+  children,
 }: {
   onResize: (deltaPx: number) => void;
+  children?: React.ReactNode;
 }) {
   const onMouseDown = (e: React.MouseEvent) => {
+    // chevron / 다른 button 클릭은 resize 무시 — pagination 기능 보존.
+    if ((e.target as HTMLElement).closest('button')) return;
     e.preventDefault();
-    e.stopPropagation();
     let lastY = e.clientY;
     const onMove = (ev: MouseEvent) => {
       const delta = ev.clientY - lastY;
@@ -122,18 +129,14 @@ function RowResizer({
     window.addEventListener('mousemove', onMove);
     window.addEventListener('mouseup', onUp);
   };
-  // Invisible hit area at the table's bottom edge — cursor flips to
-  // ns-resize on hover, no visible bar (사용자 요청).
   return (
     <div
       onMouseDown={onMouseDown}
-      style={{
-        height: 8,
-        cursor: 'ns-resize',
-        userSelect: 'none',
-      }}
+      style={{ cursor: 'ns-resize' }}
       title="드래그해서 표 높이 조정"
-    />
+    >
+      {children}
+    </div>
   );
 }
 
@@ -526,13 +529,14 @@ export function TrackedStocks() {
             </tbody>
           </table>
         </div>
-        <Pagination
-          total={filtered.length}
-          page={page}
-          perPage={perPage}
-          onPage={setPage}
-        />
-        <RowResizer onResize={resizeTableHeight} />
+        <RowResizer onResize={resizeTableHeight}>
+          <Pagination
+            total={filtered.length}
+            page={page}
+            perPage={perPage}
+            onPage={setPage}
+          />
+        </RowResizer>
       </div>
 
       {showNew ? (
