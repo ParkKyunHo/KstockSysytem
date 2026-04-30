@@ -8,6 +8,41 @@
 
 ## 2026-04-30
 
+### P-Wire-Box-2: 웹 service → V71BoxManager 위임
+
+**목표**: `src/web/v71/api/boxes/service.py`의 `create_box / patch_box / delete_box`가 `repo.insert_box` 직접 호출 → `V71BoxManager` API 위임으로 전환. P-Wire-Box-1이 박스 데이터 경로를 DB-backed로 통합했지만, 웹 service는 여전히 V71BoxManager 우회 — 이 단위에서 위임 완성.
+
+**구현**:
+- `src/web/v71/lifespan.py`에 `app.state.box_manager = V71BoxManager(session_factory=db._session_factory)` 추가 (process-wide singleton). v71.box_system flag false 시 `app.state.box_manager = None` (fail-loud 503).
+- `src/web/v71/dependencies.py`에 `box_manager_dep + BoxManagerDep` 추가. None 시 503 raise (UI silent loss 방지).
+- `src/web/v71/api/boxes/service.py` 전면 재작성:
+  - `create_box`: `parent_tracked_stock` SELECT (transaction begin) → `v71_box_repo.fetch_tracked_for_update` (race 차단) → 30% 한도 검사 → `await box_manager.create_box(session=session, ...)` (V71BoxManager가 overlap + INSERT) → `ts_service.transition_to_box_set` → commit → `session.get(SupportBox, UUID(record.id))` (identity map hit) → audit.
+  - `patch_box`: 같은 패턴 + `force_relax_stop=bool(warnings)` 자동 매핑 (STOP_LOSS_RELAXED 경고 시 V71BoxManager에 force=True).
+  - `delete_box`: `await box_manager.delete_box(session=session)` + 마지막 박스 시 tracked_stock TRACKING 복귀.
+  - `_wrap_box_error`: V71BoxManager 예외 (BoxOverlap/Validation/Modification/NotFound) → 웹 예외 (Conflict/V71/BusinessRule/NotFound) 매핑.
+- `src/web/v71/api/boxes/router.py` POST/PATCH/DELETE에 `BoxManagerDep` 주입 + service 호출 시 전달.
+- `tests/v71/web/test_boxes_service_integration.py` 신규 5 cases:
+  - **사용자 보고 회귀 직접 검증**: 웹 service.create_box 후 `box_manager.list_all()` 즉시 가시 (`test_box_visible_via_manager_after_service_create`).
+  - tracked_stock TRACKING → BOX_SET 전이.
+  - 30% 한도 BusinessRuleError raise.
+  - V71BoxManager BoxOverlapError → ConflictError 매핑.
+  - delete 후 tracked_stock TRACKING 복귀.
+
+**원자성**: service의 SELECT (`parent_tracked_stock`) → `fetch_tracked_for_update` → 30% 검사 → V71BoxManager.create_box (외부 session 사용) → tracked_stock UPDATE → commit 모두 한 트랜잭션. 다른 request 동시 INSERT 시 FOR UPDATE 락 직렬화.
+
+**호환성**: SupportBox ORM은 V71BoxManager가 같은 session에 추가했으니 service.session.get(SupportBox, id)이 identity map hit으로 같은 인스턴스 반환 → `router._to_out(box)` 변경 없음.
+
+**검증**: V7.1 1330/1330 PASS (1325 + 5 신규) + Harness 7/7 + ruff 0 errors.
+
+**잔여 (별도 단위)**:
+- P-Wire-Box-3: `_list_tracked()` stub 2곳 → DB JOIN.
+- P-Wire-Box-4: `V71PositionManager` 같은 패턴 (G1 GRACE) → DB-backed.
+- P-Wire-Manual-Buy-Notification: V71OrderManager `on_manual_order` callback wire.
+
+P-Wire-Box-2 land 후 운영 invariant 5 flag (box_entry_detector / pullback_strategy / breakout_strategy / path_b_daily / buy_executor_v71)는 P-Wire-Box-3/4 land 전까지 여전히 false 유지 (TrackedSummary 빈 결과 + PositionManager dict 분리 잔재).
+
+---
+
 ### P-Wire-Box-1: V71BoxManager DB-backed 전환 (사용자 자금 안전 회귀 fix)
 
 **사용자 보고 결함**: 웹 UI(`POST /api/v71/boxes`)로 박스 등록 시 텔레그램 `/status` "박스 0/0/0" + `/pending` "대기 박스 없음" + `/tracking` "추적 종목 없음"으로 표시. DB `support_boxes` 행은 정상 존재. 단순 표시 문제가 아닌 **데이터 경로 분리 — V71BoxManager가 in-memory dict (P3.1 docstring "later phases" stub)이라 웹 INSERT를 못 봄**. 자동 매매 파이프라인(BuyExecutor / BoxEntryDetector / Reconciler)에서도 박스 누락 → 자금 안전 직결.

@@ -9,11 +9,6 @@ from uuid import UUID
 
 from fastapi import APIRouter, Query, Request, Response, status
 
-from ...auth.dependencies import CurrentUserDep
-from ...dependencies import RequestIdDep, SessionDep
-from ...exceptions import V71Error
-from ...schemas.common import PaginationCursor, build_list_meta, build_meta
-from ...schemas.trading import BoxCreate, BoxOut, BoxPatch
 from src.database.models_v71 import (
     BoxStatus,
     PathType,
@@ -21,6 +16,11 @@ from src.database.models_v71 import (
     SupportBox,
 )
 
+from ...auth.dependencies import CurrentUserDep
+from ...dependencies import BoxManagerDep, RequestIdDep, SessionDep
+from ...exceptions import V71Error
+from ...schemas.common import PaginationCursor, build_list_meta, build_meta
+from ...schemas.trading import BoxCreate, BoxOut, BoxPatch
 from . import repo, service
 
 router = APIRouter(prefix="/boxes", tags=["boxes"])
@@ -138,11 +138,13 @@ async def create_box(
     body: BoxCreate,
     request: Request,
     session: SessionDep,
+    box_manager: BoxManagerDep,
     user: CurrentUserDep,
     request_id: RequestIdDep,
 ) -> dict[str, Any]:
     box = await service.create_box(
         session,
+        box_manager=box_manager,
         tracked_stock_id=body.tracked_stock_id,
         path_type=PathType(body.path_type),
         upper_price=body.upper_price,
@@ -169,7 +171,7 @@ async def create_box(
 
 @router.get("", status_code=status.HTTP_200_OK)
 async def list_boxes(
-    request: Request,
+    request: Request,  # noqa: ARG001 -- kept for symmetry with create/patch
     session: SessionDep,
     request_id: RequestIdDep,
     _user: CurrentUserDep,
@@ -254,12 +256,14 @@ async def patch_box(
     body: BoxPatch,
     request: Request,
     session: SessionDep,
+    box_manager: BoxManagerDep,
     user: CurrentUserDep,
     request_id: RequestIdDep,
     response: Response,
 ) -> dict[str, Any]:
     box, warnings = await service.patch_box(
         session,
+        box_manager=box_manager,
         box_id=box_id,
         upper_price=body.upper_price,
         lower_price=body.lower_price,
@@ -289,10 +293,12 @@ async def delete_box(
     box_id: UUID,
     request: Request,
     session: SessionDep,
+    box_manager: BoxManagerDep,
     user: CurrentUserDep,
 ) -> Response:
     await service.delete_box(
         session,
+        box_manager=box_manager,
         box_id=box_id,
         user_id=user.id,
         ip_address=_client_ip(request),

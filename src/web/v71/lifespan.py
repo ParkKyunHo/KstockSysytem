@@ -36,6 +36,39 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     logger.info("V7.1 web backend starting (env=%s)", settings.environment)
     await startup_db()
 
+    # P-Wire-Box-2: web service.create_box / patch_box / delete_box need a
+    # V71BoxManager instance. The trading_bridge attach (when enabled)
+    # also builds one for the engine, but those instances live in
+    # different attach contexts and do not need to be the same object —
+    # both share the same DatabaseManager session_factory, so DB-level
+    # FOR UPDATE serialises any cross-instance contention.
+    app.state.box_manager = None
+    try:
+        from src.core.v71.box.box_manager import V71BoxManager
+        from src.database.connection import get_db_manager
+        from src.utils.feature_flags import is_enabled
+
+        if is_enabled("v71.box_system"):
+            db = get_db_manager()
+            sf = db._session_factory  # noqa: SLF001 -- shared factory
+            if sf is not None:
+                app.state.box_manager = V71BoxManager(session_factory=sf)
+                logger.info("V7.1 web V71BoxManager ready")
+            else:
+                logger.warning(
+                    "V7.1 web V71BoxManager not built — DB session factory "
+                    "missing despite startup_db() (race?)",
+                )
+        else:
+            logger.info(
+                "V7.1 web V71BoxManager not built — v71.box_system flag off",
+            )
+    except Exception:  # pragma: no cover - defensive
+        logger.exception(
+            "V7.1 web V71BoxManager construction failed — POST /boxes "
+            "endpoints will return 503 until restart",
+        )
+
     engine_handle = None
     if _trading_engine_enabled():
         try:
