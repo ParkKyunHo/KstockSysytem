@@ -48,6 +48,7 @@ from src.core.v71.strategies.v71_buy_executor import (  # noqa: E402
     BuyOutcomeStatus,
     V71BuyExecutor,
 )
+from tests.v71.conftest import FakeBoxManager  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Fakes
@@ -244,14 +245,14 @@ def _make_decision(
     )
 
 
-def _make_box(
+async def _make_box(
     box_manager: V71BoxManager,
     *,
     path_type: str = "PATH_A",
     strategy: str = "PULLBACK",
     position_size_pct: float = 10.0,
 ):
-    return box_manager.create_box(
+    return await box_manager.create_box(
         tracked_stock_id=TRACKED,
         upper_price=20000,
         lower_price=15000,
@@ -300,8 +301,8 @@ def _build_executor(
 class TestPathAImmediate:
     @pytest.mark.asyncio
     async def test_normal_full_fill(self):
-        bm = V71BoxManager()
-        box = _make_box(bm)
+        bm = FakeBoxManager()
+        box = await _make_box(bm)
         ex = FakeExchange(ask_1=18050)
         executor, notifier, store, _ = _build_executor(
             exchange=ex, box_manager=bm
@@ -317,7 +318,7 @@ class TestPathAImmediate:
         assert outcome.filled_quantity == 555
         assert outcome.position_id == "pos-1"
         # Box marked TRIGGERED
-        assert bm.get(box.id).status is BoxStatus.TRIGGERED
+        assert (await bm.get(box.id)).status is BoxStatus.TRIGGERED
         # Position record created
         assert store.added[0]["stock_code"] == STOCK
         assert store.added[0]["quantity"] == 555
@@ -329,8 +330,8 @@ class TestPathAImmediate:
 
     @pytest.mark.asyncio
     async def test_cap_exceeded_blocks_buy(self):
-        bm = V71BoxManager()
-        box = _make_box(bm, position_size_pct=15.0)
+        bm = FakeBoxManager()
+        box = await _make_box(bm, position_size_pct=15.0)
         ex = FakeExchange()
         # already 20% invested -> 20+15 = 35 > 30
         executor, notifier, store, _ = _build_executor(
@@ -343,7 +344,7 @@ class TestPathAImmediate:
         assert outcome.status == BuyOutcomeStatus.ABANDONED_CAP
         assert "CAP_EXCEEDED" in outcome.reason
         # Box NOT triggered
-        assert bm.get(box.id).status is BoxStatus.WAITING
+        assert (await bm.get(box.id)).status is BoxStatus.WAITING
         # No position created
         assert store.added == []
         # Abandon notification fired
@@ -353,8 +354,8 @@ class TestPathAImmediate:
 
     @pytest.mark.asyncio
     async def test_vi_active_blocks_path_a(self):
-        bm = V71BoxManager()
-        box = _make_box(bm)
+        bm = FakeBoxManager()
+        box = await _make_box(bm)
         ex = FakeExchange()
         executor, notifier, store, _ = _build_executor(
             exchange=ex, box_manager=bm, is_vi_active=lambda _s: True
@@ -364,14 +365,14 @@ class TestPathAImmediate:
         outcome = await executor.on_entry_decision(decision, box)
 
         assert outcome.status == BuyOutcomeStatus.ABANDONED_VI
-        assert bm.get(box.id).status is BoxStatus.WAITING
+        assert (await bm.get(box.id)).status is BoxStatus.WAITING
         assert store.added == []
 
     @pytest.mark.asyncio
     async def test_target_quantity_zero_blocks_buy(self):
-        bm = V71BoxManager()
+        bm = FakeBoxManager()
         # tiny position pct + huge price => 0 shares
-        box = _make_box(bm, position_size_pct=0.01)
+        box = await _make_box(bm, position_size_pct=0.01)
         ex = FakeExchange(ask_1=99_999_999)
         executor, _, store, _ = _build_executor(
             exchange=ex, box_manager=bm, total_capital=1_000
@@ -393,8 +394,8 @@ class TestPathAImmediate:
 class TestBuySequenceRetry:
     @pytest.mark.asyncio
     async def test_three_unfilled_limits_then_market_fills(self):
-        bm = V71BoxManager()
-        box = _make_box(bm)
+        bm = FakeBoxManager()
+        box = await _make_box(bm)
         ex = FakeExchange(ask_1=18050)
         ex.default_full_fill = False  # limits return unfilled
 
@@ -438,8 +439,8 @@ class TestBuySequenceRetry:
 
     @pytest.mark.asyncio
     async def test_all_attempts_fail(self):
-        bm = V71BoxManager()
-        box = _make_box(bm)
+        bm = FakeBoxManager()
+        box = await _make_box(bm)
         ex = FakeExchange(ask_1=18050)
         ex.default_full_fill = False  # everything (incl. market) unfilled
 
@@ -452,7 +453,7 @@ class TestBuySequenceRetry:
 
         assert outcome.status == BuyOutcomeStatus.FAILED
         assert "NO_FILL" in outcome.reason
-        assert bm.get(box.id).status is BoxStatus.WAITING
+        assert (await bm.get(box.id)).status is BoxStatus.WAITING
         assert store.added == []
 
 
@@ -464,8 +465,8 @@ class TestBuySequenceRetry:
 class TestPathBPrimaryAndFallback:
     @pytest.mark.asyncio
     async def test_primary_normal_fill(self):
-        bm = V71BoxManager()
-        box = _make_box(bm, path_type="PATH_B")
+        bm = FakeBoxManager()
+        box = await _make_box(bm, path_type="PATH_B")
         # opening at 18200 vs prev close 18000 = 1.1% gap, OK
         ex = FakeExchange(ask_1=18250, current_price=18200)
         when_decision = datetime(2026, 4, 27, 14, 30)
@@ -489,13 +490,13 @@ class TestPathBPrimaryAndFallback:
 
         assert outcome.status == BuyOutcomeStatus.FILLED
         assert clock.sleep_untils == [primary_at]
-        assert bm.get(box.id).status is BoxStatus.TRIGGERED
+        assert (await bm.get(box.id)).status is BoxStatus.TRIGGERED
         assert store.added[0]["path_type"] == "PATH_B"
 
     @pytest.mark.asyncio
     async def test_primary_gap_up_5pct_blocks_buy_no_fallback(self):
-        bm = V71BoxManager()
-        box = _make_box(bm, path_type="PATH_B")
+        bm = FakeBoxManager()
+        box = await _make_box(bm, path_type="PATH_B")
         # opening 18900 vs prev 18000 = 5% exactly -> blocked
         ex = FakeExchange(ask_1=18900, current_price=18900)
         clock = FakeClock(now_value=datetime(2026, 4, 27, 14, 30))
@@ -518,14 +519,14 @@ class TestPathBPrimaryAndFallback:
         assert "PRIMARY_GAP" in outcome.reason
         # Did NOT proceed to fallback (only one sleep_until = primary).
         assert clock.sleep_untils == [datetime(2026, 4, 28, 9, 1)]
-        assert bm.get(box.id).status is BoxStatus.WAITING
+        assert (await bm.get(box.id)).status is BoxStatus.WAITING
         assert store.added == []
 
     @pytest.mark.asyncio
     async def test_primary_unfilled_triggers_905_fallback_and_fills(self):
         """1차 미체결 → 09:05 시장가 → FILLED."""
-        bm = V71BoxManager()
-        box = _make_box(bm, path_type="PATH_B")
+        bm = FakeBoxManager()
+        box = await _make_box(bm, path_type="PATH_B")
         ex = FakeExchange(ask_1=18200, current_price=18200)
         # 1차: limits 모두 미체결, market 실패; 2차 시점에서는 시장가 체결로 swap
         ex.default_full_fill = False
@@ -564,7 +565,7 @@ class TestPathBPrimaryAndFallback:
         assert outcome.status == BuyOutcomeStatus.FILLED
         # Both primary (09:01) and fallback (09:05) sleep_untils observed.
         assert clock.sleep_untils == [primary_at, fallback_at]
-        assert bm.get(box.id).status is BoxStatus.TRIGGERED
+        assert (await bm.get(box.id)).status is BoxStatus.TRIGGERED
         # Buy notification mentions fallback context
         msg = next(
             ev for ev in notifier.events if ev.get("event_type") == "BUY_EXECUTED"
@@ -574,8 +575,8 @@ class TestPathBPrimaryAndFallback:
     @pytest.mark.asyncio
     async def test_fallback_gap_recheck_invalidates_safety_net(self):
         """1차 미체결 + 09:05 시점 갭업 5% 이상 → ABANDONED_GAP."""
-        bm = V71BoxManager()
-        box = _make_box(bm, path_type="PATH_B")
+        bm = FakeBoxManager()
+        box = await _make_box(bm, path_type="PATH_B")
         # At decision time and 09:01 the open was 18200 (1.1% gap).
         # At 09:05 the price has run up to 18900 (5% gap).
         ex = FakeExchange(ask_1=18250, current_price=18200)
@@ -622,14 +623,14 @@ class TestPathBPrimaryAndFallback:
 
         assert outcome.status == BuyOutcomeStatus.ABANDONED_GAP
         assert "FALLBACK_GAP" in outcome.reason
-        assert bm.get(box.id).status is BoxStatus.WAITING
+        assert (await bm.get(box.id)).status is BoxStatus.WAITING
         assert store.added == []
 
     @pytest.mark.asyncio
     async def test_fallback_after_partial_fill_uses_weighted_average(self):
         """1차에서 부분 체결, 09:05에 잔량 시장가 → 가중평균 평단가 정확."""
-        bm = V71BoxManager()
-        box = _make_box(bm, path_type="PATH_B", position_size_pct=10.0)
+        bm = FakeBoxManager()
+        box = await _make_box(bm, path_type="PATH_B", position_size_pct=10.0)
         ex = FakeExchange(ask_1=18200, current_price=18200, last_price=18000)
 
         clock = FakeClock(now_value=datetime(2026, 4, 27, 14, 30))
@@ -720,8 +721,8 @@ class TestPathBPrimaryAndFallback:
 class TestNegativeDecisionGuard:
     @pytest.mark.asyncio
     async def test_should_enter_false_is_noop(self):
-        bm = V71BoxManager()
-        box = _make_box(bm)
+        bm = FakeBoxManager()
+        box = await _make_box(bm)
         ex = FakeExchange()
         executor, _, store, _ = _build_executor(exchange=ex, box_manager=bm)
 
@@ -748,8 +749,8 @@ class TestNegativeDecisionGuard:
 class TestBrokerErrors:
     @pytest.mark.asyncio
     async def test_order_rejected_short_circuits(self):
-        bm = V71BoxManager()
-        box = _make_box(bm)
+        bm = FakeBoxManager()
+        box = await _make_box(bm)
         ex = FakeExchange(ask_1=18050)
         ex.fail_send = OrderRejectedError("insufficient cash")
 
@@ -761,13 +762,13 @@ class TestBrokerErrors:
         outcome = await executor.on_entry_decision(decision, box)
 
         assert outcome.status == BuyOutcomeStatus.REJECTED
-        assert bm.get(box.id).status is BoxStatus.WAITING
+        assert (await bm.get(box.id)).status is BoxStatus.WAITING
         assert store.added == []
 
     @pytest.mark.asyncio
     async def test_transport_error_returns_failed(self):
-        bm = V71BoxManager()
-        box = _make_box(bm)
+        bm = FakeBoxManager()
+        box = await _make_box(bm)
         ex = FakeExchange(ask_1=18050)
         ex.fail_send = KiwoomAPIError("network down")
 
@@ -784,8 +785,8 @@ class TestBrokerErrors:
     @pytest.mark.asyncio
     async def test_path_b_primary_rejected_short_circuits(self):
         """PATH_B 1차 broker reject -> REJECTED (no fallback attempt)."""
-        bm = V71BoxManager()
-        box = _make_box(bm, path_type="PATH_B")
+        bm = FakeBoxManager()
+        box = await _make_box(bm, path_type="PATH_B")
         ex = FakeExchange(ask_1=18250, current_price=18200)
         ex.fail_send = OrderRejectedError("insufficient cash")
 
@@ -812,8 +813,8 @@ class TestBrokerErrors:
     @pytest.mark.asyncio
     async def test_path_b_primary_transport_error_defers_to_fallback(self):
         """PATH_B 1차 transport error + fallback metadata -> 2차 시도."""
-        bm = V71BoxManager()
-        box = _make_box(bm, path_type="PATH_B")
+        bm = FakeBoxManager()
+        box = await _make_box(bm, path_type="PATH_B")
         ex = FakeExchange(ask_1=18250, current_price=18200)
         # Primary phase: transport error on every send.
         # Fallback phase (after sleep_until 09:05): we restore behavior
@@ -862,8 +863,8 @@ class TestBrokerErrors:
     @pytest.mark.asyncio
     async def test_fallback_transport_error_returns_failed(self):
         """1차 미체결 + 09:05 fallback에서도 transport error -> FAILED."""
-        bm = V71BoxManager()
-        box = _make_box(bm, path_type="PATH_B")
+        bm = FakeBoxManager()
+        box = await _make_box(bm, path_type="PATH_B")
         ex = FakeExchange(ask_1=18250, current_price=18200)
         ex.default_full_fill = False  # primary unfilled
 
@@ -901,8 +902,8 @@ class TestBrokerErrors:
     @pytest.mark.asyncio
     async def test_fallback_cap_exceeded_during_window(self):
         """1차 미체결 + 09:01~09:05 사이 사용자 수동 매수 -> cap 초과 -> ABANDONED_CAP."""
-        bm = V71BoxManager()
-        box = _make_box(bm, path_type="PATH_B", position_size_pct=15.0)
+        bm = FakeBoxManager()
+        box = await _make_box(bm, path_type="PATH_B", position_size_pct=15.0)
         ex = FakeExchange(ask_1=18250, current_price=18200)
         ex.default_full_fill = False
 

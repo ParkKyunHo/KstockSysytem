@@ -50,6 +50,7 @@ from src.core.v71.position.v71_position_manager import (  # noqa: E402
     TradeEvent,
     V71PositionManager,
 )
+from tests.v71.conftest import FakeBoxManager  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Fakes
@@ -137,7 +138,7 @@ def _build_summary(
 ]:
     clock = FakeClock()
     pm = V71PositionManager()
-    bm = V71BoxManager()
+    bm = FakeBoxManager()
     notifier = notifier or FakeNotifier()
 
     def _list_tracked() -> list[TrackedSummary]:

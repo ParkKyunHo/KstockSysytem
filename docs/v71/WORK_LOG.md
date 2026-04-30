@@ -6,6 +6,68 @@
 
 ---
 
+## 2026-04-30
+
+### P-Wire-Box-1: V71BoxManager DB-backed 전환 (사용자 자금 안전 회귀 fix)
+
+**사용자 보고 결함**: 웹 UI(`POST /api/v71/boxes`)로 박스 등록 시 텔레그램 `/status` "박스 0/0/0" + `/pending` "대기 박스 없음" + `/tracking` "추적 종목 없음"으로 표시. DB `support_boxes` 행은 정상 존재. 단순 표시 문제가 아닌 **데이터 경로 분리 — V71BoxManager가 in-memory dict (P3.1 docstring "later phases" stub)이라 웹 INSERT를 못 봄**. 자동 매매 파이프라인(BuyExecutor / BoxEntryDetector / Reconciler)에서도 박스 누락 → 자금 안전 직결.
+
+**4 에이전트 병렬 검증** (PRD §6 표준 워크플로우):
+- v71-architect (옵션 C 결정 + Q1~Q10 상세 설계)
+- security-reviewer (즉시 패치 8건: H1 `in_transaction()` 가드, H2 보상 로직 두 겹, H3 boot invariant warning, H4/H5 자금 정보 redact, M1 AUTH invariant docstring, M3 per-stock asyncio.Lock, M4 `list_all` LIMIT)
+- trading-logic-verifier (블로커 5건: mark_triggered 무한 재시도 차단, cancel callback 격리, `_handle_c` PathType Enum 정정, TZ-aware now, 트랜잭션 경계)
+- migration-strategy (M4 idx_boxes_active 정합 누락, M2 hotfix.ps1 자동 적용 부재, M5 invariant 강제, 장중 가드)
+
+**Step 0 commit — 안전 인프라**:
+- `migrations/v71/021_patch_box_active_index.{up,down}.sql` (PRD 03 §2.2 line 356 정합: 2컬럼 → `(tracked_stock_id, path_type, status) WHERE WAITING` 3컬럼)
+- `config/feature_flags.yaml` 5 flag invariant 주석 (P-Wire-Box-2 land 전까지 box_entry_detector / pullback_strategy / breakout_strategy / path_b_daily / buy_executor_v71 모두 false 유지)
+- `scripts/deploy/apply_v71_migrations.py` 신규 (idempotent SQL 적용 + idx_boxes_active 검증)
+- `scripts/deploy/check_invariants.ps1` 신규 (5 flag + 장중 가드 + DB row + idx 검증)
+- `scripts/deploy/hotfix.ps1` `-ApplyMigration NNN` + `-ForceMarketHours` 추가 (장중 KST 09:00~15:30 차단)
+- `scripts/harness/storage_invariant_enforcer.py` 신규 (G1 BLOCK level: in-memory dict mirror of ORM 차단)
+- `scripts/harness/run_all.py` Harness 8 (G1) 등록
+
+**Step 1 commit — 코드 + 테스트 재작성**:
+- `src/core/v71/box/box_record.py` 신규 (frozen DTO + `from_orm(SupportBox)` 변환)
+- `src/core/v71/box/box_repository.py` 신규 (8 SQL 함수 + `with_for_update` + tz-aware now 강제)
+- `src/core/v71/box/box_manager.py` 전체 재작성 (`async_sessionmaker` 주입 + per-stock `asyncio.Lock` + AUTH invariant docstring + log redact + `_with_session` helper)
+- `src/core/v71/box/box_state_machine.py` BoxStatus/TrackedStatus를 ORM에서 re-export (single source of truth) + `BoxEvent.COMPENSATION_FAILED` 추가
+- `src/core/v71/strategies/v71_buy_executor.py` 보상 로직 강화 (`_compensate_box_trigger_failure`: in-memory rollback → 박스 INVALIDATED → safe_mode → CRITICAL 알림 redact). `BuyExecutorContext.enter_safe_mode` Optional callable 추가.
+- `src/core/v71/position/v71_position_manager.py` `rollback_in_memory_position(position_id)` 신설 (P-Wire-Box-4에서 제거).
+- `src/core/v71/position/v71_reconciler.py` `_handle_c` PathType string → ORM Enum 정정 (잠복 결함: 이전 코드는 시나리오 C 박스 무효화 0건이었음 — 자금 안전 직결).
+- `src/core/v71/strategies/{v71_box_breakout,v71_box_pullback}.py` `create_box` sync→async.
+- `src/core/v71/v71_constants.py` `NFR1_HOT_PATH_BUDGET_SECONDS=0.1` (Harness 3 magic literal 정합).
+- `src/web/v71/trading_bridge.py` `_build_box_manager` sessionmaker 주입 + boot invariant warning (5 flag 동시 ON 감지).
+- 7 호출처 `await` 추가.
+- `tests/v71/box/{conftest.py, test_box_manager.py}` 신규 28 cases (사용자 보고 회귀 시나리오 3 cases 직접 검증 포함).
+- `tests/v71/_fakes.py` 신규 (`FakeBoxManager` async stub, 9 legacy 테스트 파일 V71BoxManager() 호출 minimal 변경).
+- 9 legacy 테스트 mock 갱신 (V71BoxManager() → FakeBoxManager() + await 추가).
+
+**검증**:
+- V7.1 회귀: **1325/1325 PASS**.
+- Harness: **7/7 PASS** (G1 신규 + 기존 6).
+- ruff: 0 errors.
+- 사용자 보고 시나리오 회귀 3 cases (box_visible_after_create, manager_restart, pending_response_matches_db_waiting) 모두 통과.
+
+**자금 안전 + 운영 안전**:
+- DB가 단일 진실 원천 (PRD 03 §0.1 #4) — silent divergence 구조적 불가.
+- mark_triggered 실패 → in-memory rollback + 박스 INVALIDATED → 무한 재시도 차단 (trading-logic 블로커 1).
+- per-stock asyncio.Lock + DB FOR UPDATE = Defense in Depth.
+- 자금 정보 (가격/수량/비중) 평문 로그/텔레그램 발송 차단 (12_SECURITY.md §6.3).
+
+**잠복 결함 인덱스 (G4 가드)**:
+- `_handle_c` PathType Enum 비교 버그 정정.
+- `BoxStatus`가 두 모듈에 중복 정의되어 SQLEnum이 인스턴스 ID 매칭 실패 → ORM single source of truth 통일.
+- `idx_boxes_active`가 PRD §2.2 line 356과 불일치 → 마이그레이션 021 정정.
+
+**잔여 (별도 단위)**:
+- P-Wire-Box-2: 웹 service `create_box`가 `V71BoxManager` 위임 (현재 `repo.insert_box` 직접 호출).
+- P-Wire-Box-3: `_list_tracked()` stub 2곳 → DB JOIN.
+- P-Wire-Box-4: `V71PositionManager` in-memory dict 패턴 (G1 GRACE 등록) → DB-backed.
+- P-Wire-Manual-Buy-Notification: V71OrderManager `on_manual_order` callback wire (수동매수 즉시 텔레그램 알림 — 사용자 보고 결함 #2).
+
+---
+
 ## 2026-04-26
 
 ### Phase 0: 사전 준비 (진행 중)

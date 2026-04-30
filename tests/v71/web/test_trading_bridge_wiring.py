@@ -12,11 +12,36 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from src.utils import feature_flags as ff
+from tests.v71._fakes import FakeBoxManager
+
+
+@pytest.fixture(autouse=True)
+def _stub_db_session_factory(monkeypatch):
+    """P-Wire-Box-1: V71BoxManager construction needs a session factory.
+    Wiring tests check slot population, not DB queries — inject a
+    sentinel sessionmaker so the construction succeeds without
+    init_database() running against a real Postgres.
+    """
+    from src.database import connection as db_conn
+
+    class _StubManager:
+        _session_factory = staticmethod(lambda: None)  # not None, never invoked
+        is_initialized = True
+
+    stub = _StubManager()
+    monkeypatch.setattr(db_conn, "get_db_manager", lambda: stub)
 
 
 @pytest.fixture(autouse=True)
 def _isolate_flags():
-    """Snapshot V71_FF__ env vars + restore after each test."""
+    """Snapshot V71_FF__ env vars + start each test from a clean slate.
+
+    P-Wire-Box-1 fix: previous behaviour preserved leaked flags from
+    earlier tests (e.g. ``buy_executor_v71=true``) which then triggered
+    the new cross-flag invariant in ``_build_buy_executor``. We now
+    clear every ``V71_FF__`` var at setup so each test sees the
+    feature_flags.yaml defaults until it explicitly sets one.
+    """
     saved = {k: v for k, v in os.environ.items() if k.startswith("V71_FF__")}
     saved_kiwoom = {
         k: os.environ.get(k)
@@ -29,6 +54,12 @@ def _isolate_flags():
         k: os.environ.get(k)
         for k in ("TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID")
     }
+    # Clean slate before each test so leaked flags from prior tests do
+    # not poison cross-flag invariants in trading_bridge.
+    for k in list(os.environ):
+        if k.startswith("V71_FF__"):
+            del os.environ[k]
+    ff.reload()
     yield
     for k in list(os.environ):
         if k.startswith("V71_FF__"):
@@ -1047,7 +1078,9 @@ class TestTotalCapitalCache:
         from unittest.mock import MagicMock
         client = MagicMock()
         response = MagicMock()
-        response.body = body
+        # trading_bridge unwraps via getattr(response, "data", ...) — see
+        # commit 4055765 (kt00018 .data unwrap fix).
+        response.data = body
         client.get_account_balance = AsyncMock(return_value=response)
         return client
 
@@ -2246,7 +2279,6 @@ def _make_box_detector_handle():
     from types import SimpleNamespace
     from unittest.mock import AsyncMock, MagicMock
 
-    from src.core.v71.box.box_manager import V71BoxManager
     from src.core.v71.candle.v71_candle_manager import V71CandleManager
     from src.web.v71.trading_bridge import _TradingEngineHandle
 
@@ -2273,7 +2305,7 @@ def _make_box_detector_handle():
     handle.kiwoom_client = kiwoom
     handle.kiwoom_websocket = ws
     handle.candle_manager = candle_manager
-    handle.box_manager = V71BoxManager()
+    handle.box_manager = FakeBoxManager()
     handle.buy_executor = buy_executor
     handle.vi_monitor = vi_monitor
     handle.tracked_stock_cache = {1: "005930", 2: "000660"}

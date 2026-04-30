@@ -50,7 +50,7 @@ class V71BoxPullbackStrategy:
         require_enabled("v71.pullback_strategy")
         self._box_manager = box_manager
 
-    def create_box(
+    async def create_box(
         self,
         *,
         tracked_stock_id: str,
@@ -68,7 +68,7 @@ class V71BoxPullbackStrategy:
         ``strategy_type="PULLBACK"`` so callers cannot accidentally
         register a BREAKOUT box through the pullback strategy.
         """
-        return self._box_manager.create_box(
+        return await self._box_manager.create_box(
             tracked_stock_id=tracked_stock_id,
             upper_price=upper_price,
             lower_price=lower_price,

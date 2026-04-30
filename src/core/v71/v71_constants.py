@@ -186,6 +186,12 @@ class V71Constants:
     SIGNAL_START_TIME: Final[str] = "09:05"
     """진입 신호 탐지 시작 (CLAUDE.md Part 3.5)."""
 
+    # ---- NFR1 query budget (01_PRD_MAIN.md §1 헌법 2) ----
+    NFR1_HOT_PATH_BUDGET_SECONDS: Final[float] = 0.1
+    """V71BoxManager.list_waiting_for_tracked perf-warn threshold —
+    10% of the 1-second NFR1 budget. Slow-path warning is logged when
+    a single hot-path query exceeds this."""
+
 
 class V71Timeframe(str, Enum):
     """V7.1 candle timeframe (V71 prefix per harness 1 + 격리 원칙).

@@ -159,7 +159,7 @@ class V71BoxEntryDetector:
             # Not a tracked stock for this path -- common, just exit.
             return []
 
-        boxes = self._box_manager.list_waiting_for_tracked(
+        boxes = await self._box_manager.list_waiting_for_tracked(
             tracked_id, self._path_type
         )
         if not boxes:

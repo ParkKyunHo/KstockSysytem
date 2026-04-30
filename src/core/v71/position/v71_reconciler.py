@@ -371,13 +371,19 @@ class V71Reconciler:
             ended_tracking_id = tinfo.tracked_stock_id
 
             # Invalidate every WAITING box on this tracked record.
-            for box in self._ctx.box_manager.list_waiting_for_tracked(
-                tinfo.tracked_stock_id, "PATH_A"  # enumerated below
-            ) + self._ctx.box_manager.list_waiting_for_tracked(
-                tinfo.tracked_stock_id, "PATH_B"
-            ):
-                self._ctx.box_manager.mark_invalidated(
-                    box.id, reason="MANUAL_BUY_DETECTED"
+            # P-Wire-Box-1: PathType Enum from the ORM (was bare strings
+            # — DB-backed manager compares Enum, so strings would
+            # silently miss).
+            from src.database.models_v71 import PathType as _PathType
+            path_a_boxes = await self._ctx.box_manager.list_waiting_for_tracked(
+                tinfo.tracked_stock_id, _PathType.PATH_A,
+            )
+            path_b_boxes = await self._ctx.box_manager.list_waiting_for_tracked(
+                tinfo.tracked_stock_id, _PathType.PATH_B,
+            )
+            for box in path_a_boxes + path_b_boxes:
+                await self._ctx.box_manager.mark_invalidated(
+                    box.id, reason="MANUAL_BUY_DETECTED",
                 )
                 invalidated_box_ids.append(box.id)
                 actions.append(f"invalidate_box {box.id}")

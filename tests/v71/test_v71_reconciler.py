@@ -43,6 +43,7 @@ from src.core.v71.skills.reconciliation_skill import (  # noqa: E402
     KiwoomBalance,
     ReconciliationCase,
 )
+from tests.v71.conftest import FakeBoxManager  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Fakes
@@ -116,7 +117,7 @@ def _build() -> tuple[
     FakeClock,
 ]:
     pm = V71PositionManager()
-    bm = V71BoxManager()
+    bm = FakeBoxManager()
     notifier = FakeNotifier()
     clock = FakeClock()
     tracked = FakeTrackedStore()
@@ -354,13 +355,13 @@ class TestCaseC:
             path_type="PATH_A",
             status="BOX_SET",
         ))
-        b1 = bm.create_box(
+        b1 = await bm.create_box(
             tracked_stock_id=TRACKED_ID,
             upper_price=74_000, lower_price=73_000,
             position_size_pct=10.0,
             strategy_type="PULLBACK", path_type="PATH_A",
         )
-        b2 = bm.create_box(
+        b2 = await bm.create_box(
             tracked_stock_id=TRACKED_ID,
             upper_price=71_000, lower_price=70_000,
             position_size_pct=10.0,
@@ -376,8 +377,8 @@ class TestCaseC:
         # end_tracking called.
         assert tracked_store.end_calls == [(TRACKED_ID, "MANUAL_BUY_DETECTED")]
         # Boxes INVALIDATED.
-        assert bm.get(b1.id).status is BoxStatus.INVALIDATED
-        assert bm.get(b2.id).status is BoxStatus.INVALIDATED
+        assert (await bm.get(b1.id)).status is BoxStatus.INVALIDATED
+        assert (await bm.get(b2.id)).status is BoxStatus.INVALIDATED
         # MANUAL position created.
         manuals = [p for p in pm.list_open() if p.path_type == "MANUAL"]
         assert len(manuals) == 1
@@ -468,7 +469,7 @@ class TestFlagGate:
         try:
             with pytest.raises(RuntimeError, match="v71.reconciliation_v71"):
                 pm = V71PositionManager()
-                bm = V71BoxManager()
+                bm = FakeBoxManager()
                 ctx = ReconcilerContext(
                     position_manager=pm, box_manager=bm,
                     notifier=FakeNotifier(), clock=FakeClock(),

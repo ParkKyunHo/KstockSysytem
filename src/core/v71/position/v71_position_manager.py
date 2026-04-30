@@ -100,6 +100,34 @@ class V71PositionManager:
     # PositionStore Protocol  (consumed by V71BuyExecutor)
     # ------------------------------------------------------------------
 
+    async def rollback_in_memory_position(self, position_id: str) -> None:
+        """Compensating rollback used by V71BuyExecutor when the
+        subsequent ``box_manager.mark_triggered`` fails (P-Wire-Box-1).
+
+        Removes the position record AND the most recently-appended
+        BUY_EXECUTED event tied to it. Idempotent: rolling back an
+        unknown position_id is a no-op (the in-memory state is already
+        the desired post-rollback shape).
+
+        Removed in P-Wire-Box-4 once positions live in the same DB
+        transaction as the box update.
+        """
+        state = self._positions.pop(position_id, None)
+        if state is None:
+            return
+        # Remove the most recent BUY_EXECUTED event for this position.
+        # In normal flow add_position appends exactly one such event
+        # immediately before mark_triggered runs; scanning from the end
+        # keeps this safe under any future reordering.
+        for idx in range(len(self._events) - 1, -1, -1):
+            event = self._events[idx]
+            if (
+                event.position_id == position_id
+                and event.event_type == "BUY_EXECUTED"
+            ):
+                del self._events[idx]
+                break
+
     async def add_position(
         self,
         *,

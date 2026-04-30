@@ -36,13 +36,13 @@ def _enable_box_system():
 
 
 from src.core.v71.box.box_entry_detector import V71BoxEntryDetector  # noqa: E402
-from src.core.v71.box.box_manager import V71BoxManager  # noqa: E402
 from src.core.v71.candle.types import V71Candle as Candle  # noqa: E402
 from src.core.v71.skills.box_entry_skill import (  # noqa: E402
     EntryDecision,
     MarketContext,
 )
 from src.core.v71.v71_constants import V71Timeframe  # noqa: E402
+from tests.v71.conftest import FakeBoxManager  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Fakes
@@ -114,7 +114,7 @@ def _make_detector(
         path_type=path_type,
         candle_manager=candle_manager or FakeCandleManager(),
         timeframe_filter=timeframe,
-        box_manager=box_manager or V71BoxManager(),
+        box_manager=box_manager or FakeBoxManager(),
         on_entry=on_entry,
         resolve_tracked_id=resolve_tracked_id or (lambda _s: None),
         market_context=lambda c: _ctx(current_time=c.timestamp),
@@ -168,8 +168,8 @@ class TestLifecycle:
 class TestTimeframeFilter:
     @pytest.mark.asyncio
     async def test_path_a_skips_daily_candle(self):
-        bm = V71BoxManager()
-        bm.create_box(
+        bm = FakeBoxManager()
+        await bm.create_box(
             tracked_stock_id="tracked-001",
             upper_price=100,
             lower_price=90,
@@ -197,7 +197,7 @@ class TestTimeframeFilter:
 
     @pytest.mark.asyncio
     async def test_path_b_skips_three_minute_candle(self):
-        bm = V71BoxManager()
+        bm = FakeBoxManager()
         det = _make_detector(
             box_manager=bm,
             path_type="PATH_B",
@@ -211,8 +211,8 @@ class TestTimeframeFilter:
 
     @pytest.mark.asyncio
     async def test_matching_timeframe_runs_check_entry(self):
-        bm = V71BoxManager()
-        bm.create_box(
+        bm = FakeBoxManager()
+        await bm.create_box(
             tracked_stock_id="tracked-001",
             upper_price=100,
             lower_price=90,
@@ -257,7 +257,7 @@ class TestCheckEntryRouting:
 
     @pytest.mark.asyncio
     async def test_no_waiting_boxes_returns_empty(self):
-        bm = V71BoxManager()
+        bm = FakeBoxManager()
         det = _make_detector(
             box_manager=bm, resolve_tracked_id=lambda _s: "tracked-001",
         )
@@ -266,8 +266,8 @@ class TestCheckEntryRouting:
     @pytest.mark.asyncio
     async def test_pullback_a_two_bars_dispatches(self):
         """First bar caches; second bar (with first as prev) triggers."""
-        bm = V71BoxManager()
-        bm.create_box(
+        bm = FakeBoxManager()
+        await bm.create_box(
             tracked_stock_id="tracked-001",
             upper_price=100,
             lower_price=90,
@@ -299,8 +299,8 @@ class TestCheckEntryRouting:
 
     @pytest.mark.asyncio
     async def test_skips_box_with_mismatched_path(self):
-        bm = V71BoxManager()
-        bm.create_box(
+        bm = FakeBoxManager()
+        await bm.create_box(
             tracked_stock_id="tracked-001",
             upper_price=100,
             lower_price=90,
@@ -329,8 +329,8 @@ class TestCheckEntryRouting:
         Bearer/Authorization in nested KiwoomAPIError bodies)."""
         import logging as _logging
 
-        bm = V71BoxManager()
-        bm.create_box(
+        bm = FakeBoxManager()
+        await bm.create_box(
             tracked_stock_id="tracked-001",
             upper_price=100,
             lower_price=90,

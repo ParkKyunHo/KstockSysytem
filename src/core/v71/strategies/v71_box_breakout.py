@@ -35,7 +35,7 @@ class V71BoxBreakoutStrategy:
         require_enabled("v71.breakout_strategy")
         self._box_manager = box_manager
 
-    def create_box(
+    async def create_box(
         self,
         *,
         tracked_stock_id: str,
@@ -47,7 +47,7 @@ class V71BoxBreakoutStrategy:
         memo: str | None = None,
     ) -> BoxRecord:
         """Create a BREAKOUT box on the underlying box manager."""
-        return self._box_manager.create_box(
+        return await self._box_manager.create_box(
             tracked_stock_id=tracked_stock_id,
             upper_price=upper_price,
             lower_price=lower_price,

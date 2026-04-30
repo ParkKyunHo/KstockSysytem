@@ -41,9 +41,10 @@ Constitution check:
 from __future__ import annotations
 
 import contextlib
+import logging
 import math
 import uuid
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
@@ -63,6 +64,8 @@ from src.core.v71.skills.kiwoom_api_skill import (
 )
 from src.core.v71.v71_constants import V71Constants
 from src.utils.feature_flags import require_enabled
+
+log = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Protocols (DI surface)
@@ -101,6 +104,16 @@ class PositionStore(Protocol):
         opened_at: datetime,
     ) -> str:
         """Insert a new OPEN position. Returns position_id (UUID)."""
+        ...
+
+    async def rollback_in_memory_position(self, position_id: str) -> None:
+        """Compensating action used by V71BuyExecutor when ``mark_triggered``
+        on the box manager fails after the position was already added.
+
+        P-Wire-Box-1 transitional API. Removed in P-Wire-Box-4 once
+        positions also live in the DB and box update + position insert
+        share a single transaction.
+        """
         ...
 
 
@@ -200,6 +213,12 @@ class BuyExecutorContext:
 
     get_invested_pct_for_stock: Callable[[str], float]
     """Currently invested percentage of total capital for the stock."""
+
+    enter_safe_mode: Callable[[str], Awaitable[None]] | None = None
+    """Last-resort safety toggle used by the box-trigger compensation
+    path when the in-memory position rollback itself fails. None means
+    the executor falls back to a CRITICAL alert only (P-Wire-Box-1
+    early integration; Phase 7 wires the system_state setter)."""
 
 
 # ---------------------------------------------------------------------------
@@ -696,7 +715,25 @@ class V71BuyExecutor:
             opened_at=opened_at,
         )
 
-        self._ctx.box_manager.mark_triggered(box.id)
+        # P-Wire-Box-1 / Q3 + trading-logic blocker 1 + security H2:
+        # mark_triggered persists box status to DB. Failure leaves an
+        # orphan position (broker has the fill, V7.1 sees the position
+        # in memory, but the box stays WAITING and would re-trigger on
+        # the next tick). Compensation chain:
+        #   1. roll back the in-memory position
+        #   2. mark the box INVALIDATED so the next tick skips it
+        #   3. if rollback itself fails, trip safe-mode (caller-injected)
+        #   4. emit CRITICAL alert with no money figures (12 §6.3)
+        try:
+            await self._ctx.box_manager.mark_triggered(box.id)
+        except Exception as mark_exc:  # noqa: BLE001
+            await self._compensate_box_trigger_failure(
+                box=box,
+                stock_code=stock_code,
+                position_id=position_id,
+                mark_exc=mark_exc,
+            )
+            raise
 
         status = (
             BuyOutcomeStatus.FILLED
@@ -774,6 +811,107 @@ class V71BuyExecutor:
     @staticmethod
     def _new_id() -> str:
         return str(uuid.uuid4())
+
+    # ------------------------------------------------------------------
+    # Box-trigger persistence failure compensation (P-Wire-Box-1)
+    # ------------------------------------------------------------------
+
+    async def _compensate_box_trigger_failure(
+        self,
+        *,
+        box: BoxRecord,
+        stock_code: str,
+        position_id: str,
+        mark_exc: Exception,
+    ) -> None:
+        """Best-effort recovery when ``box_manager.mark_triggered`` fails
+        after the broker fill landed and the in-memory position was
+        already added.
+
+        Order matters:
+          1. Roll back the in-memory position so it does not appear in
+             /positions while the box stays WAITING.
+          2. Mark the box INVALIDATED (reason=COMPENSATION_FAILED) so
+             the next PRICE_TICK does not retry the same box (trading-
+             logic blocker 1: infinite retry guard).
+          3. If the rollback itself fails (corrupted in-memory state),
+             call ``enter_safe_mode`` so the system stops opening new
+             positions until an operator inspects (security H2).
+          4. Emit a CRITICAL alert. Money figures (price / quantity /
+             size) are NOT in the message (12_SECURITY §6.3).
+
+        Each step is independently try/except'd: even step 4 must not
+        let an exception starve the chain (Constitution 4: never crash
+        the trading loop).
+        """
+        log.critical(
+            "v71_box_mark_triggered_failed",
+            extra={
+                "box_id": box.id,
+                "tracked_stock_id": box.tracked_stock_id,
+                "stock_code": stock_code,
+                "position_id": position_id,
+                "error": type(mark_exc).__name__,
+            },
+        )
+        rollback_failed = False
+        try:
+            await self._ctx.position_store.rollback_in_memory_position(
+                position_id,
+            )
+        except Exception as rb_exc:  # noqa: BLE001
+            rollback_failed = True
+            log.critical(
+                "v71_box_compensation_rollback_failed",
+                extra={
+                    "position_id": position_id,
+                    "error": type(rb_exc).__name__,
+                },
+            )
+            if self._ctx.enter_safe_mode is not None:
+                try:
+                    await self._ctx.enter_safe_mode(
+                        "BOX_TRIGGER_COMPENSATION_FAILED"
+                    )
+                except Exception as sm_exc:  # noqa: BLE001
+                    log.critical(
+                        "v71_box_compensation_safemode_failed",
+                        extra={"error": type(sm_exc).__name__},
+                    )
+
+        try:
+            await self._ctx.box_manager.mark_invalidated(
+                box.id, reason="COMPENSATION_FAILED",
+            )
+        except Exception as inv_exc:  # noqa: BLE001
+            log.critical(
+                "v71_box_compensation_invalidate_failed",
+                extra={
+                    "box_id": box.id,
+                    "error": type(inv_exc).__name__,
+                },
+            )
+
+        try:
+            tail = " — SAFE_MODE 진입" if rollback_failed else ""
+            await self._ctx.notifier.notify(
+                severity="CRITICAL",
+                event_type="BOX_TRIGGER_DB_FAILURE",
+                stock_code=stock_code,
+                message=(
+                    f"[CRITICAL] 박스 매수 후 mark_triggered 실패\n"
+                    f"종목: {stock_code}\n"
+                    f"박스 ID: {box.id}\n"
+                    f"포지션 ID: {position_id}\n"
+                    f"수동 확인 필요{tail}"
+                ),
+                rate_limit_key=f"box_trigger_dbfail:{stock_code}",
+            )
+        except Exception as nx_exc:  # noqa: BLE001
+            log.critical(
+                "v71_box_compensation_notify_failed",
+                extra={"error": type(nx_exc).__name__},
+            )
 
 
 __all__ = [

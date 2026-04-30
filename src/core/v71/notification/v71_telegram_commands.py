@@ -423,7 +423,7 @@ class V71TelegramCommands:
     # ------------------------------------------------------------------
 
     async def _cmd_status(self, chat_id: str, _args: list[str]) -> None:
-        all_boxes = self._ctx.box_manager.list_all()
+        all_boxes = await self._ctx.box_manager.list_all()
         waiting = sum(1 for b in all_boxes if b.status is BoxStatus.WAITING)
         triggered = sum(
             1 for b in all_boxes if b.status is BoxStatus.TRIGGERED
@@ -452,7 +452,7 @@ class V71TelegramCommands:
         await self._safe_send(chat_id, format_tracking_response(items))
 
     async def _cmd_pending(self, chat_id: str, _args: list[str]) -> None:
-        boxes = self._ctx.box_manager.list_all(status=BoxStatus.WAITING)
+        boxes = await self._ctx.box_manager.list_all(status=BoxStatus.WAITING)
         await self._safe_send(chat_id, format_pending_response(boxes))
 
     async def _cmd_today(self, chat_id: str, _args: list[str]) -> None:

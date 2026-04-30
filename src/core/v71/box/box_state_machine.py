@@ -36,26 +36,13 @@ from __future__ import annotations
 from collections.abc import Mapping
 from enum import Enum
 
+# P-Wire-Box-1: TrackedStatus + BoxStatus are now re-exported from the
+# ORM (``src.database.models_v71``) so the SQLAlchemy column type and
+# the Python enum used by the state machine are the same class. Two
+# separate class definitions silently diverge -- SQLEnum's value lookup
+# uses identity, not name (KeyError when feeding the wrong copy).
+from src.database.models_v71 import BoxStatus, TrackedStatus
 from src.utils.feature_flags import require_enabled
-
-
-class TrackedStatus(Enum):
-    """Lifecycle of a tracked stock (one path)."""
-
-    TRACKING = "TRACKING"            # registered, no boxes yet
-    BOX_SET = "BOX_SET"              # at least one WAITING box
-    POSITION_OPEN = "POSITION_OPEN"  # bought, no partial exit yet
-    POSITION_PARTIAL = "POSITION_PARTIAL"  # at least one partial exit done
-    EXITED = "EXITED"                # terminal, history preserved
-
-
-class BoxStatus(Enum):
-    """Lifecycle of a single support box."""
-
-    WAITING = "WAITING"
-    TRIGGERED = "TRIGGERED"
-    INVALIDATED = "INVALIDATED"
-    CANCELLED = "CANCELLED"
 
 
 class TrackedEvent(Enum):
@@ -70,12 +57,20 @@ class TrackedEvent(Enum):
 
 
 class BoxEvent(Enum):
-    """Events that transition a box (all are terminal targets)."""
+    """Events that transition a box (all are terminal targets).
+
+    ``COMPENSATION_FAILED`` (P-Wire-Box-1) is emitted by V71BuyExecutor
+    when ``mark_triggered`` succeeds at the broker but the persistence
+    UPDATE later fails. Marking the box INVALIDATED stops the next
+    PRICE_TICK from re-triggering the same box (trading-logic blocker
+    1: infinite retry guard).
+    """
 
     BUY_EXECUTED = "BUY_EXECUTED"
     MANUAL_BUY_DETECTED = "MANUAL_BUY_DETECTED"
     AUTO_EXIT_BOX_DROP = "AUTO_EXIT_BOX_DROP"
     USER_DELETED = "USER_DELETED"
+    COMPENSATION_FAILED = "COMPENSATION_FAILED"
 
 
 # Transition tables --------------------------------------------------------
@@ -108,6 +103,7 @@ _BOX_TRANSITIONS: Mapping[BoxStatus, Mapping[BoxEvent, BoxStatus]] = {
         BoxEvent.MANUAL_BUY_DETECTED: BoxStatus.INVALIDATED,
         BoxEvent.AUTO_EXIT_BOX_DROP: BoxStatus.INVALIDATED,
         BoxEvent.USER_DELETED: BoxStatus.CANCELLED,
+        BoxEvent.COMPENSATION_FAILED: BoxStatus.INVALIDATED,
     },
     BoxStatus.TRIGGERED: {},      # terminal
     BoxStatus.INVALIDATED: {},    # terminal

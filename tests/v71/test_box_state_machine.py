@@ -242,6 +242,7 @@ class TestAllowedEvents:
             BoxEvent.MANUAL_BUY_DETECTED,
             BoxEvent.AUTO_EXIT_BOX_DROP,
             BoxEvent.USER_DELETED,
+            BoxEvent.COMPENSATION_FAILED,
         }
 
     def test_terminal_box_allowed_events_empty(self):

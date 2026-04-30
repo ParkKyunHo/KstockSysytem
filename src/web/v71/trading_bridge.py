@@ -2925,9 +2925,42 @@ async def attach_trading_engine() -> _TradingEngineHandle:
         )
 
     if is_enabled("v71.box_system"):
+        # P-Wire-Box-1: DB-backed manager. The legacy in-memory dict path
+        # is gone — sessions come from the shared DatabaseManager (same
+        # singleton FastAPI dependencies + V71Reconciler use).
         from src.core.v71.box.box_manager import V71BoxManager
+        from src.database.connection import get_db_manager
 
-        handle.box_manager = V71BoxManager()
+        db = get_db_manager()
+        sf = db._session_factory  # noqa: SLF001 -- intentional shared factory
+        if sf is None:
+            raise RuntimeError(
+                "trading_bridge: v71.box_system enabled but DatabaseManager "
+                "session factory not ready (call init_database() first)"
+            )
+        handle.box_manager = V71BoxManager(session_factory=sf)
+
+        # P-Wire-Box-1 invariant guard (security H3): warn loudly if any
+        # automatic-entry flag is true alongside box_system before the
+        # P-Wire-Box-2 wiring lands. Boot continues -- the operator
+        # explicitly toggled the flag, but the alert lands in the log.
+        invariant_violations = [
+            name for name in (
+                "v71.box_entry_detector",
+                "v71.pullback_strategy",
+                "v71.breakout_strategy",
+                "v71.path_b_daily",
+                "v71.buy_executor_v71",
+            )
+            if is_enabled(name)
+        ]
+        if invariant_violations:
+            logger.warning(
+                "trading_bridge: P-Wire-Box-1 invariant violation -- "
+                "automatic box-entry path enabled before P-Wire-Box-2 lands. "
+                "Flags: %s",
+                invariant_violations,
+            )
     else:
         logger.warning(
             "trading_bridge: feature flag 'v71.box_system' disabled -- "

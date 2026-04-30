@@ -395,7 +395,7 @@ class V71ExitExecutor:
         position.closed_at = self._ctx.clock.now()
 
         # §5.9: cancel sibling WAITING boxes on the same tracked_stock.
-        self._ctx.box_manager.cancel_waiting_for_tracked(
+        await self._ctx.box_manager.cancel_waiting_for_tracked(
             position.tracked_stock_id,
             reason="POSITION_CLOSED",
         )

@@ -69,6 +69,7 @@ from src.core.v71.skills.box_entry_skill import (  # noqa: E402, F401
     PathType,
     StrategyType,
 )
+from tests.v71.conftest import FakeBoxManager  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Fakes
@@ -220,7 +221,7 @@ def _build_commands(
     FakeClock,
 ]:
     clock = FakeClock()
-    bm = V71BoxManager()
+    bm = FakeBoxManager()
     pm = V71PositionManager()
     repo = InMemoryNotificationRepository()
     queue = V71NotificationQueue(repository=repo, clock=clock)
@@ -397,7 +398,7 @@ class TestPendingTodayRecent:
     @pytest.mark.asyncio
     async def test_pending_filters_waiting(self) -> None:
         _, _, bot, _a, _s, _c, _r, bm, _pm, _clock = _build_commands()
-        bm.create_box(
+        await bm.create_box(
             tracked_stock_id="t1",
             upper_price=10_200,
             lower_price=9_500,

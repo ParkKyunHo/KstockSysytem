@@ -33,7 +33,6 @@ def _enable_flags():
     ff.reload()
 
 
-from src.core.v71.box.box_manager import V71BoxManager  # noqa: E402
 from src.core.v71.position.v71_position_manager import (  # noqa: E402
     V71PositionManager,
 )
@@ -46,6 +45,7 @@ from src.core.v71.restart_recovery import (  # noqa: E402
     V71RestartRecovery,
 )
 from src.core.v71.skills.reconciliation_skill import KiwoomBalance  # noqa: E402
+from tests.v71.conftest import FakeBoxManager  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Fakes
@@ -88,7 +88,7 @@ class FakeNotifier:
 
 
 def _make_reconciler(pm: V71PositionManager) -> V71Reconciler:
-    bm = V71BoxManager()
+    bm = FakeBoxManager()
     notifier = FakeNotifier()
     clock = FakeClock()
     return V71Reconciler(
@@ -152,7 +152,7 @@ def _build(
     reconciler = V71Reconciler(
         context=ReconcilerContext(
             position_manager=pm,
-            box_manager=V71BoxManager(),
+            box_manager=FakeBoxManager(),
             notifier=notifier,
             clock=clock,
             list_tracked_for_stock=lambda _s: [],

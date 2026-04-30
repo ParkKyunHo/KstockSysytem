@@ -51,6 +51,7 @@ from src.core.v71.skills.kiwoom_api_skill import (  # noqa: E402
     V71OrderStatus,
     V71OrderType,
 )
+from tests.v71.conftest import FakeBoxManager  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Fakes
@@ -227,7 +228,7 @@ def _build(
     on_position_closed: Callable | None = None,
 ) -> tuple[V71ExitExecutor, FakeExchange, V71BoxManager, FakeNotifier, FakeClock]:
     ex = FakeExchange(bid_1=bid, ask_1=bid + 100, last_price=bid + 50)
-    bm = V71BoxManager()
+    bm = FakeBoxManager()
     notifier = FakeNotifier()
     clock = FakeClock()
     ctx = ExitExecutorContext(
@@ -271,7 +272,7 @@ class TestStopLoss:
         executor, ex, bm, notifier, _ = _build(bid=95_000)
         pos = _position(avg=100_000, qty=100)
         # Two siblings WAITING on the same tracked stock.
-        b1 = bm.create_box(
+        b1 = await bm.create_box(
             tracked_stock_id="t1",
             upper_price=120_000,
             lower_price=110_000,
@@ -279,7 +280,7 @@ class TestStopLoss:
             strategy_type="PULLBACK",
             path_type="PATH_A",
         )
-        b2 = bm.create_box(
+        b2 = await bm.create_box(
             tracked_stock_id="t1",
             upper_price=105_000,
             lower_price=100_000,
@@ -289,9 +290,9 @@ class TestStopLoss:
         )
         outcome = await executor.execute_stop_loss(pos)
         assert outcome.status == ExitOutcomeStatus.FILLED
-        assert bm.get(b1.id).status is BoxStatus.CANCELLED
-        assert bm.get(b2.id).status is BoxStatus.CANCELLED
-        assert bm.get(b1.id).invalidation_reason == "POSITION_CLOSED"
+        assert (await bm.get(b1.id)).status is BoxStatus.CANCELLED
+        assert (await bm.get(b2.id)).status is BoxStatus.CANCELLED
+        assert (await bm.get(b1.id)).invalidation_reason == "POSITION_CLOSED"
 
     @pytest.mark.asyncio
     async def test_on_position_closed_callback_fires(self):
