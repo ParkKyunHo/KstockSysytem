@@ -1,7 +1,58 @@
 # CHANGELOG
 
 > K_stock_trading 버전 히스토리 및 변경 기록
-> 최신 버전: V7.1-Fix14 (2026-02-12)
+> 최신 버전: V7.1 Local Dev + JWT Refresh + V7.0 Cleanup + ECC 벤치마크 (2026-05-01 / 05-02)
+
+---
+
+## 2026-05-01 / 05-02 - V7.1 Local Dev Separation + JWT Refresh Rotation + V7.0 Legacy Cleanup + ECC Benchmark
+
+### 배경
+
+V7.0 (Purple-ReAbs)는 commit `33ee3ee` (2026-04-28)에서 코드 일괄 git rm 됐으나, `.gitignore` + utility config + docs + scripts 잔재가 남아있어 V7.1 단독 운영이 깨끗하지 못했음. 또한 production (rbsgh4) 환경과 격리된 로컬 개발환경 부재 + JWT 보안 강화 필요 (PRD §3.5 sliding refresh) + Claude Code 워크플로우 효율화 위해 ECC §3-§4 벤치마크 land.
+
+### 변경 내용
+
+| 영역 | 파일 / 모듈 | 변경 |
+|------|-----------|------|
+| **Dev** | `scripts/start_dev.ps1`, `scripts/dev_run_local.py`, `scripts/dev_seed.py` (신규) | 통합 dev launcher (SQLite + admin/admin + TOTP off + DEV badge + V71_WEB_ENVIRONMENT=dev + 거래 엔진 off) |
+| **Auth** | `src/web/v71/config.py` (신규 ~85 lines) | access_token_minutes 60→30 + sliding 정책 코멘트 |
+| **Auth** | `src/web/v71/auth/{router,service,schemas}.py` | refresh token rotation (PRD §3.5 sliding) + `_ensure_utc()` helper + `TokenPair` 응답 + `LoginRequest.password.min_length` 8→5 |
+| **Frontend** | `frontend/src/components/shell/{SessionExtendButton,SessionExpiryWatcher,UserMenu}.tsx` (신규) | 헤더 세션 연장 카운트다운 + 5분 전 만료 토스트 + 사용자 메뉴 dropdown (설정/로그아웃) |
+| **Frontend** | `frontend/src/lib/{jwt,api}.ts` | JWT exp claim 디코드 util + refresh rotation 클라이언트 (새 refresh도 store) |
+| **Frontend** | `frontend/src/pages/Login.tsx`, `frontend/src/components/shell/AppShell.tsx` | client validation 5자 동기화 + DEV badge + Toast 통합 |
+| **Legacy** | (73 files 삭제) | V7.0 잔재 일괄 폐기 — `src/utils/{config,exceptions}.py` 정리, `scripts/archive/v70/` 31, `scripts/deploy/*.bat` 7 + V7.0 ps1 17, `docs/V7.0/*.md` 9, V7.0 risk env vars 9개 |
+| **Infra** | `.gitignore` | V7.0 시절 `lib/` `config.py` 등 광범위 패턴 root 한정 (V7.1 합법 파일 8개 차단 결함 fix) |
+| **Docs** | `CLAUDE.md` + `src/core/v71/CLAUDE.md` (신규) | Hierarchical CLAUDE.md (root 198 lines + sub Phase 1) + Karpathy 4 행동 가이드 흡수 |
+| **Workflow** | `.claude/agents/` (5 신규) + `.claude/skills/v71-multi-execute/` + `.claude/settings.json` (hooks) | ECC §3-§4 벤치마크 (P0+P1+P2): planner / doc-updater / loop-operator / harness-audit / refactor-cleaner agents + v71-multi-execute skill + SessionStart/Stop hooks |
+
+### 영향
+
+- **거래 룰 코드 변경 0** (P-Wire 모듈 무변경, 자금 안전 ✓)
+- **production 영향**: access_token TTL 60→30분 (rbsgh4 첫 접속 시 30분 cycle 시작) + 헤더 UX 개선 (카운트다운 + dropdown)
+- **dev 영향**: localhost:5173 admin/admin로 즉시 작업 가능 (production 격리)
+- **개발 워크플로우**: SessionStart hook으로 컨텍스트 자동 표시 + 5 신규 agents로 12단계 step 1/4/12 자동화 → 매 V7.1 작업 ~10-15분 절약 예상
+
+### 검증
+
+| 항목 | 결과 |
+|------|------|
+| backend `pytest tests/v71/` | 1225 passed / 133 skipped / 0 failed |
+| ruff (변경 파일) | All checks passed |
+| frontend tsc + vite build | 0 errors, 187 modules |
+| Harness 1-6 | All Passed |
+| 수동 rotation E2E | 1st refresh 새 토큰 쌍 / 2nd (same old token) REFRESH_EXPIRED ✓ |
+
+### 커밋
+
+`75d3bbd` → `e96d912` → `0b6d338` → `8af290f` → `fbee149` → `8649bef` → `351d466` (총 7 commits)
+
+### Follow-up (별도 단위)
+
+- POST `/auth/logout_all` (PRD §3.6 모든 active sessions revoke)
+- Idle timeout 미들웨어 (PRD §3.5 `last_activity_at` 30분 체크)
+- `consolidate-memory` skill 호출 (MEMORY.md 33KB → 24KB 한도 정합)
+- ECC P3 재논의 (개발 워크플로우 패턴 학습 / strategic compaction 시점 명시)
 
 ---
 

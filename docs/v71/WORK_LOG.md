@@ -6,6 +6,71 @@
 
 ---
 
+## 2026-05-01 / 05-02
+
+### Local Dev 분리 + JWT Refresh Rotation + V7.0 잔재 폐기 + ECC 벤치마크 (7 commits)
+
+**사용자 결정**: production (rbsgh4) 인증 시스템과 격리된 로컬 개발환경 구축 + JWT 보안 강화 (PRD §3.5 sliding refresh) + V7.0 (Purple-ReAbs) 폐기 후 .gitignore + utility config + docs + scripts 잔재 일괄 정리 ("V7.1은 그 자체로 온전해야하며 완전히 다른 시스템") + ECC §3-§4 벤치마크 (P0+P1+P2 land, 거래 룰 자동 evolve / 48 agents 광범위 expansion 제외).
+
+**1. Local 개발환경 분리** (`75d3bbd` + `e96d912`):
+- `scripts/dev_run_local.py` 신규 — WindowsSelectorEventLoopPolicy 강제 + DATABASE_URL 비움 + V71_WEB_ENVIRONMENT=dev + V71_WEB_BOOT_TRADING_ENGINE=false + SQLITE_PATH=data/dev.db.
+- `scripts/dev_seed.py` 신규 — idempotent dev user (admin/admin, role=OWNER, totp_enabled=False, V71_WEB_ENVIRONMENT!=dev 시 거부).
+- `scripts/start_dev.ps1` 신규 — 통합 launcher (8080/5173 stale kill → backend 새 PowerShell → 6s 대기 → frontend foreground).
+- `src/web/v71/auth/service.py` — dev mode TOTP skip (`settings.environment == "dev"` 분기).
+- `src/web/v71/auth/schemas.py` — `LoginRequest.password.min_length` 8→5 (admin 5자 허용).
+- `frontend/src/pages/Login.tsx` — client-side validation 5자로 동기화.
+- `frontend/src/components/shell/AppShell.tsx` — DEV badge (`import.meta.env.DEV` 분기).
+
+**2. JWT 30분 + Refresh Rotation** (`8af290f`, PRD §3.5):
+- `src/web/v71/config.py` 신규 (~85 lines) — access_token_minutes 30 + sliding 정책 코멘트.
+- `src/web/v71/auth/service.py` `refresh_access_token` rewrite — 새 access + 새 refresh 둘 다 발급, 같은 row token_hash + expires_at + last_activity 모두 갱신. `_ensure_utc()` helper (SQLite naive datetime → UTC aware 변환, PostgreSQL preserves offset, dev SQLite tzinfo 손실 보정).
+- `src/web/v71/auth/router.py` — `/refresh` 응답 `AccessTokenResponse` → `TokenPair` (access + refresh + expires_in). `totp_setup` 미사용 `request` 파라미터 제거 (ARG001 baseline cleanup).
+- `frontend/src/lib/api.ts` `refreshAccessToken` — 응답에서 새 refresh도 함께 store(`tokenStore.setTokens`). 이전엔 access만 store해서 rotation 후 다음 401에서 무효화된 old refresh 사용 → silent logout 결함.
+- `frontend/src/components/shell/SessionExtendButton.tsx` (`0b6d338`) — JWT exp claim 1초 단위 카운트다운 + 색 단계 (회색 / 5분 이내 노랑 / 만료 빨강) + 클릭 시 refresh API + 성공/실패 dot 2초 표시.
+- `frontend/src/components/shell/SessionExpiryWatcher.tsx` (`8af290f`) — 신규 headless. JWT exp 5초 polling, 5분 도달 onWarn / 0초 도달 onExpired. 토큰 회전 시 warned/expired 플래그 자동 reset.
+- `frontend/src/components/shell/UserMenu.tsx` (`0b6d338`) — avatar 클릭 → dropdown (사용자 정보 + 설정 + 로그아웃). outside click + Escape 닫기.
+
+**검증**: backend `pytest tests/v71/` 1225 passed / 133 skipped / 0 failed. ruff (변경 4 파일) All checks passed. frontend tsc 0 errors + vite build 187 modules. 수동 rotation E2E: login → 1st refresh = 새 토큰 쌍 (expires_in: 1800) → 2nd refresh (same old token) = `error_code: REFRESH_EXPIRED` ✓.
+
+**3. V7.0 잔재 일괄 폐기** (`fbee149`, 73 files 삭제):
+- `.gitignore`: V7.0 시절 `lib/`, `build/`, `dist/`, `eggs/`, `parts/`, `sdist/`, `var/`, `wheels/`, `config.py` 패턴 root 한정 (`/lib/`, `/config.py` 등). V7.1 `frontend/src/lib/`, `src/web/v71/config.py` 등 8개 합법 파일 차단 결함 fix.
+- 누락 파일 8개 fresh add: `src/web/v71/config.py` + `frontend/src/lib/{api,jwt,tokenStore,formatters,queryKeys,eventLabel,time}.ts`.
+- `src/utils/config.py` 정리 — TradingMode + KiwoomSettings + RiskSettings + StrategySettings + AppConfig + 5 helper 제거. TelegramSettings + DatabaseSettings + Settings(logger 4 attr만) 보존.
+- 삭제: `src/utils/exceptions.py`, `src/api/`, `scripts/archive/v70/` 31, `scripts/migrate_env_to_v71.py`, `scripts/check_and_migrate_v25.py`, `scripts/deploy/*.bat` 7 + V7.0 ps1 17, V7.0 docs 9, `.env.v70.bak.20260429`, `.env.v71.example`, `nul`.
+- `.env.example` V7.0 risk vars 9개 제거.
+- `CLAUDE.md` Part 2 (V7 Purple-ReAbs) 전체 제거, 부 번호 재정리, V7.1 모듈표 갱신.
+
+**검증**: backend `pytest tests/v71/` 1225 passed. ruff `--fix` UP045 7건 자동 적용. frontend vite build 187 modules.
+
+**4. Hierarchical CLAUDE.md** (`8649bef`):
+- root CLAUDE.md 슬림화 (280 → 186 → 198 lines, < 200 ✓).
+- Part 0 신규 — Karpathy CLAUDE.md 4 가이드라인 흡수 (Think Before Coding / Simplicity First / Surgical Changes / Goal-Driven Execution).
+- Part 3 — 12단계 워크플로우에 step별 verify 명시 (Karpathy §4 통합).
+- Part 4.3 신규 — 신규 agent/skill 생성 절차 (사용자 승인 필수, 5-step).
+- Part 6.1 — sub-CLAUDE.md 인덱스 (Phase 1-4 로드맵, Phase 2-4는 Karpathy §2 / 헌법 5 단순함 위반 risk → 진행 X 결정).
+- `src/core/v71/CLAUDE.md` 신규 (94 lines, Phase 1) — 거래 룰 헌법 5개 (skills 우선 / frozen DTO / idempotent / atomic / SSoT) + 9 skills 빠른 참조 + harness H3 차단 + 5 invariant flag false 강제 + NFR1 영역별 budget.
+
+**5. ECC §3-§4 벤치마크 land** (`351d466`, P0+P1+P2):
+- 출처: [`affaan-m/everything-claude-code`](https://github.com/affaan-m/everything-claude-code) (Anthropic 해커톤 winner).
+- **P0 — 2 hooks** (`.claude/settings.json`): SessionStart (work-context.json 마지막 4000 chars + git log -5 자동 표시) + Stop (git status 변경 시 reminder).
+- **P1 — 3 agents + 1 skill**: `planner` (12단계 step 1 자동화), `doc-updater` (step 12 자동화, proposal first), `v71-multi-execute` skill (step 4 병렬 dispatch, round-trip 1/2 단축).
+- **P2 — 3 agents**: `loop-operator` (다단계 + 사용자 승인 게이트 강제), `harness-audit` (8 harness 자체 audit), `refactor-cleaner` (Karpathy §3 surgical).
+- **CLAUDE.md** Part 4.1 (5 → 10 sub-agents) + Part 4.2 (9 → 10 skills) + Part 6.4 자동 hook 동작 안내. 198 lines (< 200 ✓).
+- **부적합 (사용자 명시 제외)**: 거래 룰 자동 evolve (헌법 1 위반) + 48 agents 광범위 expansion (헌법 5 위반).
+- **doc-updater 첫 dogfooding** (이번 세션 마무리): proposal first 원칙 작동 ✓ + 빠진 항목 능동 발견 (Step 7-9 회귀 누락 + MEMORY.md 33KB 한도 초과). consolidate-memory skill 호출 권장 — 다음 세션 별도 단위.
+
+**검증** (전 세션 종합): backend `pytest tests/v71/` 1225 passed (모든 commits에서 baseline 유지). frontend vite build 187 modules. 거래 룰 코드 변경 0 (P-Wire 모듈 무변경, 자금 안전).
+
+**다음 세션 후보**:
+- `consolidate-memory` skill (MEMORY.md 33KB → 24KB 한도 정합)
+- POST `/auth/logout_all` (PRD §3.6) — 모든 active sessions revoke
+- Idle timeout 미들웨어 (PRD §3.5 last_activity_at 30분 체크)
+- P-Wire-Box-2 (웹 service create_box → V71BoxManager 위임) — 자금 위험, 사용자 결정 영역
+- Phase 4 알림 시스템 (PRD)
+- 어제 mistimed 장마감 알림 진단
+
+---
+
 ## 2026-04-30
 
 ### P-Wire-Price-Tick: V71PricePublisher (PRICE_TICK → DB UPDATE + WebSocket publish)
