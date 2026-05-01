@@ -24,7 +24,11 @@ export interface TotpVerifyResult {
 }
 
 export interface RefreshResult {
+  // PRD §3.5 sliding refresh: backend now returns BOTH new access AND
+  // new refresh on every /auth/refresh call. Old shape kept as optional
+  // for backwards compat with cached responses.
   access_token: string;
+  refresh_token: string;
   expires_in: number;
 }
 

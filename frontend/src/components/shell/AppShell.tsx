@@ -5,12 +5,14 @@
 // the real REST API. Mock data still flows through the Outlet context
 // for the pages that have not been migrated yet.
 
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 
 import { I, type IconComponent } from '@/components/icons';
+import { SessionExpiryWatcher } from '@/components/shell/SessionExpiryWatcher';
 import { SessionExtendButton } from '@/components/shell/SessionExtendButton';
 import { UserMenu } from '@/components/shell/UserMenu';
+import { ToastContainer, useToasts } from '@/components/ui';
 import { useAuth } from '@/contexts/AuthContext';
 import { useLiveMock } from '@/hooks/useLiveMock';
 import { useSystemStatus, useUnreadNotifications } from '@/hooks/useApi';
@@ -88,6 +90,31 @@ export function AppShell({ theme, onCycleTheme }: AppShellProps) {
   // Mock context kept for the pages that have not yet been migrated.
   const mock = useLiveMock(initialMock);
 
+  // Session-expiry warning + expired toast (PRD §3.5 + Phase 4 UX).
+  // 5min before access token expires → warning toast (persistent).
+  // At expiry → error toast (the api.ts auto-refresh will normally
+  // mint a fresh access via the rotated refresh token, so the user
+  // rarely sees this; it appears only when refresh is also gone).
+  const { toasts, addToast, closeToast } = useToasts();
+  const handleSessionWarn = useCallback(() => {
+    addToast({
+      kind: 'warning',
+      title: '세션이 곧 만료됩니다',
+      subtitle: '5분 이내 자동 로그아웃됩니다.',
+      caption: '헤더의 [로그인 연장] 버튼을 눌러 1시간 연장하세요.',
+      ttl: 0, // persistent — user must dismiss or extend
+    });
+  }, [addToast]);
+  const handleSessionExpired = useCallback(() => {
+    addToast({
+      kind: 'error',
+      title: '세션이 만료되었습니다',
+      subtitle: '다음 활동 시 자동 갱신을 시도합니다.',
+      caption: '실패하면 다시 로그인해주세요.',
+      ttl: 0,
+    });
+  }, [addToast]);
+
   // Merge: prefer real status but fall back to mock until the API
   // responds (e.g. brand-new page load). Mock notifications are still
   // surfaced when the unread API has not yet returned.
@@ -114,6 +141,12 @@ export function AppShell({ theme, onCycleTheme }: AppShellProps) {
 
   return (
     <div className="app-shell">
+      <SessionExpiryWatcher
+        warnAtSeconds={300}
+        onWarn={handleSessionWarn}
+        onExpired={handleSessionExpired}
+      />
+      <ToastContainer toasts={toasts} onClose={closeToast} />
       <AppHeader
         onToggleSide={() => setSideOpen((s) => !s)}
         unread={unread}

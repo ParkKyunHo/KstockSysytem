@@ -22,7 +22,6 @@ from ..schemas.common import build_meta
 from . import service, totp
 from .dependencies import AccessTokenDep, CurrentUserDep
 from .schemas import (
-    AccessTokenResponse,
     CurrentUserOut,
     LoginPendingTotp,
     LoginRequest,
@@ -160,14 +159,22 @@ async def refresh(
     settings: SettingsDep,
     request_id: RequestIdDep,
 ) -> dict[str, Any]:
-    access_token, _expires_at = await service.refresh_access_token(
+    """Sliding refresh — 새 access + 새 refresh 회전(PRD §3.5).
+
+    Response shape changed from ``AccessTokenResponse`` (access only) to
+    ``TokenPair`` so the client can store the rotated refresh token.
+    Old clients that ignore the ``refresh_token`` field still work but
+    will hit 401 once their cached refresh expires (24h max).
+    """
+    issued = await service.refresh_access_token(
         session,
         refresh_token=body.refresh_token,
         settings=settings,
     )
     await session.commit()
-    payload = AccessTokenResponse(
-        access_token=access_token,
+    payload = TokenPair(
+        access_token=issued.access_token,
+        refresh_token=issued.refresh_token,
         expires_in=settings.access_token_minutes * 60,
     )
     return _envelope(payload.model_dump(), request_id)
@@ -203,7 +210,6 @@ async def logout(
 
 @router.post("/totp/setup", status_code=status.HTTP_200_OK)
 async def totp_setup(
-    request: Request,
     user: CurrentUserDep,
     session: SessionDep,
     settings: SettingsDep,

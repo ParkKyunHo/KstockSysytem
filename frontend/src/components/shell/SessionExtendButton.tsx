@@ -21,25 +21,12 @@ import { useCallback, useEffect, useState } from 'react';
 
 import { authApi } from '@/api/auth';
 import { I } from '@/components/icons';
+import { decodeJwtExp } from '@/lib/jwt';
 import { tokenStore } from '@/lib/tokenStore';
 
 type Feedback = 'idle' | 'success' | 'error';
 
 const LOW_THRESHOLD_SEC = 300; // 5 min — switch label to warning colour
-
-function decodeJwtExp(token: string | null): number | null {
-  if (!token) return null;
-  try {
-    const parts = token.split('.');
-    if (parts.length !== 3) return null;
-    const b64 = parts[1].replace(/-/g, '+').replace(/_/g, '/');
-    const padded = b64 + '='.repeat((4 - (b64.length % 4)) % 4);
-    const payload = JSON.parse(atob(padded)) as { exp?: unknown };
-    return typeof payload.exp === 'number' ? payload.exp : null;
-  } catch {
-    return null;
-  }
-}
 
 function formatRemaining(sec: number): string {
   if (sec <= 0) return '00:00';
@@ -85,7 +72,11 @@ export function SessionExtendButton() {
     setFeedback('idle');
     try {
       const res = await authApi.refresh(refresh);
-      tokenStore.setAccessToken(res.access_token);
+      // PRD §3.5 sliding refresh: backend rotates BOTH tokens. Persist
+      // both so the next /auth/refresh has the rotated refresh available
+      // (otherwise we silently revert to the old refresh which is now
+      // revoked → next 401 logs the user out).
+      tokenStore.setTokens(res.access_token, res.refresh_token);
       setFeedback('success');
       window.setTimeout(() => setFeedback('idle'), 2000);
     } catch {

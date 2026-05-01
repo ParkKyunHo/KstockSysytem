@@ -36,6 +36,20 @@ if TYPE_CHECKING:  # pragma: no cover
     pass
 
 
+def _ensure_utc(dt: datetime) -> datetime:
+    """SQLite drops tzinfo on round-trip; coerce naive UTC → aware UTC.
+
+    PostgreSQL preserves the offset, but the dev SQLite (data/dev.db)
+    returns naive datetimes which crash ``<`` against ``datetime.now
+    (timezone.utc)``. Treating naive as UTC is correct because
+    ``security.create_token`` always writes UTC-aware via
+    ``datetime.now(timezone.utc) + delta``.
+    """
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
 # ---------------------------------------------------------------------
 # In-process TOTP session store (replace with Redis in prod)
 # ---------------------------------------------------------------------
@@ -247,7 +261,20 @@ async def refresh_access_token(
     *,
     refresh_token: str,
     settings: WebSettings,
-) -> tuple[str, datetime]:
+) -> IssuedTokens:
+    """Sliding refresh — 새 access + 새 refresh 발급 + 같은 row 갱신.
+
+    PRD 12_SECURITY §3.5 (sliding session): 매 refresh 시 refresh token
+    도 회전(rotation)시킨다. 효과:
+
+    * 활동 중인 사용자: 새 refresh가 24h 더 살아있어 무한 연장.
+    * 누군가 refresh를 탈취해도 한 번 사용하면 즉시 무효 (다음 정상
+      요청에서 401 → 사용자 재로그인 강제).
+    * 단일 device 모델: 같은 row를 갱신하므로 추가 storage cost 0.
+
+    Returns the same ``IssuedTokens`` shape as the login flow so the
+    router can produce a uniform ``TokenPair`` envelope.
+    """
     claims = decode_token(refresh_token, settings=settings, expected_kind="refresh")
     rfh = hash_token(refresh_token)
     db_session = await repo.get_active_session_by_refresh_hash(session, rfh)
@@ -256,19 +283,39 @@ async def refresh_access_token(
             "Refresh token revoked or unknown",
             error_code="REFRESH_EXPIRED",
         )
-    if db_session.refresh_expires_at < datetime.now(timezone.utc):
+    if _ensure_utc(db_session.refresh_expires_at) < datetime.now(timezone.utc):
         raise V71AuthenticationError(
             "Refresh token expired", error_code="REFRESH_EXPIRED",
         )
 
     user_id = UUID(claims["sub"])
-    access_token, access_expires_at = create_token(
+    user = await repo.get_user_by_id(session, user_id)
+    if user is None or not user.is_active:
+        raise V71AuthenticationError(
+            "User not found or disabled",
+            error_code="UNAUTHORIZED",
+        )
+
+    new_access, new_access_exp = create_token(
         user_id=user_id, kind="access", settings=settings,
     )
-    db_session.access_token_hash = hash_token(access_token)
-    db_session.access_expires_at = access_expires_at
+    new_refresh, new_refresh_exp = create_token(
+        user_id=user_id, kind="refresh", settings=settings,
+    )
+
+    db_session.access_token_hash = hash_token(new_access)
+    db_session.refresh_token_hash = hash_token(new_refresh)
+    db_session.access_expires_at = new_access_exp
+    db_session.refresh_expires_at = new_refresh_exp
     await repo.touch_session_activity(session, db_session.id)
-    return access_token, access_expires_at
+
+    return IssuedTokens(
+        access_token=new_access,
+        refresh_token=new_refresh,
+        access_expires_at=new_access_exp,
+        refresh_expires_at=new_refresh_exp,
+        user=user,
+    )
 
 
 # ---------------------------------------------------------------------

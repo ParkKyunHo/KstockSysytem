@@ -69,6 +69,9 @@ class RefreshRequest(BaseModel):
     refresh_token: str
 
 
+# DEPRECATED: kept for backwards compat only. /auth/refresh now returns
+# TokenPair (PRD §3.5 sliding refresh — both access AND refresh rotate).
+# Remove once we are sure no external client still parses the old shape.
 class AccessTokenResponse(BaseModel):
     access_token: str
     expires_in: int

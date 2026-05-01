@@ -6,20 +6,26 @@ __pycache__/
 # C extensions
 *.so
 
-# Distribution / packaging
+# Distribution / packaging — V7.1은 venv + npm. V7.0 시절 Python
+# 사이트패키지 잔재 패턴이 V7.1 frontend/src/lib/, src/web/v71/config.py
+# 등 합법 파일을 차단했었음 (commit 33ee3ee V7.0 폐기 후 2026-05-01 정리).
+# 모두 root 한정으로 좁혀서 V7.1 모듈 경로(예: src/, frontend/src/lib/,
+# tests/) 안의 같은 이름 파일/디렉터리는 더 이상 차단되지 않음.
+# frontend vite build 산출물은 frontend/dist/ → 별도 명시.
 .Python
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
+/build/
+/develop-eggs/
+/dist/
+frontend/dist/
+/downloads/
+/eggs/
+/.eggs/
+/lib/
+/lib64/
+/parts/
+/sdist/
+/var/
+/wheels/
 *.egg-info/
 .installed.cfg
 *.egg
@@ -100,7 +106,9 @@ cython_debug/
 # ========================
 
 # 민감 정보 (절대 커밋 금지!)
-config.py
+# /config.py = root 한정 — V7.0 시절 광범위 차단으로 V7.1
+# src/web/v71/config.py가 git에 들어가지 못했음. 2026-05-01 정리.
+/config.py
 *.key
 *.pem
 credentials/
