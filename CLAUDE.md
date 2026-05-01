@@ -77,8 +77,9 @@ V7.0 = 폐기 (Purple-ReAbs 자동 신호).
 
 > **원칙**: 매 작업에서 적합한 agent/skill **적극 활용**. 부족하면 신규 제안 (사용자 승인). 사용자 명시 (2026-04-27): "회사처럼 팀이 의견 제시 + 검토".
 
-### 4.1 5 Sub-agents 호출 결정 트리 (PRD §6)
+### 4.1 10 Sub-agents 호출 결정 트리 (PRD §6 + ECC §4 벤치마크)
 
+**도메인 검증 (5)**:
 ```
 신규 V7.1 모듈/의존성?    → v71-architect (필수)
 거래 룰 영향?              → trading-logic-verifier (필수)
@@ -87,7 +88,16 @@ DB schema/marker 변경?     → migration-strategy (필수)
 새 함수/클래스?            → test-strategy (필수)
 ```
 
-### 4.2 9 Skills 사용 정책 (raw call 차단 — harness H3)
+**오케스트레이션 (5, ECC land 2026-05-02)**:
+```
+새 작업 시작 (모호/multi-step)     → planner (PRD 로드 + 분해 + verify)
+큰 단위 land → commit 직전         → doc-updater (work-context + WORK_LOG + memory)
+다단계 마이그레이션 / 반복 작업    → loop-operator (사용자 승인 게이트 강제)
+신규 V7.1 land / harness 변경      → harness-audit (V71_PATHS / H3 / G1 정합)
+큰 리팩토링 / 모듈 폐기 후         → refactor-cleaner (Karpathy §3 surgical)
+```
+
+### 4.2 10 Skills 사용 정책 (raw call 차단 — harness H3)
 
 | 도메인 | Skill | raw 차단 대상 |
 |-------|-------|------------|
@@ -100,6 +110,7 @@ DB schema/marker 변경?     → migration-strategy (필수)
 | 정합성 | `v71-reconciliation` | 직접 DB sync |
 | 테스트 | `v71-test-template` | (가이드만) |
 | 모듈 추가 | `v71-add-module` | 12단계 자동 |
+| **병렬 검토** | **`v71-multi-execute`** (ECC land) | **step 4 (security+test 동시) round-trip 1/2** |
 
 ### 4.3 신규 에이전트/스킬 생성 절차 (사용자 승인 필수)
 
@@ -171,6 +182,7 @@ Python: `"C:\Program Files\Python311\python.exe" -m pytest tests/v71/ -v`
 4. Memory 갱신 (큰 단위는 별도 파일)
 
 > **컨텍스트 갱신 없이 "완료" 응답 금지** (Part 2 절대 규칙).
+> **자동 hook** (ECC land): SessionStart에서 `work-context.json` 자동 표시 + Stop에서 `git status` 변경 시 reminder. 갱신 자체는 수동 (자금 시스템 안전).
 
 ---
 
