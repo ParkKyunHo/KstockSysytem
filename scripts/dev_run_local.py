@@ -10,8 +10,9 @@ What it does
 3. Forces ``V71_WEB_BOOT_TRADING_ENGINE=false`` so the launcher cannot
    call the Kiwoom REST API. Real money only ever flows through the AWS
    Lightsail systemd unit.
-4. Seeds a deterministic dev user (``dev`` / ``devpass1``) into the local
-   SQLite DB so the login screen works on first boot.
+4. Seeds a deterministic dev user (``admin`` / ``admin``) into the local
+   SQLite DB so the login screen works on first boot. Legacy usernames
+   from earlier dev infra are cleaned up automatically.
 5. Drives uvicorn via ``asyncio.run(server.serve())`` so the Windows
    ``WindowsSelectorEventLoopPolicy`` patch survives uvicorn 0.46's
    internal ``asyncio_run`` (which would otherwise force a new
@@ -23,7 +24,7 @@ Usage
 
 Pair with ``frontend/.env.development.local`` pointing the vite proxy at
 ``http://127.0.0.1:8080`` and run ``npm run dev`` in another shell. Login
-with ``dev`` / ``devpass1`` (no TOTP).
+with ``admin`` / ``admin`` (no TOTP).
 """
 
 from __future__ import annotations
@@ -128,7 +129,7 @@ def main() -> None:
     print(f"  - SQLite (isolated): {DEV_SQLITE_PATH}")
     print("  - Trading engine: OFF (Kiwoom API never called)")
     print("  - TOTP: OFF (V71_WEB_ENVIRONMENT=dev)")
-    print("  - Login: dev / devpass1")
+    print("  - Login: admin / admin")
     print("  - Pair with vite dev: http://localhost:5173")
     print("  - Restart this launcher after backend code changes")
     print("    (reload=False because uvicorn subprocesses lose the")

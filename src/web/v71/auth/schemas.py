@@ -11,7 +11,10 @@ from pydantic import BaseModel, ConfigDict, Field
 
 class LoginRequest(BaseModel):
     username: str = Field(min_length=3, max_length=50, pattern=r"^[A-Za-z0-9_]+$")
-    password: str = Field(min_length=8, max_length=128)
+    # PRD §1.2 권장 8자. dev/admin (5자) 허용을 위해 min_length=5로 완화.
+    # production 사용자(rbsgh4)는 이미 11자 비번 사용 중이므로 영향 0.
+    # 새 사용자 추가는 별도 admin flow에서 8자 강제 권장.
+    password: str = Field(min_length=5, max_length=128)
 
 
 class LoginPendingTotp(BaseModel):

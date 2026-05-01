@@ -17,7 +17,9 @@ export function Login() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const valid = username.length >= 3 && password.length >= 8;
+  // backend LoginRequest min_length=5 (PRD §1.2 권장 8자, dev/admin 5자 허용).
+  // production rbsgh4는 11자 비번이라 영향 0.
+  const valid = username.length >= 3 && password.length >= 5;
 
   const submit = async () => {
     if (!valid || loading) return;

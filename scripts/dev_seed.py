@@ -3,7 +3,10 @@
 The launcher (``dev_run_local.py``) calls :func:`seed_dev_user` before
 uvicorn serves traffic so login works on first boot. The seed is
 idempotent: if the user already exists we just refresh password +
-TOTP-disabled state.
+TOTP-disabled state. Legacy usernames listed in ``LEGACY_USERNAMES``
+are deleted so the active credentials are unambiguous.
+
+Active dev credentials: ``admin`` / ``admin`` (5 chars).
 
 Refusing to run outside dev
 ---------------------------
@@ -23,10 +26,14 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from sqlalchemy import select
+from sqlalchemy import select  # noqa: E402  -- sys.path manipulation above
 
-DEV_USERNAME = "dev"
-DEV_PASSWORD = "devpass1"  # 8 chars — satisfies LoginRequest min_length=8
+DEV_USERNAME = "admin"
+DEV_PASSWORD = "admin"  # 5 chars — satisfies LoginRequest min_length=5
+
+# Legacy username from earlier dev infra (commit 75d3bbd). Cleaned up
+# below if present so the dev DB has only the active credentials.
+LEGACY_USERNAMES = ("dev",)
 
 
 async def seed_dev_user() -> None:
@@ -67,6 +74,18 @@ async def seed_dev_user() -> None:
 
     try:
         async with factory() as session:
+            # Cleanup: drop legacy usernames from earlier dev infra so
+            # only the active dev credentials live in the SQLite DB.
+            for legacy_name in LEGACY_USERNAMES:
+                legacy = await session.execute(
+                    select(User).where(User.username == legacy_name)
+                )
+                legacy_user = legacy.scalar_one_or_none()
+                if legacy_user is not None:
+                    await session.delete(legacy_user)
+                    await session.commit()
+                    print(f"[dev_seed] removed legacy user '{legacy_name}'")
+
             existing = await session.execute(
                 select(User).where(User.username == DEV_USERNAME)
             )
