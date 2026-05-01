@@ -9,6 +9,8 @@ import { useMemo, useState } from 'react';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 
 import { I, type IconComponent } from '@/components/icons';
+import { SessionExtendButton } from '@/components/shell/SessionExtendButton';
+import { UserMenu } from '@/components/shell/UserMenu';
 import { useAuth } from '@/contexts/AuthContext';
 import { useLiveMock } from '@/hooks/useLiveMock';
 import { useSystemStatus, useUnreadNotifications } from '@/hooks/useApi';
@@ -120,6 +122,7 @@ export function AppShell({ theme, onCycleTheme }: AppShellProps) {
         onNav={goto}
         userInitial={userInitial}
         userName={user?.username ?? ''}
+        userRole={user?.role ?? null}
       />
       <div className="app-body">
         <AppSideNav
@@ -149,6 +152,7 @@ function AppHeader({
   onNav,
   userInitial,
   userName,
+  userRole,
 }: {
   onToggleSide: () => void;
   unread: number;
@@ -157,6 +161,7 @@ function AppHeader({
   onNav: (to: string) => void;
   userInitial: string;
   userName: string;
+  userRole: string | null;
 }) {
   return (
     <header className="cds-header">
@@ -208,13 +213,16 @@ function AppHeader({
           <I.Bell className="cds-icon" size={20} />
           {unread > 0 ? <span className="notif-dot">{unread}</span> : null}
         </button>
-        <div
-          className="cds-header__user"
-          onClick={() => onNav('/settings')}
-        >
-          <div className="cds-header__avatar">{userInitial}</div>
-          <span className="cds-header__name-text">{userName}</span>
-        </div>
+        {/* Session extend button — POST /auth/refresh, mints a fresh
+            access token (1-hour lifetime). Sits between the bell and
+            the user menu so it's right where the eye lands when the
+            user wants to keep working. */}
+        <SessionExtendButton />
+        <UserMenu
+          userInitial={userInitial}
+          userName={userName}
+          userRole={userRole}
+        />
       </div>
     </header>
   );

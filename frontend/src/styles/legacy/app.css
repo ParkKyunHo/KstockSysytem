@@ -61,6 +61,21 @@ button { font-family: inherit; }
 .cds-header__right { margin-left: auto; display: flex; }
 .cds-header__user { display: flex; align-items: center; gap: 8px; padding: 0 16px; height: 48px; cursor: pointer; }
 .cds-header__user:hover { background: #333; }
+/* SessionExtendButton: icon + 라벨 + 카운트다운 한 줄 */
+.cds-header__action {
+  display: flex; align-items: center; gap: 8px;
+  padding: 0 12px; height: 48px;
+  background: transparent; border: 0; cursor: pointer;
+  color: inherit; font: inherit;
+  position: relative; white-space: nowrap;
+}
+.cds-header__action:hover { background: #333; }
+.cds-header__action[disabled] { opacity: 0.6; cursor: wait; }
+.cds-header__action__label { font-size: 13px; }
+.cds-header__action__countdown {
+  font-family: var(--font-mono, monospace); font-size: 12px;
+  min-width: 42px; text-align: right;
+}
 .cds-header__avatar {
   width: 24px; height: 24px; border-radius: 50%;
   background: #6929c4; color: #fff; display: flex; align-items: center; justify-content: center;
@@ -136,6 +151,8 @@ button { font-family: inherit; }
   .cds-header__name { font-size: 13px; padding: 0 12px; }
   .cds-header__name span { display: none; }
   .cds-header__user .cds-header__name-text { display: none; }
+  /* mobile: 라벨 숨기고 카운트다운만 (또는 카운트다운 없으면 아이콘만) */
+  .cds-header__action__label { display: none; }
 }
 
 /* ============== Page header ================ */
