@@ -152,8 +152,10 @@ async def login_step_one(
             "Invalid credentials", error_code="INVALID_CREDENTIALS",
         )
 
-    if not user.totp_enabled:
-        # No TOTP -> issue tokens immediately and audit at the caller.
+    if not user.totp_enabled or settings.environment == "dev":
+        # No TOTP, or dev mode (TOTP intentionally bypassed for fast
+        # iteration on the local SQLite). Production must always set
+        # V71_WEB_ENVIRONMENT=prod so this branch never fires there.
         return LoginResult(requires_totp=False, user=user)
 
     sid = await _totp_sessions.put(

@@ -171,6 +171,23 @@ function AppHeader({
       <div className="cds-header__name">
         <strong>V7.1</strong>
         <span>K-Stock Trading</span>
+        {import.meta.env.DEV ? (
+          <span
+            title="Vite dev mode (local SQLite, TOTP off, trading engine OFF)"
+            style={{
+              marginLeft: 8,
+              padding: '2px 6px',
+              borderRadius: 4,
+              fontSize: 10,
+              fontWeight: 700,
+              letterSpacing: 0.5,
+              background: 'var(--cds-support-warning, #f1c21b)',
+              color: '#000',
+            }}
+          >
+            DEV
+          </span>
+        ) : null}
       </div>
       <div className="cds-header__right">
         <button

@@ -188,4 +188,12 @@ ehthumbs.db
 Desktop.ini
 
 # Claude Design 산출물 임시 unpack 디렉토리 (frontend/로 이미 implement됨)
-claude_design_artifact/
+claude_design_artifact*/
+
+# Figma / Carbon 디자인 원본 (참고용 로컬 자산, 커밋 제외)
+*.fig
+Carbon-K_stock_web/
+
+# 임시 시각화 / 스크린샷 (커밋 제외)
+temp_*.html
+콘솔오류.jpg
